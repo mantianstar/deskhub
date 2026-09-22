@@ -1,0 +1,419 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0">
+<channel>
+    <title>OSCHINA 社区最新新闻</title>
+    <link>https://www.oschina.net/news/rss</link>
+    <description>OSCHINA - 中文开源技术交流社区</description>
+    <language>zh-CN</language>
+    <pubDate>Tue, 22 Sep 2026 15:35:19 +0800</pubDate>
+	<image>
+		<link>https://www.oschina.net</link>
+		<url>https://www.oschina.net/img/logo.gif</url>
+		<title>OsChina.NET</title>
+	</image>
+	<item>
+        <title><![CDATA[Cloudflare 把 Python Workers 转正了：FastAPI、Django 照跑，不再写胶水代码]]></title>
+        <link><![CDATA[https://www.oschina.net/news/502671/cloudflare-python-workers-ga]]></link>
+        <category>综合新闻</category>
+        <description><![CDATA[Cloudflare 把 Python Workers 标记为正式可用（GA）。这事从两年前说要做到现在，终于落定——Python 从此是 Cloudflare 开发者平台上的头等语言，能接 Workers AI、R2、D1、Hyperdrive、Durable Objects、Queues、Workflows 全套绑定，还能直接跑 FastAPI、Django、Flask 这些框架。 技术上走的是条熟悉的老路：Worke...]]></description>
+        <pubDate>Tue, 22 Sep 2026 15:35:19 +0800</pubDate>
+        <guid><![CDATA[https://www.oschina.net/news/502671/cloudflare-python-workers-ga]]></guid>
+    </item>
+	<item>
+        <title><![CDATA[Sun 到底错在哪？一个等不来它回电的客户，讲完了整个故事]]></title>
+        <link><![CDATA[https://www.oschina.net/news/502670/what-sun-got-wrong]]></link>
+        <category>综合新闻</category>
+        <description><![CDATA[Bryan Cantrill 发了篇怀旧又扎心的文章，标题就叫《What Sun got wrong》。他当年是 Sun 的内核工程师，后来一手发起 DTrace，如今是 Oxide 的联合创始人。写这篇文章的由头很轻——Oxide 团队要为年会做一批致敬老计算机公司的 T 恤，其中一件印着 Oxide 与 Sun 的徽标拼合，太抓眼球，就提前放了出来。 对 Sun 的怀念...]]></description>
+        <pubDate>Tue, 22 Sep 2026 15:28:54 +0800</pubDate>
+        <guid><![CDATA[https://www.oschina.net/news/502670/what-sun-got-wrong]]></guid>
+    </item>
+	<item>
+        <title><![CDATA[AMD 市值破万亿，但靠的从来不只是 GPU]]></title>
+        <link><![CDATA[https://www.oschina.net/news/502669/perpetual-underdog-amd-nips-joins-the-1t-club]]></link>
+        <category>综合新闻</category>
+        <description><![CDATA[AMD 的市值周一短暂突破了 1 万亿美元——对芯片设计公司来说，挤进这个俱乐部的屈指可数。但媒体对它评价仍是“永远处于劣势的一方”（perpetual underdog），因为在 AMD 头顶还压着英伟达这座近 5.5 万亿美元的市值高山，它只是把老对手英特尔（6400 亿）甩在了身后。 涨上去最直白的原因是搭上了 AI 这班车。AMD 入局...]]></description>
+        <pubDate>Tue, 22 Sep 2026 15:08:51 +0800</pubDate>
+        <guid><![CDATA[https://www.oschina.net/news/502669/perpetual-underdog-amd-nips-joins-the-1t-club]]></guid>
+    </item>
+	<item>
+        <title><![CDATA[SpaceXAI 发布 Grok 4.7：跟 Claude Fable 同榜，价格砍到三分之一]]></title>
+        <link><![CDATA[https://www.oschina.net/news/502663/x-ai-grok-4-7]]></link>
+        <category>综合新闻</category>
+        <description><![CDATA[SpaceXAI（改名的 xAI）发布了 Grok 4.7，官方口径是&quot;最擅长编码和知识工作的模型&quot;——比同级模型快两倍、便宜一半。这句话与其说是技术宣言，不如说是价格战的开场白：它和 Grok 4.6 同价同步，直接对标的就是 Claude 那几家。 论据藏在榜单里。CursorBench 4.0 是专门压长时编码任务的基准，Grok 4.7 官方给的宣传数据...]]></description>
+        <pubDate>Tue, 22 Sep 2026 12:03:02 +0800</pubDate>
+        <guid><![CDATA[https://www.oschina.net/news/502663/x-ai-grok-4-7]]></guid>
+    </item>
+	<item>
+        <title><![CDATA[Xiaomi MiMo-V2.6 系列正式发布，大规模扩展 RL 并全面开源]]></title>
+        <link><![CDATA[https://www.oschina.net/news/502662/xiaomi-mimo-v2-6]]></link>
+        <category>综合新闻</category>
+        <description><![CDATA[小米开源了 MiMo-V2.6 系列，Pro 和 Flash 两个原生全模态模型一起放出。 这名字在国内开源圈已经不算陌生，但这次发布的重点不在模型本身，而在它背后那 6 天的 Live RL 训练——官方把整个训练过程、成本、技术报告连同 RL 代码和训练环境一起开源了。 一段话说清楚这次发到了什么位置：MiMo-V2.6-Pro 在 Artificial A...]]></description>
+        <pubDate>Tue, 22 Sep 2026 11:40:11 +0800</pubDate>
+        <guid><![CDATA[https://www.oschina.net/news/502662/xiaomi-mimo-v2-6]]></guid>
+    </item>
+	<item>
+        <title><![CDATA[有人拿 Jev 给聊天软件配了个“AI 副驾”——读懂对方意图，但不替你发]]></title>
+        <link><![CDATA[https://www.oschina.net/news/502660]]></link>
+        <category>综合新闻</category>
+        <description><![CDATA[TypeSafe 最近开源了他们叫 &quot;System One Model&quot; 的东西——Jev，一个放弃字符串生成、直接输出类型安全概率化决策的模型，专为软件里的分类/路由/打分这类活儿而生。 当然，把 Jev 理解成&quot;一次函数调用级别的智能&quot;最直观：输入非结构化状态，输出类型安全的概率化决策，像句代码一样直接塞进软件里用。和主流 LLM 最大的...]]></description>
+        <pubDate>Tue, 22 Sep 2026 10:22:25 +0800</pubDate>
+        <guid><![CDATA[https://www.oschina.net/news/502660]]></guid>
+    </item>
+	<item>
+        <title><![CDATA[DjangoAdmin 敏捷开发框架 Flask+EleVue 版本 v2.8.2 发布]]></title>
+        <link><![CDATA[https://www.oschina.net/news/502655]]></link>
+        <category>软件更新新闻</category>
+        <description><![CDATA[v2.8.2 更新内容： 1、大版本全新重构； 基于 Flask、Vue3、TypeScript、ElementPlus、Vite、VueRouter 等技术栈构建的前后端分离企业级数据中台解决方案。内置精细化到按钮及方法级别的 RBAC 权限管控体系，集成用户管理、角色管理、权限菜单、部门管理、职级岗位、系统日志、数据字典、系统参数、行政区划、任务调度等...]]></description>
+        <pubDate>Tue, 22 Sep 2026 08:34:13 +0800</pubDate>
+        <guid><![CDATA[https://www.oschina.net/news/502655]]></guid>
+    </item>
+	<item>
+        <title><![CDATA[灵界 OS 5.0 稳定版 · 开箱教程上线]]></title>
+        <link><![CDATA[https://www.oschina.net/news/502654]]></link>
+        <category>软件更新新闻</category>
+        <description><![CDATA[这次更新，加了一个开箱教程。 之前新用户进来，桌面一堆按钮，不知道从哪开始。所以这次做了个完整的首次体验流程： 更新内容： · 欢迎动画：进入系统时先看到「你好」「欢迎使用 灵界OS」 · 初次设置： · 语言选择（中文 / English） · 年龄确认（未满 18 周岁会停住，保护未成年人） · 免责约定（看完点「我同意...]]></description>
+        <pubDate>Tue, 22 Sep 2026 07:16:24 +0800</pubDate>
+        <guid><![CDATA[https://www.oschina.net/news/502654]]></guid>
+    </item>
+	<item>
+        <title><![CDATA[全能 Go Agent 框架 covonaut v1.1.4 发布：新增工具滚动并行池、多模态读取等]]></title>
+        <link><![CDATA[https://www.oschina.net/news/502653]]></link>
+        <category>软件更新新闻</category>
+        <description><![CDATA[covonaut 是一个面向生产环境的 Go 语言 Agent 框架，覆盖 Agent 主循环、工具调用、图编排与多协议互操作等，全部为纯 Go 实现，采用 MIT 协议。 v1.1.4 更新内容 1. 滚动工具执行池：并行与混合两档调度 此前的并行执行是「一次性拉起全部调用再靠并发上限排队」，一个慢工具会长期占住槽位。本次改为单一滚动池调度：...]]></description>
+        <pubDate>Mon, 21 Sep 2026 23:25:24 +0800</pubDate>
+        <guid><![CDATA[https://www.oschina.net/news/502653]]></guid>
+    </item>
+	<item>
+        <title><![CDATA[【架构实践】用 Rust + Qwen3Guard 搭一套双层安全风控，我们踩过的坑和公开基准都在这了]]></title>
+        <link><![CDATA[https://www.oschina.net/news/502652]]></link>
+        <category>综合新闻</category>
+        <description><![CDATA[本文是 55873 生态系统技术白皮书第 4 篇 —— 双层安全风控架构。完整拆解我们在生产环境中落地 Rust 底层硬拦截 + Qwen3Guard AI 多语言语义研判的双层架构设计，包括踩过的坑、公开基准数据、以及诚实披露的能力边界。 导读 项目定位：双层安全风控 = Rust 底层硬拦截 + Qwen3Guard AI 语义研判 核心技术栈：Rust 编译...]]></description>
+        <pubDate>Mon, 21 Sep 2026 20:40:35 +0800</pubDate>
+        <guid><![CDATA[https://www.oschina.net/news/502652]]></guid>
+    </item>
+	<item>
+        <title><![CDATA[KB Embodied Agent（企业知识库具身客服）]]></title>
+        <link><![CDATA[https://www.oschina.net/news/502649]]></link>
+        <category>综合新闻</category>
+        <description><![CDATA[KB Embodied Agent v1.0.0 正式发布。这是一个把企业私有知识库做成「能开口、能办事」的数字人前台的 开源实现，Apache-2.0 协议，代码托管于 Gitee 与 GitHub。 本次发布是首个语义化版本，内容包括完整的可运行工程，而不是演示片段： 一、交互主链路自研 对话编排不依赖渲染 SDK，由 FastAPI 服务接管「听→想→做→...]]></description>
+        <pubDate>Mon, 21 Sep 2026 17:58:57 +0800</pubDate>
+        <guid><![CDATA[https://www.oschina.net/news/502649]]></guid>
+    </item>
+	<item>
+        <title><![CDATA[微软工程师花 12 万美元让 AI 重写 Copilot 运行时：43 万行 TS 变成 80 万行 Rust，快 15.9 倍]]></title>
+        <link><![CDATA[https://www.oschina.net/news/502646/ms-agentically-ports-copilot-runtime-to-rust-for-120k]]></link>
+        <category>综合新闻</category>
+        <description><![CDATA[微软干了一件事儿，听起来像套娃：用 AI 重写了撑起 AI 产品的运行时。GitHub Copilot 的运行时光是被全部搬到了 Rust——不是工程师手写的，是 AI agents 干的，整个过程就花了 12 万美元的 token 钱加一个工程师三周时间。 这个运行时比大多数用户想象得要命脉。它支撑着 GitHub Copilot CLI、Copilot App、SDK 和 Co...]]></description>
+        <pubDate>Mon, 21 Sep 2026 16:47:57 +0800</pubDate>
+        <guid><![CDATA[https://www.oschina.net/news/502646/ms-agentically-ports-copilot-runtime-to-rust-for-120k]]></guid>
+    </item>
+	<item>
+        <title><![CDATA[华为云码道上线鸿蒙编码大模型 面向鸿蒙开发者全面升级]]></title>
+        <link><![CDATA[https://www.oschina.net/news/502645/hw-codearts]]></link>
+        <category>综合新闻</category>
+        <description><![CDATA[2026年9月21日，华为云码道CodeArts代码智能体面向鸿蒙开发者进行全面升级，上线“鸿蒙编码大模型+码道鸿蒙智能体+鸿蒙开发者实践中心”三大核心能力，打造全球首个且唯一专为鸿蒙生态打造的AI编码智能体。 华为公有云总裁胡玉海表示：“华为云码道CodeArts代码智能体凝练华为多年研发经验，更懂研发工程实践，为开发者带...]]></description>
+        <pubDate>Mon, 21 Sep 2026 16:24:30 +0800</pubDate>
+        <guid><![CDATA[https://www.oschina.net/news/502645/hw-codearts]]></guid>
+    </item>
+	<item>
+        <title><![CDATA[微软内部文件曝光：高管称 AI 抓取新闻是“人类历史上最大规模的劳动力盗窃”]]></title>
+        <link><![CDATA[https://www.oschina.net/news/502644]]></link>
+        <category>综合新闻</category>
+        <description><![CDATA[微软和 OpenAI 一直想让某些东西远离公众视线，但纸终究包不住火。 这周四，由《纽约时报》牵头的新闻原告方申请简易判决的动议被解除保密，内部文件随即曝光——新闻集团声称，这些文件显示了微软和 OpenAI 在推出 ChatGPT、Copilot 等产品之前，究竟如何看待对新闻的威胁。 最震撼的言论来自微软应用科学总监 Brent He...]]></description>
+        <pubDate>Mon, 21 Sep 2026 15:42:19 +0800</pubDate>
+        <guid><![CDATA[https://www.oschina.net/news/502644]]></guid>
+    </item>
+	<item>
+        <title><![CDATA[上海开源大赛DaoCloud赛题公布，选做可获额外现金激励]]></title>
+        <link><![CDATA[https://www.oschina.net/news/502643]]></link>
+        <category>综合新闻</category>
+        <description><![CDATA[2026 年，智算云领域面临着相似的问题，即算力能买到，但跑得顺却不容易。 过去两年，行业把精力放在算力供给上，异构集群从千卡走到万卡。卡到位之后，压力转向利用率和吞吐。训练侧任务排队等配额，推理侧 KV Cache 命中率上不去，首 token 时延压不下来，单版权重几十上百 GB 还要在训练节点和终端之间来回搬。真正拖...]]></description>
+        <pubDate>Mon, 21 Sep 2026 15:37:37 +0800</pubDate>
+        <guid><![CDATA[https://www.oschina.net/news/502643]]></guid>
+    </item>
+	<item>
+        <title><![CDATA[从具身智能到桌面小装置，北京开源创新赛硬件赛道面向全国创客开放]]></title>
+        <link><![CDATA[https://www.oschina.net/news/502640]]></link>
+        <category>综合新闻</category>
+        <description><![CDATA[开源最早从代码开始，后来有人把电路图、结构件模型和固件一起分享到互联网上，硬件图纸也能被下载、被改进、被重新做出来。Arduino 用一块开发板把创客文化带进课堂，RISC-V 把开源指令集推广到全球，3D 打印和便宜的传感器又把动手门槛降低到每个人就能尝试的程度。现在一块开发板接上开源 AI 模型，就能做出会认路的车...]]></description>
+        <pubDate>Mon, 21 Sep 2026 15:02:37 +0800</pubDate>
+        <guid><![CDATA[https://www.oschina.net/news/502640]]></guid>
+    </item>
+	<item>
+        <title><![CDATA[Google 开源 AX，把 Agent 当集群工作负载跑的声明式编排器]]></title>
+        <link><![CDATA[https://www.oschina.net/news/502639/google-ax]]></link>
+        <category>综合新闻</category>
+        <description><![CDATA[Google 昨天低调开源了个叫 AX 的东西，一句话：一个声明式的 Agent 编排器，宣称能在一个集群里跑&quot;几十亿个&quot;自主 Agent 任务。用过 Kubernetes 的人上手会很快——任务、工作区全是 ax.io/v1alpha1 的 YAML manifest，一个 ax apply 命令就提交，ax watch 看状态，ax ssh 直接钻进沙箱里看 Agent 在干嘛。 AX 想解决的问...]]></description>
+        <pubDate>Mon, 21 Sep 2026 14:51:01 +0800</pubDate>
+        <guid><![CDATA[https://www.oschina.net/news/502639/google-ax]]></guid>
+    </item>
+	<item>
+        <title><![CDATA[KnowForge 2026.0.4 发布：从 InfoSphere 到 KnowForge，我们重新定义知识锻造]]></title>
+        <link><![CDATA[https://www.oschina.net/news/502638]]></link>
+        <category>软件更新新闻</category>
+        <description><![CDATA[KnowForge 2026.0.4 发布：从 InfoSphere 到 KnowForge，我们重新定义知识锻造 这一次，我们不只是发布了一个新版本。 InfoSphere 正式更名为 KnowForge。 从最初的知识内容管理，到如今逐渐覆盖写作、采集、组织、阅读、版本管理、用户成长与扩展能力，我们越来越清楚这个项目真正想做的事情： Forge Your Knowledge. ...]]></description>
+        <pubDate>Mon, 21 Sep 2026 14:47:08 +0800</pubDate>
+        <guid><![CDATA[https://www.oschina.net/news/502638]]></guid>
+    </item>
+	<item>
+        <title><![CDATA[Easysearch 2.4.0 发布：原生 HNSW 与混合检索，管理体验全面升级]]></title>
+        <link><![CDATA[https://www.oschina.net/news/502637]]></link>
+        <category>软件更新新闻</category>
+        <description><![CDATA[INFINI Easysearch 2.4.0 正式发布。本版本将向量搜索纳入内核：基于 Lucene 的原生 HNSW，关键词与语义向量可混合检索。控制台新增可视化 Mapping 编辑器，集群设置可同时查看临时、持久、默认三层配置。生命周期策略、可搜索快照、密钥库与插件管理同步更新，高并发下的字段使用统计和磁盘用量分析也更稳定。 主要更新...]]></description>
+        <pubDate>Mon, 21 Sep 2026 14:32:26 +0800</pubDate>
+        <guid><![CDATA[https://www.oschina.net/news/502637]]></guid>
+    </item>
+	<item>
+        <title><![CDATA[禅道开源版22.6发布，集中优化功能细节，完善用户体验]]></title>
+        <link><![CDATA[https://www.oschina.net/news/502635]]></link>
+        <category>软件更新新闻</category>
+        <description><![CDATA[大家好， 禅道开源版22.6发布！本次发布， 聚焦于常用功能的易用性和体验优化，覆盖产品、项目、测试、文档等多个功能模块，帮助用户提高工作效率。 新版本将为用户带来更好的使用体验和更高的工作效率，感谢大家一直以来的支持和反馈，我们将继续努力提供更优秀的产品和服务！ 新增功能点 产品功能优化： 批量编辑需求页...]]></description>
+        <pubDate>Mon, 21 Sep 2026 13:12:25 +0800</pubDate>
+        <guid><![CDATA[https://www.oschina.net/news/502635]]></guid>
+    </item>
+	<item>
+        <title><![CDATA[Jev 凭什么刷屏：一个不生成文本的 "判断模型"，正在悄悄提速 AI Agent]]></title>
+        <link><![CDATA[https://www.oschina.net/news/502633]]></link>
+        <category>综合新闻</category>
+        <description><![CDATA[JeecgBoot AI 专题研究 | TypeSafe AI System One Model 深度解析：Choice/Noul/Score 与 Agent 判断层实战 这两天如果你刷技术圈的社交媒体，大概率会撞见 &quot;Jev&quot; 这个名字。有人说被它 &quot;霸榜&quot; 了，有人晒出用它改造 Codex、BrowserUse 之后速度暴涨的截图，GitHub 上一个相关开源项目几天内就破万星。 但如果你顺着这个...]]></description>
+        <pubDate>Mon, 21 Sep 2026 11:24:10 +0800</pubDate>
+        <guid><![CDATA[https://www.oschina.net/news/502633]]></guid>
+    </item>
+	<item>
+        <title><![CDATA[qKnow 专业版 v3.1.4 发布：智能Agent管控升级，编排资源可复用可迁移]]></title>
+        <link><![CDATA[https://www.oschina.net/news/502632]]></link>
+        <category>软件更新新闻</category>
+        <description><![CDATA[在企业智能体逐步从试用走向交付的过程中，真正影响落地效率的，往往不只是模型能力，而是编排资产能否复用、运行行为能否管控、对外展示能否调整。 qKnow 专业版 v3.1.4 本次更新，围绕 Agent 对话记忆管控、Agent / 工作流编排资产导入复用、Agent 思考过程展示开关 三项能力展开。整体可以概括为： Agent 编排管控自定...]]></description>
+        <pubDate>Mon, 21 Sep 2026 10:50:25 +0800</pubDate>
+        <guid><![CDATA[https://www.oschina.net/news/502632]]></guid>
+    </item>
+	<item>
+        <title><![CDATA[ZCode 就静默上传风波正式回应：开源、道歉、切断快照上传链路]]></title>
+        <link><![CDATA[https://www.oschina.net/news/502631]]></link>
+        <category>综合新闻</category>
+        <description><![CDATA[前两天被开发者扒出&quot;静默打包上传完整 Git 历史&quot;的 ZCode，官方正式回应了。话很短，三重动作：道歉、整改、把代码开源。 改动本身是实打实的。ZCode 已把源码放到 GitHub（zai-org/ZCode），交给社区监督；客户端更新到 v3.14.0，移除 Repo Wiki 功能，切断了本地仓库快照的生成与上传链路——这正是当初被质疑的核心路...]]></description>
+        <pubDate>Mon, 21 Sep 2026 10:31:35 +0800</pubDate>
+        <guid><![CDATA[https://www.oschina.net/news/502631]]></guid>
+    </item>
+	<item>
+        <title><![CDATA[通义千问开源 Qwen-Image-2.1：7B 小模型，文生图 + 透明图 + 重编辑全合一]]></title>
+        <link><![CDATA[https://www.oschina.net/news/502630/qwen-image-2-1]]></link>
+        <category>综合新闻</category>
+        <description><![CDATA[阿里通义千问开源了 Qwen-Image-2.1。一句话概括它的定位：把生成效果、推理效率和成本压到同一个平衡点——视觉生成部分只有 7B 参数，却把文生图、透明图生成和图像编辑整合进了同一个模型，还原生支持透明图像的生成与编辑。 几个值得拆开的点。第一个是&quot;小模强效&quot;——视觉生成部分用 32 层 Single-Stream DiT，7B 参...]]></description>
+        <pubDate>Mon, 21 Sep 2026 10:28:58 +0800</pubDate>
+        <guid><![CDATA[https://www.oschina.net/news/502630/qwen-image-2-1]]></guid>
+    </item>
+	<item>
+        <title><![CDATA[🔥🔥Skyeye 云企业级AI+零代码智能制造系统 - v4.1.5 发布]]></title>
+        <link><![CDATA[https://www.oschina.net/news/502626]]></link>
+        <category>软件更新新闻</category>
+        <description><![CDATA[Skyeye 云企业级AI+零代码智能制造，智能制造一体化，采用 SpringBoot+ UNI-APP + Ant Design Vue 的零代码平台开发模式。包含 100 多种电子流程，CRM、PM、ERP、MES、ADM、OA、EHR、AI、项目、商城、财务、多班次考勤、薪资、招聘、云售后、论坛、问卷、报表设计、工作流、Saas 等功能。打造全网首套零代码、AI应用最广...]]></description>
+        <pubDate>Mon, 21 Sep 2026 08:41:05 +0800</pubDate>
+        <guid><![CDATA[https://www.oschina.net/news/502626]]></guid>
+    </item>
+	<item>
+        <title><![CDATA[AI 编程工具安全思考： ZCode 上传完整.git 历史事件，本地代码隐私该如何守护]]></title>
+        <link><![CDATA[https://www.oschina.net/news/502625]]></link>
+        <category>综合新闻</category>
+        <description><![CDATA[随着AI辅助开发越来越普及，各类AI编程IDE、代码助手极大提升了开发效率，但本地代码读取、数据上传带来的安全隐患，也逐步暴露出来。 近期社群热议的智谱ZCode事件值得所有开发者关注：ZCode的端到端长程任务功能，会打包上传项目完整的.git历史记录。官方社群也确认了该行为，这件事直接造成GLM‑5.5版本延期，正在配合...]]></description>
+        <pubDate>Mon, 21 Sep 2026 00:18:12 +0800</pubDate>
+        <guid><![CDATA[https://www.oschina.net/news/502625]]></guid>
+    </item>
+	<item>
+        <title><![CDATA[OpenAgent v2.93 发布：单二进制自托管 AI Agent 平台，新增 Agent Hub、Casbin 工具权限与审计日志]]></title>
+        <link><![CDATA[https://www.oschina.net/news/502624]]></link>
+        <category>软件更新新闻</category>
+        <description><![CDATA[OpenAgent 近日发布 v2.93.0。这是一个自托管的 AI Agent 平台，由 Casbin 开源社区维护，Go + React 编写，Apache 2.0 协议开源，目前在 GitHub 上有 5.6k star、658 fork。 项目定位 OpenAgent 不是需要写代码编排的 Agent 框架，而是一套部署完就能直接使用的平台：配置好模型 API Key 之后，非技术人员也可以通过 We...]]></description>
+        <pubDate>Sun, 20 Sep 2026 22:44:32 +0800</pubDate>
+        <guid><![CDATA[https://www.oschina.net/news/502624]]></guid>
+    </item>
+	<item>
+        <title><![CDATA[openKylin 成立 ZephyrProject SIG：加速 Zephyr 国内生态落地与技术创新]]></title>
+        <link><![CDATA[https://www.oschina.net/news/502623]]></link>
+        <category>软件更新新闻</category>
+        <description><![CDATA[近年来，实时操作系统（RTOS）正从单一内核向平台化、生态化演进，应用场景也从单 MCU 控制走向异构计算与云边协同，开源生态的重要性日益凸显。但在国内，Zephyr 的基础设施与配套支持仍不够完善。为此，麒麟软件牵头在 OpenAtom openKylin（以下简称“openKylin”）社区成立了 ZephyrProject SIG，面向工控、具身智能、...]]></description>
+        <pubDate>Sun, 20 Sep 2026 21:34:55 +0800</pubDate>
+        <guid><![CDATA[https://www.oschina.net/news/502623]]></guid>
+    </item>
+	<item>
+        <title><![CDATA[ModStartBlog v11.2.0 新增可选依赖、AI 文章投递及多项安全修复]]></title>
+        <link><![CDATA[https://www.oschina.net/news/502622]]></link>
+        <category>软件更新新闻</category>
+        <description><![CDATA[ModStart 是一个基于 Laravel 模块化极速开发框架。模块市场拥有丰富的功能应用，支持后台一键快速安装，让开发者能快的实现业务功能开发。 系统完全开源，基于 Apache 2.0 开源协议。 功能特性 丰富的模块市场，后台一键快速安装 会员模块通用且完整，支持完整的API调用 大文件分片上传，进度条显示，已上传文件管理 强...]]></description>
+        <pubDate>Sun, 20 Sep 2026 21:29:39 +0800</pubDate>
+        <guid><![CDATA[https://www.oschina.net/news/502622]]></guid>
+    </item>
+	<item>
+        <title><![CDATA[:fire::fire:无代码 AI 工作流引擎 FlowLong 1.2.7 发布]]></title>
+        <link><![CDATA[https://www.oschina.net/news/502620]]></link>
+        <category>软件更新新闻</category>
+        <description><![CDATA[开源地址：https://gitee.com/aizuda/flowlong 开源地址：https://github.com/aizuda/flowlong 官网文档：https://flowlong.aizuda.com 更新日志： feat: 新增节点支持设置为办理人（仅办理节点） feat: 新增支持设置流程实例紧急程度 opt: 完善注释和说明文档 opt: 优化节点模型扩展属性提供友好的获取方式 fixed: 修复...]]></description>
+        <pubDate>Sun, 20 Sep 2026 20:04:23 +0800</pubDate>
+        <guid><![CDATA[https://www.oschina.net/news/502620]]></guid>
+    </item>
+	<item>
+        <title><![CDATA[MiniMax Code CLI 开源，取得了 76.7% 的任务通过率]]></title>
+        <link><![CDATA[https://www.oschina.net/news/502619/minimax-code-cli]]></link>
+        <category>综合新闻</category>
+        <description><![CDATA[MiniMax 把 AI 编程工具的核心组件开源了。MiniMax Code CLI 的 v0.4.12 版本面向全球开发者正式开放，并用 MIT 协议放出了源码——它是 MiniMax Code 客户端的核心组件，装上就能直接用命令行生成、调试代码。 性能数据来自 FrontierHarness Eval 评测：76.7% 的任务通过率，成功任务耗时中位数为 4 分 33 秒，两项指标...]]></description>
+        <pubDate>Sun, 20 Sep 2026 19:04:07 +0800</pubDate>
+        <guid><![CDATA[https://www.oschina.net/news/502619/minimax-code-cli]]></guid>
+    </item>
+	<item>
+        <title><![CDATA[轻量级运维极速引擎 OpsFlash v0.6.0 正式发布]]></title>
+        <link><![CDATA[https://www.oschina.net/news/502617]]></link>
+        <category>软件更新新闻</category>
+        <description><![CDATA[变更： 脚本库合并到命令库：脚本库不再作为独立模块，脚本数据迁移至命令库统一管理；参数化需求由环境变量替代原 {{key}} 流程参数 导航栏重构：侧边栏改为顶部导航栏（概览、编排、脚本库、连接、隧道、记录、设置） 设置页独立化：设置从弹窗改为独立页面，包含「用户管理」和「环境管理」两个侧边标签页 OpsFlash 轻...]]></description>
+        <pubDate>Sun, 20 Sep 2026 17:17:12 +0800</pubDate>
+        <guid><![CDATA[https://www.oschina.net/news/502617]]></guid>
+    </item>
+	<item>
+        <title><![CDATA[百度搭子用户规模环比增长9倍，发布企业版移动端、开发平台与共创计划]]></title>
+        <link><![CDATA[https://www.oschina.net/news/502615]]></link>
+        <category>综合新闻</category>
+        <description><![CDATA[9月20日，百度智能云超级智能体大会深圳站举行。会上，百度搭子升级企业版多人协作能力，发布企业版移动端和智能体开发平台，并启动生态共创计划。数据显示，百度搭子用户规模环比增长9倍，交付物需求环比增长4.3倍，专家套件使用量环比增长7.3倍。 百度集团执行副总裁、百度智能云事业群总裁沈抖表示，企业智能化需要通...]]></description>
+        <pubDate>Sun, 20 Sep 2026 16:41:48 +0800</pubDate>
+        <guid><![CDATA[https://www.oschina.net/news/502615]]></guid>
+    </item>
+	<item>
+        <title><![CDATA[阶跃星辰发布 Step 5 Preview，面向真实世界 Agentic 任务的旗舰基座模型]]></title>
+        <link><![CDATA[https://www.oschina.net/news/502614/stepfun-step-5-preview]]></link>
+        <category>综合新闻</category>
+        <description><![CDATA[阶跃星辰新版旗舰模型 Step 5 发布了 Preview 版本，它给自己定的命题不是单项性能多强，而是&quot;帕累托前沿&quot;——能力、成本、效率、场景覆盖之间那条最佳平衡的边界。官方话是：随着 Agent 从&quot;回答问题&quot;走向&quot;完成任务&quot;，主力模型的标准从&quot;单项能力强&quot;变成了&quot;多项之间平衡&quot;。 Model Blog：https://www.stepfun.com/step-5-...]]></description>
+        <pubDate>Sun, 20 Sep 2026 16:06:58 +0800</pubDate>
+        <guid><![CDATA[https://www.oschina.net/news/502614/stepfun-step-5-preview]]></guid>
+    </item>
+	<item>
+        <title><![CDATA[智谱披露 GLM-5.3 初显 RSI：模型开始优化承载自己的推理系统]]></title>
+        <link><![CDATA[https://www.oschina.net/news/502613/zai-glm-built-its-inference-infrastructure]]></link>
+        <category>综合新闻</category>
+        <description><![CDATA[智谱创始人、首席科学家唐杰和 GLM 团队发了一篇长文，题目已经把姿态放得很低：&quot;这还不是完整意义上的递归自我改进（RSI），但已经出现了早期形态。&quot; 可读完整篇，你会觉得这个&quot;早期形态&quot;离&quot;完整&quot;可能没他们说的那么远。 绕开概念，先看它干了什么。GLM-5.3-Flash 上线时，一套生产级推理服务要在超过 10 万张国产芯片组...]]></description>
+        <pubDate>Sun, 20 Sep 2026 15:55:15 +0800</pubDate>
+        <guid><![CDATA[https://www.oschina.net/news/502613/zai-glm-built-its-inference-infrastructure]]></guid>
+    </item>
+	<item>
+        <title><![CDATA[微信 AI 团队开源 WeKnora：知识库不再只动嘴，还能“动手”执行]]></title>
+        <link><![CDATA[https://www.oschina.net/news/502612]]></link>
+        <category>综合新闻</category>
+        <description><![CDATA[微信AI团队开源了个知识管理框架，叫 WeKnora（维娜拉），最新 0.8.0 版本刚放出。定位一句话：让知识库不只是&quot;能查到答案&quot;，而是&quot;能动手去执行&quot;——它想解决的是大模型落地时那个最现实的问题：知识在文档里躺着，模型说得头头是道，但真正要让它们变成可验证的结果，中间缺一双手脚。 WeKnora 架构设计：从文档处理到检...]]></description>
+        <pubDate>Sun, 20 Sep 2026 15:19:46 +0800</pubDate>
+        <guid><![CDATA[https://www.oschina.net/news/502612]]></guid>
+    </item>
+	<item>
+        <title><![CDATA[华为多维探索 Agentic 计算：超节点 + 集群，从算子打到 Agent 开发范式]]></title>
+        <link><![CDATA[https://www.oschina.net/news/502611/huawei-hc2026-agentic-thinkpro-pto-cann]]></link>
+        <category>综合新闻</category>
+        <description><![CDATA[Agentic 时代给算力带来的麻烦，比想象中具体。大量 Agent 跑长程复杂任务，输出等待时延高、通信带宽压力大、内存消耗激增，算力分布和互联方式都在变。华为计算首席战略官朱照生在全联接大会上给出应对思路：基于灵衢架构，面向&quot;超节点+集群&quot;提出 Agentic 计算新开发方式，拆成五个维度推进——从单服务器到超节点开发...]]></description>
+        <pubDate>Sun, 20 Sep 2026 15:08:40 +0800</pubDate>
+        <guid><![CDATA[https://www.oschina.net/news/502611/huawei-hc2026-agentic-thinkpro-pto-cann]]></guid>
+    </item>
+	<item>
+        <title><![CDATA[前 OpenAI 研究员发布 Jev 模型，旨在帮助软件做出快速、结构化的决策]]></title>
+        <link><![CDATA[https://www.oschina.net/news/502609/typesafe-ai-system-one-models-and-jev]]></link>
+        <category>综合新闻</category>
+        <description><![CDATA[TypeSafe AI 前两天从隐身状态出来了。这个实验室由前 OpenAI 研究员 Diogo Almeida 创办，他参与过 ChatGPT 背后的指令跟随方法研究。这次发布的不是又一个聊天模型，而是一类他们叫&quot;System One Model&quot;的新东西，首款型号叫 Jev，开放了早期访问。 把 Jev 理解成&quot;一次函数调用级别的智能&quot;最直观：输入非结构化状态，输出...]]></description>
+        <pubDate>Sun, 20 Sep 2026 14:39:45 +0800</pubDate>
+        <guid><![CDATA[https://www.oschina.net/news/502609/typesafe-ai-system-one-models-and-jev]]></guid>
+    </item>
+	<item>
+        <title><![CDATA[专访 申俊伟 | 人在真正忙碌起来的时候，反而会减少很多焦虑]]></title>
+        <link><![CDATA[https://my.oschina.net/u/4806939/blog/19763765]]></link>
+        <category>综合新闻</category>
+        <description><![CDATA[OSC技术影响力合伙人-专访 | 申俊伟（轻口味）]]></description>
+        <pubDate>Sun, 20 Sep 2026 11:45:07 +0800</pubDate>
+        <guid><![CDATA[https://my.oschina.net/u/4806939/blog/19763765]]></guid>
+    </item>
+	<item>
+        <title><![CDATA[鸿蒙迈入 Agent 时代：HarmonyOS 7 重构底层，意图即服务]]></title>
+        <link><![CDATA[https://www.oschina.net/news/502597/hc2026-agentic-era-harmonyos]]></link>
+        <category>综合新闻</category>
+        <description><![CDATA[华为全联接大会2026把鸿蒙的定义往前推了一步：HarmonyOS 7 全面向 Agent 架构演进。字面上的变化是，操作系统的交互逻辑从&quot;人找服务&quot;变成了&quot;意图即服务&quot;——你不用说&quot;打开某App再点某按钮&quot;，只管把想干的事说出来，系统自己规划、自己调度去完成。 这背后是底层架构的重做。HarmonyOS 7 的一个核心变化是&quot;Agent 亲和系统...]]></description>
+        <pubDate>Sun, 20 Sep 2026 10:26:00 +0800</pubDate>
+        <guid><![CDATA[https://www.oschina.net/news/502597/hc2026-agentic-era-harmonyos]]></guid>
+    </item>
+	<item>
+        <title><![CDATA[mica-voice 1.0.2 发布：Java 生态的声音 AI 全家桶，一行代码接入 ASR / TTS / 声纹 / VAD / 说话人分离 / KWS / 降噪]]></title>
+        <link><![CDATA[https://www.oschina.net/news/502596]]></link>
+        <category>软件更新新闻</category>
+        <description><![CDATA[一、项目简介 mica-voice 是一款基于 mica-sherpa-onnx（已发布 Maven Central 的 sherpa-onnx 全平台 fat jar）的 Java 声音 AI 全家桶，统一封装 ASR（语音识别）/ TTS（语音合成）/ 声纹识别 / VAD（语音活动检测）/ 说话人分离 / 关键词唤醒 KWS / 音频降噪 7 大能力，提供纯 Java 门面、Spring Boot Starter、Solon...]]></description>
+        <pubDate>Sun, 20 Sep 2026 10:25:34 +0800</pubDate>
+        <guid><![CDATA[https://www.oschina.net/news/502596]]></guid>
+    </item>
+	<item>
+        <title><![CDATA[mica-ppocr v1.2.3 发布：Java 8 兼容的 PP-OCRv6 纯 ONNX 推理引擎，内置 10 类证件/票据结构化解析]]></title>
+        <link><![CDATA[https://www.oschina.net/news/502595]]></link>
+        <category>软件更新新闻</category>
+        <description><![CDATA[项目简介 mica-ppocr 是 PP-OCRv6 文字检测与识别流水线的 Java 移植版，使用纯 ONNX Runtime 推理、零 PaddlePaddle 依赖，并完整复现预处理 / 后处理（DB 后处理、CTC 解码、pyclipper 等价的多边形 unclip）。移植自 AIwork4me/ppocrv6_onnx 的单文件 Python 参考实现，与 Python 版本保持 bit-exact（默认 CPU 单线程...]]></description>
+        <pubDate>Sun, 20 Sep 2026 10:11:10 +0800</pubDate>
+        <guid><![CDATA[https://www.oschina.net/news/502595]]></guid>
+    </item>
+	<item>
+        <title><![CDATA[Termexo v0.10.4 发布：集成 Grok Build，修复会话 Git 变更归零]]></title>
+        <link><![CDATA[https://www.oschina.net/news/502594]]></link>
+        <category>软件更新新闻</category>
+        <description><![CDATA[Termexo v0.10.4 已发布。新版将 Grok Build 纳入现有 AI 编程终端工作台，并修复长时间使用后会话代码变更显示为 0、Git 面板变空的问题。 Grok Build 加入工作台 安装并登录 Grok Build CLI 后，Termexo 可以检测它、在工作区中启动终端、列出并恢复会话，也可以在任务看板中选择 Grok Build 执行任务。它与 Claude C...]]></description>
+        <pubDate>Sun, 20 Sep 2026 01:18:46 +0800</pubDate>
+        <guid><![CDATA[https://www.oschina.net/news/502594]]></guid>
+    </item>
+	<item>
+        <title><![CDATA[ColorOS 17 新技术解读，渲染、调度与 AI 升级]]></title>
+        <link><![CDATA[https://www.oschina.net/news/502593]]></link>
+        <category>综合新闻</category>
+        <description><![CDATA[2026 年 9 月 17 日，2026 OPPO 开发者大会（ODC26）在珠海举行，ColorOS 17 正式发布。新系统将率先搭载在即将上市的 OPPO Find X10 系列和一加 16 等机型上，后续逐步开启推送。 一场系统发布会通常分为两部分来看，一部分是面向用户的功能清单，另一部分是面向开发者的架构改动。ColorOS 17 这次拿出来的东西，两条线...]]></description>
+        <pubDate>Sat, 19 Sep 2026 12:47:31 +0800</pubDate>
+        <guid><![CDATA[https://www.oschina.net/news/502593]]></guid>
+    </item>
+	<item>
+        <title><![CDATA[InfoSphere 迎来一次大更新：这次把国际化、书评、成就和编辑器都补上了]]></title>
+        <link><![CDATA[https://www.oschina.net/news/502592]]></link>
+        <category>软件更新新闻</category>
+        <description><![CDATA[最近一段时间，我们对 InfoSphere 进行了一次比较大规模的更新。 这次并不是简单增加几个功能，而是围绕 内容创作、阅读体验、国际化、用户成长、SEO 与平台基础能力 做了一轮系统性的完善。 如果你之前使用过 InfoSphere，这次应该能明显感觉到很多细节都变了。 全新的首页与内容发现体验 首先，我们重新调整了首页内容...]]></description>
+        <pubDate>Sat, 19 Sep 2026 11:56:04 +0800</pubDate>
+        <guid><![CDATA[https://www.oschina.net/news/502592]]></guid>
+    </item>
+	<item>
+        <title><![CDATA[别再让 Agent 裸连数据库了：如何用 MCP + 语义网关解决 NL2SQL 幻觉与权限失控]]></title>
+        <link><![CDATA[https://www.oschina.net/news/502591]]></link>
+        <category>综合新闻</category>
+        <description><![CDATA[在 2026 年，给 AI Agent（Cursor、Claude Desktop、Dify、Coze 等）外挂一个数据库连接，已经成为很多开发者的标配操作。从简单的官方 SQLite/MySQL MCP 到各种通用客户端扩展，让大模型“直接查库”的门槛被降得极低。 然而，一旦进入真实业务场景，大部分团队很快就会撞上两堵高墙： 语义幻觉严重：大模型根本不懂企业...]]></description>
+        <pubDate>Fri, 18 Sep 2026 20:54:57 +0800</pubDate>
+        <guid><![CDATA[https://www.oschina.net/news/502591]]></guid>
+    </item>
+	<item>
+        <title><![CDATA[灵界 OS 5.0 稳定版 · 桌面按钮可以隐藏了]]></title>
+        <link><![CDATA[https://www.oschina.net/news/502590]]></link>
+        <category>软件更新新闻</category>
+        <description><![CDATA[这次更新，加了一个很小的开关，但解决了困扰我很久的问题。 之前桌面右上角一直挂着两个按钮： · 系统介绍 · 添加小组件 我自己看着觉得太丑了，但这两个功能又不能没有。所以这次给了个入口，让它们可以隐藏。 更新内容： · 设置 / 桌面，新增隐藏系统介绍开关 · 设置 / 桌面，新增隐藏添加小组件开关 · 两个开关...]]></description>
+        <pubDate>Fri, 18 Sep 2026 18:47:40 +0800</pubDate>
+        <guid><![CDATA[https://www.oschina.net/news/502590]]></guid>
+    </item>
+	<item>
+        <title><![CDATA[智谱旗下 AI 编程工具 ZCode 被扒静默上传完整 Git 历史]]></title>
+        <link><![CDATA[https://www.oschina.net/news/502589]]></link>
+        <category>综合新闻</category>
+        <description><![CDATA[智谱的 AI 编程桌面端 ZCode，今天被扒出一个大问题。开发者 ferstar 发了一篇取证博客，说只要登录了账号，ZCode 会在后台静默把整个工作区——包括完整的 .git 历史、LFS 大文件缓存、reflog 和全局配置——打包加密上传到阿里云 OSS。该消息马上在国内技术圈传开，有人用自己的 Mac 顺着取证路径重跑了一遍，结论是&quot;...]]></description>
+        <pubDate>Fri, 18 Sep 2026 18:23:29 +0800</pubDate>
+        <guid><![CDATA[https://www.oschina.net/news/502589]]></guid>
+    </item>
+	<item>
+        <title><![CDATA[用 SQL 操作 Milvus：从检索到 ORM]]></title>
+        <link><![CDATA[https://www.oschina.net/news/502588]]></link>
+        <category>综合新闻</category>
+        <description><![CDATA[Java 应用通常通过 Milvus SDK 写入数据和检索向量。对关系型数据库开发者来说，SQL 和 JDBC 更熟悉。jdbc-milvus 让这套使用方式也能用于 Milvus： 
+SELECT id, title, score FROM intro_articles -- score 为 L2 平方距离，越小越接近
+WHERE category = &apos;java&apos;                    -- 只在 Java 类别内检索
+ORDER B...]]></description>
+        <pubDate>Fri, 18 Sep 2026 17:16:36 +0800</pubDate>
+        <guid><![CDATA[https://www.oschina.net/news/502588]]></guid>
+    </item>
+	<item>
+        <title><![CDATA[华为发布“Peerium 计算架构”，让百万处理器成为一台计算机]]></title>
+        <link><![CDATA[https://www.oschina.net/news/502587/huawei-new-computing-architecture-peerium]]></link>
+        <category>综合新闻</category>
+        <description><![CDATA[华为发布AI时代的全新计算架构 – Peerium计算架构。该架构能实现百万级处理器成为一台计算机，以满足不断发展的AI算力需求。 Peerium计算架构是基于嵌套并行，统一内存寻址、平等互联实现百万级处理器强扩展的计算架构。Peerium计算架构突破了图灵范式，提出了Nested BSP，突破了冯·诺依曼单机架构，颠覆了长久以来的主...]]></description>
+        <pubDate>Fri, 18 Sep 2026 16:41:45 +0800</pubDate>
+        <guid><![CDATA[https://www.oschina.net/news/502587/huawei-new-computing-architecture-peerium]]></guid>
+    </item>
+</channel>
+</rss>
+<!-- Generated by oschina (init:0[ms],page:16[ms],ip:115.206.135.159) //-->

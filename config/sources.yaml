@@ -1,0 +1,28 @@
+sources:
+  # 均为国内可直连的中文源（2026-09 实测 http_status=200 且有条目）。
+  # url 必须唯一，重复会在启动校验时报错退出。
+  # 新增源前先实测 http_status 与条目数，不要为了凑数保留坏源。
+  - name: InfoQ 中文
+    url: https://www.infoq.cn/feed
+    module: agent
+    enabled: true
+  - name: 量子位
+    url: https://www.qbitai.com/feed
+    module: agent
+    enabled: true
+  - name: 掘金
+    url: https://juejin.cn/rss
+    module: agent
+    enabled: true
+  - name: 开源中国资讯
+    url: https://www.oschina.net/news/rss
+    module: bigdata
+    enabled: true
+  - name: 美团技术团队
+    url: https://tech.meituan.com/feed/
+    module: bigdata
+    enabled: true
+  - name: 博客园首页
+    url: https://feed.cnblogs.com/blog/sitehome/rss
+    module: bigdata
+    enabled: true

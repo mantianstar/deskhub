@@ -1,0 +1,188 @@
+<?xml version="1.0" encoding="UTF-8"?><rss xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:atom="http://www.w3.org/2005/Atom" version="2.0">
+    <channel>
+        <title><![CDATA[掘金]]></title>
+        <description><![CDATA[一个帮助开发者成长的社区，挖掘最优质的互联网技术]]></description>
+        <link>https://juejin.cn</link>
+        <image>
+            <url>https://p1-jj.byteimg.com/tos-cn-i-t2oaga2asx/gold-assets/images/logo-large.png~tplv-t2oaga2asx-image.image</url>
+            <title>掘金</title>
+            <link>https://juejin.cn</link>
+        </image>
+        <generator>RSS for Node</generator>
+        <lastBuildDate>Tue, 22 Sep 2026 08:13:45 GMT</lastBuildDate>
+        <atom:link href="https://juejin.cn/rss" rel="self" type="application/rss+xml"/>
+        <copyright><![CDATA[XITU Team]]></copyright>
+        <managingEditor><![CDATA[XITU Team]]></managingEditor>
+        <webMaster><![CDATA[XITU Team]]></webMaster>
+        <ttl>20</ttl>
+        <category><![CDATA[Web]]></category>
+        <category><![CDATA[Frontend Development]]></category>
+        <category><![CDATA[iOS]]></category>
+        <category><![CDATA[Android]]></category>
+        <category><![CDATA[Backend Development]]></category>
+        <category><![CDATA[Freebie]]></category>
+        <category><![CDATA[Ai]]></category>
+        <category><![CDATA[Career]]></category>
+        <category><![CDATA[Article]]></category>
+        <item>
+            <title><![CDATA[别再前后端各写一套表单校验了]]></title>
+            <description><![CDATA[别再前后端各写一套表单校验了 先说结论 若依默认给了前端 Element-Plus 的 rules + 后端 JSR-303 注解两套校验规则。字段一改要改两处、还容易不一致——「总对不上」的根因就在]]></description>
+            <link>https://juejin.cn/post/7688128367367487542</link>
+            <guid isPermaLink="true">https://juejin.cn/post/7688128367367487542</guid>
+            <dc:creator><![CDATA[胡写代码]]></dc:creator>
+            <pubDate>Tue, 22 Sep 2026 07:53:46 GMT</pubDate>
+        </item>
+        <item>
+            <title><![CDATA[做了近两年的Agent开发，其实真正要学的就是这五件事]]></title>
+            <description><![CDATA[这两年一直致力于公司的Agent开发。总结了一些思考和解决方案，今天给大家分享下，也是给自己的一个复盘。 做 Agent 最有意思的是，通常是 Demo 刚跑通的那一下：模型理解了需求，自己选了工具，]]></description>
+            <link>https://juejin.cn/post/7688159506154209321</link>
+            <guid isPermaLink="true">https://juejin.cn/post/7688159506154209321</guid>
+            <dc:creator><![CDATA[云边有个技术书屋]]></dc:creator>
+            <pubDate>Tue, 22 Sep 2026 07:57:00 GMT</pubDate>
+        </item>
+        <item>
+            <title><![CDATA[ViewRootImpl 事件分发责任链分析]]></title>
+            <description><![CDATA[一、责任链整体结构 责任链在 setView() 方法中构建： 二、InputStage 基类设计 核心机制 (ViewRootImpl.java)： AsyncInputStage 扩展 (View]]></description>
+            <link>https://juejin.cn/post/7688015427068166163</link>
+            <guid isPermaLink="true">https://juejin.cn/post/7688015427068166163</guid>
+            <dc:creator><![CDATA[哈基米南北]]></dc:creator>
+            <pubDate>Tue, 22 Sep 2026 07:50:56 GMT</pubDate>
+        </item>
+        <item>
+            <title><![CDATA[MySQL进阶学习四（存储过程、游标、触发器）]]></title>
+            <description><![CDATA[一、什么是存储过程 存储过程是一组预编译好的 SQL 语句集合，存储在数据库中，可通过名字调用。 预编译：一次编译，多次执行，效率高 封装逻辑：复杂业务逻辑封装在数据库端 可带参数：输入、输出、输入输]]></description>
+            <link>https://juejin.cn/post/7688023798626533426</link>
+            <guid isPermaLink="true">https://juejin.cn/post/7688023798626533426</guid>
+            <dc:creator><![CDATA[小白男神]]></dc:creator>
+            <pubDate>Tue, 22 Sep 2026 07:47:15 GMT</pubDate>
+        </item>
+        <item>
+            <title><![CDATA[AGENTS.md：Agent 的上下文策略层]]></title>
+            <description><![CDATA[Context Engineering 关注模型在每次推理时应该获得哪些信息，以及这些信息如何被选择、组织和维护。模型只能依据当前上下文决策；上下文容量和注意力有限，因此关键不是堆积信息，而是在...]]></description>
+            <link>https://juejin.cn/post/7687633257045573673</link>
+            <guid isPermaLink="true">https://juejin.cn/post/7687633257045573673</guid>
+            <dc:creator><![CDATA[晨米酱]]></dc:creator>
+            <pubDate>Mon, 21 Sep 2026 09:51:39 GMT</pubDate>
+        </item>
+        <item>
+            <title><![CDATA[02-07-原理篇-文件系统与跨平台适配]]></title>
+            <description><![CDATA[文件系统与跨平台适配 一、引言 Unity 游戏需要在多个平台上运行，包括 Android、iOS、PC、WebGL 等。不同平台的文件系统结构和访问方式各不相同，因此需要跨平台适配。本章将深入解析 ]]></description>
+            <link>https://juejin.cn/post/7688252916676018176</link>
+            <guid isPermaLink="true">https://juejin.cn/post/7688252916676018176</guid>
+            <dc:creator><![CDATA[SmalBox]]></dc:creator>
+            <pubDate>Tue, 22 Sep 2026 07:36:32 GMT</pubDate>
+        </item>
+        <item>
+            <title><![CDATA[MVCC深入：Read View、版本链与快照读——InnoDB并发控制的内核]]></title>
+            <description><![CDATA[本文拆解版本链的构建方式、Read View的四个核心字段、RC与RR隔离级别下Read View生成时机的差异、快照读与当前读的底层区别，以及长事务导致undo log膨胀的根因。]]></description>
+            <link>https://juejin.cn/post/7688128367367323702</link>
+            <guid isPermaLink="true">https://juejin.cn/post/7688128367367323702</guid>
+            <dc:creator><![CDATA[这个DBA有点耶]]></dc:creator>
+            <pubDate>Tue, 22 Sep 2026 07:36:06 GMT</pubDate>
+        </item>
+        <item>
+            <title><![CDATA[Node-RED 之外，国产规则引擎的新方案：基于标准语法，Go 先行实现]]></title>
+            <description><![CDATA[为什么 "标准 + 参考实现" 更好 1. 规则与运行时解耦：一种语法，多种实现 标准描述的是 "规则语义"，不规定用什么语言实现。因此： Rust 写边缘网关，可以基于标准实现一个高性能引擎；]]></description>
+            <link>https://juejin.cn/post/7688009718430318602</link>
+            <guid isPermaLink="true">https://juejin.cn/post/7688009718430318602</guid>
+            <dc:creator><![CDATA[alsmile]]></dc:creator>
+            <pubDate>Tue, 22 Sep 2026 07:34:52 GMT</pubDate>
+        </item>
+        <item>
+            <title><![CDATA[我用 LangGraph4j 实现 Multi-Agent Supervisor]]></title>
+            <description><![CDATA[用 LangGraph4j 实现 Multi-Agent Supervisor 的完整实践。 ① 为什么单 Agent 撑不住复杂场景 ② Supervisor 模式的图结构设计]]></description>
+            <link>https://juejin.cn/post/7688018731445075977</link>
+            <guid isPermaLink="true">https://juejin.cn/post/7688018731445075977</guid>
+            <dc:creator><![CDATA[yuzhi_liu]]></dc:creator>
+            <pubDate>Tue, 22 Sep 2026 06:42:31 GMT</pubDate>
+        </item>
+        <item>
+            <title><![CDATA[把一个 Vite + Vue3 应用塞进 qiankun （React + Umi3） 主站：十个坑的复盘]]></title>
+            <description><![CDATA[把一个 Vite + Vue3 应用塞进 qiankun （React + Umi3） 主站：十个坑的复盘 背景 手上有两个前端应用： 主站：React + Umi 3 + @umijs/plugin]]></description>
+            <link>https://juejin.cn/post/7687916128796098594</link>
+            <guid isPermaLink="true">https://juejin.cn/post/7687916128796098594</guid>
+            <dc:creator><![CDATA[卡布鲁]]></dc:creator>
+            <pubDate>Tue, 22 Sep 2026 06:02:14 GMT</pubDate>
+        </item>
+        <item>
+            <title><![CDATA[ValidX 在 DDD 领域驱动设计中的实践]]></title>
+            <description><![CDATA[ValidX 在 DDD 领域驱动设计中的实践 📋 目录 概述 一、DDD 核心概念速览：从贫血模型到富血模型 二、值对象（Value Object）：不可变 + 自校验 三、实体（Entity）：标]]></description>
+            <link>https://juejin.cn/post/7687916128796114978</link>
+            <guid isPermaLink="true">https://juejin.cn/post/7687916128796114978</guid>
+            <dc:creator><![CDATA[vipxieliang]]></dc:creator>
+            <pubDate>Tue, 22 Sep 2026 06:06:35 GMT</pubDate>
+        </item>
+        <item>
+            <title><![CDATA[PHP 内存溢出排查思路：看懂报错日志，精准定位问题]]></title>
+            <description><![CDATA[PHP 内存溢出排查思路：看懂报错日志，精准定位问题 PHP 内存溢出（Allowed memory size of X bytes exhausted）是生产环境最常见的“致命错误”之一。它不像语法]]></description>
+            <link>https://juejin.cn/post/7688023798625845298</link>
+            <guid isPermaLink="true">https://juejin.cn/post/7688023798625845298</guid>
+            <dc:creator><![CDATA[大白80]]></dc:creator>
+            <pubDate>Tue, 22 Sep 2026 06:03:11 GMT</pubDate>
+        </item>
+        <item>
+            <title><![CDATA[PHP 接口返回统一响应封装，让前后端对接更省心]]></title>
+            <description><![CDATA[PHP 接口返回统一响应封装，让前后端对接更省心 这篇文章讲一件事：怎么把 PHP 接口的返回格式统一起来，让前端对接不再靠猜。 一、为什么要统一响应格式 先说结论：不是形式主义，是省命。 不统一的代]]></description>
+            <link>https://juejin.cn/post/7687899083844059163</link>
+            <guid isPermaLink="true">https://juejin.cn/post/7687899083844059163</guid>
+            <dc:creator><![CDATA[二月龙]]></dc:creator>
+            <pubDate>Tue, 22 Sep 2026 06:00:28 GMT</pubDate>
+        </item>
+        <item>
+            <title><![CDATA[原生 PHP 还是 Laravel？小项目到底要不要上框架]]></title>
+            <description><![CDATA[原生 PHP 还是 Laravel？小项目到底要不要上框架 这是一个几乎每个 PHP 开发者都会纠结的问题，而且越纠结越容易踩坑： 小项目上 Laravel，结果服务器 2G 内存跑满，compose]]></description>
+            <link>https://juejin.cn/post/7687889935846359090</link>
+            <guid isPermaLink="true">https://juejin.cn/post/7687889935846359090</guid>
+            <dc:creator><![CDATA[大勇前进]]></dc:creator>
+            <pubDate>Tue, 22 Sep 2026 05:58:48 GMT</pubDate>
+        </item>
+        <item>
+            <title><![CDATA[小米发布并开源 MiMo-V2.6 系列，Pro 与 Flash 双版本，API 价格与前代持平]]></title>
+            <description><![CDATA[围绕 小米发布并开源 MiMo-V2.6 系列，Pro 与 Flash 双版本，API 价格与前代持平 展开，把 solution_architecture、小米发布并开源 MiMo-V2.6 系列、]]></description>
+            <link>https://juejin.cn/post/7687902696659943466</link>
+            <guid isPermaLink="true">https://juejin.cn/post/7687902696659943466</guid>
+            <dc:creator><![CDATA[公众号_计算机魔术师]]></dc:creator>
+            <pubDate>Tue, 22 Sep 2026 06:20:12 GMT</pubDate>
+        </item>
+        <item>
+            <title><![CDATA[ 2026年HTML迎来重磅进化：原生3D、可定制Select、声明式交互，前端开发范式正在被改写]]></title>
+            <description><![CDATA[一、原生3D模型：像插入图片一样简单 2026年6月，苹果在WWDC26上正式将<model>元素从visionOS扩展到了iOS、iPadOS和macOS。 这意味着什么？开发者写一行HTML就能在]]></description>
+            <link>https://juejin.cn/post/7687902696659894314</link>
+            <guid isPermaLink="true">https://juejin.cn/post/7687902696659894314</guid>
+            <dc:creator><![CDATA[涛涛ing]]></dc:creator>
+            <pubDate>Tue, 22 Sep 2026 06:11:13 GMT</pubDate>
+        </item>
+        <item>
+            <title><![CDATA[ Jev：不是聊天机器人， 而是一个智能 if 语句]]></title>
+            <description><![CDATA[2026 年 9 月 15 日，TypeSafe AI 带着 4000 万美元种子轮融资从隐身状态亮相，发布了第一个"System One"模型——Jev。它不写文本、不写代码，只做一件事：帮你做决策]]></description>
+            <link>https://juejin.cn/post/7688159506153095209</link>
+            <guid isPermaLink="true">https://juejin.cn/post/7688159506153095209</guid>
+            <dc:creator><![CDATA[汉堡大王9527]]></dc:creator>
+            <pubDate>Tue, 22 Sep 2026 05:52:22 GMT</pubDate>
+        </item>
+        <item>
+            <title><![CDATA[从固定流程到问题路由：让 LangGraph RAG 按需检索]]></title>
+            <description><![CDATA[上一篇[《# LangChain 到 LangGraph： RAG 知识库改造》]把问答流程拆成了两个节点： retrieve 读取问题并检索资料，generate 根据资料生成答案，节点之间通过 S]]></description>
+            <link>https://juejin.cn/post/7687902696659566634</link>
+            <guid isPermaLink="true">https://juejin.cn/post/7687902696659566634</guid>
+            <dc:creator><![CDATA[绿色蟑螂]]></dc:creator>
+            <pubDate>Tue, 22 Sep 2026 04:46:31 GMT</pubDate>
+        </item>
+        <item>
+            <title><![CDATA[Kotlin 协程中的 Job 结构化并发与取消]]></title>
+            <description><![CDATA[Kotlin 协程中的 Job 结构化并发与取消 Job 是 Kotlin 协程生命周期管理的核心。每个由协程构建器创建的协程都有自己的 Job；父子 Job 组成一棵任务树，使父协程能够等待子协程，]]></description>
+            <link>https://juejin.cn/post/7687972882229002281</link>
+            <guid isPermaLink="true">https://juejin.cn/post/7687972882229002281</guid>
+            <dc:creator><![CDATA[ttyyttemo]]></dc:creator>
+            <pubDate>Tue, 22 Sep 2026 03:29:36 GMT</pubDate>
+        </item>
+        <item>
+            <title><![CDATA[腾讯开源了一个项目，让 AI 直接用你已经登录好的浏览器]]></title>
+            <description><![CDATA[导语，本文你能学到什么 2026 年 9 月，腾讯 PCG 开源了一个叫 BrowserSkill 的项目。它解决的是一个很具体的问题，让 AI 助手直接复用你电脑上 Chrome 或 Edge 里已]]></description>
+            <link>https://juejin.cn/post/7688023798625632306</link>
+            <guid isPermaLink="true">https://juejin.cn/post/7688023798625632306</guid>
+            <dc:creator><![CDATA[小虎AI生活]]></dc:creator>
+            <pubDate>Tue, 22 Sep 2026 05:26:05 GMT</pubDate>
+        </item>
+    </channel>
+</rss>

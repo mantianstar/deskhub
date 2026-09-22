@@ -1,0 +1,13 @@
+fastapi
+uvicorn[standard]
+jinja2
+httpx
+feedparser
+apscheduler
+pyyaml
+python-dotenv
+
+# dev
+pytest
+pytest-asyncio
+respx

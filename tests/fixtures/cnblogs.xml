@@ -1,0 +1,288 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title type="text">博客园_首页</title>
+  <subtitle type="text">代码改变世界</subtitle>
+  <id>uuid:9b5e00a2-9305-46aa-b780-771276a27a17;id=1147017</id>
+  <updated>2026-09-22T08:06:30Z</updated>
+  <generator>feed.cnblogs.com</generator>
+  <entry>
+    <id>https://www.cnblogs.com/LyShark/p/23079567</id>
+    <title type="text">MysticMirror 自研大模型全维度自动化测试套件（42 项用例） - lyshark</title>
+    <summary type="text">本文档为 MysticMirror 自研大模型的全覆盖自动化回归测试套件，整合原有 22 项基础回归测试与 20 项新增边界能力测试，共计 42 个测试用例。全面覆盖模型配置校验、RoPE 位置编码（原生 / YaRN 缩放 / 长序列外推）、注意力掩码、KV 缓存两种格式兼容性、混合精度训练、权重...</summary>
+    <published>2026-09-22T07:37:00Z</published>
+    <updated>2026-09-22T07:37:00Z</updated>
+    <author>
+      <name>lyshark</name>
+      <uri>https://www.cnblogs.com/LyShark/</uri>
+    </author>
+    <link rel="alternate" href="https://www.cnblogs.com/LyShark/p/23079567" />
+    <link rel="alternate" type="text/html" href="https://www.cnblogs.com/LyShark/p/23079567" />
+    <content type="html">【摘要】本文档为 MysticMirror 自研大模型的全覆盖自动化回归测试套件，整合原有 22 项基础回归测试与 20 项新增边界能力测试，共计 42 个测试用例。全面覆盖模型配置校验、RoPE 位置编码（原生 / YaRN 缩放 / 长序列外推）、注意力掩码、KV 缓存两种格式兼容性、混合精度训练、权重... &lt;a href="https://www.cnblogs.com/LyShark/p/23079567" target="_blank"&gt;阅读全文&lt;/a&gt;</content>
+  </entry>
+  <entry>
+    <id>https://www.cnblogs.com/owlman/p/23077541</id>
+    <title type="text">NeoVim 使用笔记 - 凌杰</title>
+    <summary type="text">title: Neovim 使用笔记 author: 凌杰 date: 2020-07-15 updated: 2026-09-10 tags: [文本编辑器, Neovim, LSP, lazy.nvim] categories: [命令行工具] [!NOTE] 笔记说明 这篇笔记用于记录本人在使</summary>
+    <published>2026-09-22T05:24:00Z</published>
+    <updated>2026-09-22T05:24:00Z</updated>
+    <author>
+      <name>凌杰</name>
+      <uri>https://www.cnblogs.com/owlman/</uri>
+    </author>
+    <link rel="alternate" href="https://www.cnblogs.com/owlman/p/23077541" />
+    <link rel="alternate" type="text/html" href="https://www.cnblogs.com/owlman/p/23077541" />
+    <content type="html">【摘要】title: Neovim 使用笔记 author: 凌杰 date: 2020-07-15 updated: 2026-09-10 tags: [文本编辑器, Neovim, LSP, lazy.nvim] categories: [命令行工具] [!NOTE] 笔记说明 这篇笔记用于记录本人在使 &lt;a href="https://www.cnblogs.com/owlman/p/23077541" target="_blank"&gt;阅读全文&lt;/a&gt;</content>
+  </entry>
+  <entry>
+    <id>https://www.cnblogs.com/dicengwanjialaozhang/p/23076598</id>
+    <title type="text">什么是关系型数据库：一次库存超卖事故的内核复盘 - 底层玩家老张</title>
+    <summary type="text">关系型数据库不只是&amp;quot;二维表+SQL+ACID&amp;quot;。从一次秒杀超卖事故出发，拆开WAL、MVCC、B+Tree，讲清它在磁盘上到底怎么跑，以及信创选型该怎么挑。</summary>
+    <published>2026-09-22T03:39:00Z</published>
+    <updated>2026-09-22T03:39:00Z</updated>
+    <author>
+      <name>底层玩家老张</name>
+      <uri>https://www.cnblogs.com/dicengwanjialaozhang/</uri>
+    </author>
+    <link rel="alternate" href="https://www.cnblogs.com/dicengwanjialaozhang/p/23076598" />
+    <link rel="alternate" type="text/html" href="https://www.cnblogs.com/dicengwanjialaozhang/p/23076598" />
+    <content type="html">【摘要】关系型数据库不只是&amp;quot;二维表+SQL+ACID&amp;quot;。从一次秒杀超卖事故出发，拆开WAL、MVCC、B+Tree，讲清它在磁盘上到底怎么跑，以及信创选型该怎么挑。 &lt;a href="https://www.cnblogs.com/dicengwanjialaozhang/p/23076598" target="_blank"&gt;阅读全文&lt;/a&gt;</content>
+  </entry>
+  <entry>
+    <id>https://www.cnblogs.com/ai-ldj/p/23076443</id>
+    <title type="text">Robotics-从笛卡尔坐标到齐次变换，一次理清位置、姿态与位姿 - lvdongjie-avatarx</title>
+    <summary type="text">机器人学基础：从笛卡尔坐标到齐次变换，一次理清位置、姿态与位姿 学习机器人运动学时，我们经常遇到几组看似相近、又不能互相替代的概念：笛卡尔坐标、欧拉角、旋转矩阵、齐次变换和四元数。 它们之间到底是什么关系？为什么一个三维空间中的刚体，会用到一个 4&amp;#215;4 矩阵？矩阵里有 16 个数，是否意味着机器人有</summary>
+    <published>2026-09-22T03:32:00Z</published>
+    <updated>2026-09-22T03:32:00Z</updated>
+    <author>
+      <name>lvdongjie-avatarx</name>
+      <uri>https://www.cnblogs.com/ai-ldj/</uri>
+    </author>
+    <link rel="alternate" href="https://www.cnblogs.com/ai-ldj/p/23076443" />
+    <link rel="alternate" type="text/html" href="https://www.cnblogs.com/ai-ldj/p/23076443" />
+    <content type="html">【摘要】机器人学基础：从笛卡尔坐标到齐次变换，一次理清位置、姿态与位姿 学习机器人运动学时，我们经常遇到几组看似相近、又不能互相替代的概念：笛卡尔坐标、欧拉角、旋转矩阵、齐次变换和四元数。 它们之间到底是什么关系？为什么一个三维空间中的刚体，会用到一个 4&amp;#215;4 矩阵？矩阵里有 16 个数，是否意味着机器人有 &lt;a href="https://www.cnblogs.com/ai-ldj/p/23076443" target="_blank"&gt;阅读全文&lt;/a&gt;</content>
+  </entry>
+  <entry>
+    <id>https://www.cnblogs.com/exioran/p/23075327</id>
+    <title type="text">Python coverage 进阶：从跑命令到“构造“覆盖率报告 - EXIORAN</title>
+    <summary type="text">大多数人对 coverage 的认知停留在 coverage run + coverage html，但它在测试工程里还有更硬核的一面：多进程数据合并、代码内 API 采集、读懂并手工构造 .coverage 文件、脚本化批量生成报告。这篇文章沿着&amp;quot;命令行 → 代码级 → 数据级&amp;quot;三层递进，把这套能</summary>
+    <published>2026-09-22T02:46:00Z</published>
+    <updated>2026-09-22T02:46:00Z</updated>
+    <author>
+      <name>EXIORAN</name>
+      <uri>https://www.cnblogs.com/exioran/</uri>
+    </author>
+    <link rel="alternate" href="https://www.cnblogs.com/exioran/p/23075327" />
+    <link rel="alternate" type="text/html" href="https://www.cnblogs.com/exioran/p/23075327" />
+    <content type="html">【摘要】大多数人对 coverage 的认知停留在 coverage run + coverage html，但它在测试工程里还有更硬核的一面：多进程数据合并、代码内 API 采集、读懂并手工构造 .coverage 文件、脚本化批量生成报告。这篇文章沿着&amp;quot;命令行 → 代码级 → 数据级&amp;quot;三层递进，把这套能 &lt;a href="https://www.cnblogs.com/exioran/p/23075327" target="_blank"&gt;阅读全文&lt;/a&gt;</content>
+  </entry>
+  <entry>
+    <id>https://www.cnblogs.com/ai-old-six/p/23075259</id>
+    <title type="text">Agent 记忆系统的分层设计 - AI小老六</title>
+    <summary type="text">Agent 记忆不该只是聊天记录压缩，而要分清任务、用户、历史事实和可复用能力的权威层级。 从 L0 到 L4 拆解工作记忆、长期记忆和 Skill 治理边界 Agent 没有记忆时，每个新任务都像重新认识用户。 它不知道你之前定过什么规则，不知道哪些方案已经试过，也不知道上一个线程里留下了什么结论</summary>
+    <published>2026-09-22T02:42:00Z</published>
+    <updated>2026-09-22T02:42:00Z</updated>
+    <author>
+      <name>AI小老六</name>
+      <uri>https://www.cnblogs.com/ai-old-six/</uri>
+    </author>
+    <link rel="alternate" href="https://www.cnblogs.com/ai-old-six/p/23075259" />
+    <link rel="alternate" type="text/html" href="https://www.cnblogs.com/ai-old-six/p/23075259" />
+    <content type="html">【摘要】Agent 记忆不该只是聊天记录压缩，而要分清任务、用户、历史事实和可复用能力的权威层级。 从 L0 到 L4 拆解工作记忆、长期记忆和 Skill 治理边界 Agent 没有记忆时，每个新任务都像重新认识用户。 它不知道你之前定过什么规则，不知道哪些方案已经试过，也不知道上一个线程里留下了什么结论 &lt;a href="https://www.cnblogs.com/ai-old-six/p/23075259" target="_blank"&gt;阅读全文&lt;/a&gt;</content>
+  </entry>
+  <entry>
+    <id>https://www.cnblogs.com/xiexj/p/23075271</id>
+    <title type="text">DevOps从持续开发到持续部署 - 编程一生</title>
+    <summary type="text">DevOps 与 CICD 的关系 DevOps 就是开发（Development）、测试（QA）、运维（Operations）这三个领域的合并。虽然名字中没有体现，但是DevOps仍包括测试。 DevOps 是一种方法论，是一组过程、方法与系统的统称，用于促进应用开发、应用运维和质量保障（QA）部</summary>
+    <published>2026-09-22T02:42:00Z</published>
+    <updated>2026-09-22T02:42:00Z</updated>
+    <author>
+      <name>编程一生</name>
+      <uri>https://www.cnblogs.com/xiexj/</uri>
+    </author>
+    <link rel="alternate" href="https://www.cnblogs.com/xiexj/p/23075271" />
+    <link rel="alternate" type="text/html" href="https://www.cnblogs.com/xiexj/p/23075271" />
+    <content type="html">【摘要】DevOps 与 CICD 的关系 DevOps 就是开发（Development）、测试（QA）、运维（Operations）这三个领域的合并。虽然名字中没有体现，但是DevOps仍包括测试。 DevOps 是一种方法论，是一组过程、方法与系统的统称，用于促进应用开发、应用运维和质量保障（QA）部 &lt;a href="https://www.cnblogs.com/xiexj/p/23075271" target="_blank"&gt;阅读全文&lt;/a&gt;</content>
+  </entry>
+  <entry>
+    <id>https://www.cnblogs.com/miku196/p/23074579</id>
+    <title type="text">geo-toolbox 水文插件算法解析：从 Muskingum 到 Muskingum-Cunge - mikuyyds</title>
+    <summary type="text">geo-toolbox 水文插件算法解析：从 Muskingum 到 Muskingum-Cunge 本文分析 Miku196/geo-toolbox 中 geo-plugin-hydro 的河道洪水演进模块，讨论经典 Muskingum 法与物理参数化的 Muskingum-Cunge 法，并给出</summary>
+    <published>2026-09-22T02:21:00Z</published>
+    <updated>2026-09-22T02:21:00Z</updated>
+    <author>
+      <name>mikuyyds</name>
+      <uri>https://www.cnblogs.com/miku196/</uri>
+    </author>
+    <link rel="alternate" href="https://www.cnblogs.com/miku196/p/23074579" />
+    <link rel="alternate" type="text/html" href="https://www.cnblogs.com/miku196/p/23074579" />
+    <content type="html">【摘要】geo-toolbox 水文插件算法解析：从 Muskingum 到 Muskingum-Cunge 本文分析 Miku196/geo-toolbox 中 geo-plugin-hydro 的河道洪水演进模块，讨论经典 Muskingum 法与物理参数化的 Muskingum-Cunge 法，并给出 &lt;a href="https://www.cnblogs.com/miku196/p/23074579" target="_blank"&gt;阅读全文&lt;/a&gt;</content>
+  </entry>
+  <entry>
+    <id>https://www.cnblogs.com/codigger/p/23074289</id>
+    <title type="text">我用 AI 做完整项目后，总结出一套把需求钉死的工作流 - codigger</title>
+    <summary type="text">做了十几年开发，今年最大的变化是把 Codex、Claude Code 这类 Agent 真正用进项目里，而不是只在 demo 阶段玩玩。最近用它们做完一个本地 epub 阅读器，踩的坑和攒的经验，值得记一笔。 先说我的核心主张：用 AI 写代码不能只甩一条指令，必须建立一套&amp;quot;把预期逐步固化&amp;quot;的工作</summary>
+    <published>2026-09-22T02:11:00Z</published>
+    <updated>2026-09-22T02:11:00Z</updated>
+    <author>
+      <name>codigger</name>
+      <uri>https://www.cnblogs.com/codigger/</uri>
+    </author>
+    <link rel="alternate" href="https://www.cnblogs.com/codigger/p/23074289" />
+    <link rel="alternate" type="text/html" href="https://www.cnblogs.com/codigger/p/23074289" />
+    <content type="html">【摘要】做了十几年开发，今年最大的变化是把 Codex、Claude Code 这类 Agent 真正用进项目里，而不是只在 demo 阶段玩玩。最近用它们做完一个本地 epub 阅读器，踩的坑和攒的经验，值得记一笔。 先说我的核心主张：用 AI 写代码不能只甩一条指令，必须建立一套&amp;quot;把预期逐步固化&amp;quot;的工作 &lt;a href="https://www.cnblogs.com/codigger/p/23074289" target="_blank"&gt;阅读全文&lt;/a&gt;</content>
+  </entry>
+  <entry>
+    <id>https://www.cnblogs.com/maomao777/p/23074288</id>
+    <title type="text">RuoYi-Cloud-Plus一些坑 - 没有烦恼的猫猫</title>
+    <summary type="text">1、RedisUtils工具类 在 RuoYi-Cloud-Plus 的多租户模式下，RedisUtils.getClient().set 和 RedisUtils.setCacheObject 对 key 的处理确实不一样，前者不会自动拼接租户 ID。  两者的区别 RedisUtils.ge</summary>
+    <published>2026-09-22T02:11:00Z</published>
+    <updated>2026-09-22T02:11:00Z</updated>
+    <author>
+      <name>没有烦恼的猫猫</name>
+      <uri>https://www.cnblogs.com/maomao777/</uri>
+    </author>
+    <link rel="alternate" href="https://www.cnblogs.com/maomao777/p/23074288" />
+    <link rel="alternate" type="text/html" href="https://www.cnblogs.com/maomao777/p/23074288" />
+    <content type="html">【摘要】1、RedisUtils工具类 在 RuoYi-Cloud-Plus 的多租户模式下，RedisUtils.getClient().set 和 RedisUtils.setCacheObject 对 key 的处理确实不一样，前者不会自动拼接租户 ID。  两者的区别 RedisUtils.ge &lt;a href="https://www.cnblogs.com/maomao777/p/23074288" target="_blank"&gt;阅读全文&lt;/a&gt;</content>
+  </entry>
+  <entry>
+    <id>https://www.cnblogs.com/jazz-z/p/23073564</id>
+    <title type="text">Python 如何提取 PDF 表格数据并写入 SQLite？ - LAYONTHEGROUND</title>
+    <summary type="text">处理 PDF 表格数据的场景很常见：季度报表、对账单、业务台账，业务方给一份 PDF 过来，需要结构化后进数据库做后续分析。本文分享一个完整的 Python 实现，覆盖从表格提取、字段清洗、动态建表到批量入库的全流程。代码依赖免费库 Free Spire.PDF 完成 PDF 解析，其余全部基于标准</summary>
+    <published>2026-09-22T01:38:00Z</published>
+    <updated>2026-09-22T01:38:00Z</updated>
+    <author>
+      <name>LAYONTHEGROUND</name>
+      <uri>https://www.cnblogs.com/jazz-z/</uri>
+    </author>
+    <link rel="alternate" href="https://www.cnblogs.com/jazz-z/p/23073564" />
+    <link rel="alternate" type="text/html" href="https://www.cnblogs.com/jazz-z/p/23073564" />
+    <content type="html">【摘要】处理 PDF 表格数据的场景很常见：季度报表、对账单、业务台账，业务方给一份 PDF 过来，需要结构化后进数据库做后续分析。本文分享一个完整的 Python 实现，覆盖从表格提取、字段清洗、动态建表到批量入库的全流程。代码依赖免费库 Free Spire.PDF 完成 PDF 解析，其余全部基于标准 &lt;a href="https://www.cnblogs.com/jazz-z/p/23073564" target="_blank"&gt;阅读全文&lt;/a&gt;</content>
+  </entry>
+  <entry>
+    <id>https://www.cnblogs.com/zrui-xyu/p/23073247</id>
+    <title type="text">DTO、VO、PO 到底要不要拆？一篇讲透 Java 实体分层的底层逻辑 - Rain的Java大神实战圈</title>
+    <summary type="text">Java 开发常纠结 PO、DTO、VO 是否拆分。本文拆解分层实体职责与完整数据流转链路，核心亮点：采用 MapStruct 编译期对象转换，对比反射工具性能与类型安全；结合实战代码演示分层脱敏；给出落地避坑方案，用 ArchUnit 做架构校验防止 PO 外泄。附带决策树，拒绝八股式硬套，按项目...</summary>
+    <published>2026-09-22T01:24:00Z</published>
+    <updated>2026-09-22T01:24:00Z</updated>
+    <author>
+      <name>Rain的Java大神实战圈</name>
+      <uri>https://www.cnblogs.com/zrui-xyu/</uri>
+    </author>
+    <link rel="alternate" href="https://www.cnblogs.com/zrui-xyu/p/23073247" />
+    <link rel="alternate" type="text/html" href="https://www.cnblogs.com/zrui-xyu/p/23073247" />
+    <content type="html">【摘要】Java 开发常纠结 PO、DTO、VO 是否拆分。本文拆解分层实体职责与完整数据流转链路，核心亮点：采用 MapStruct 编译期对象转换，对比反射工具性能与类型安全；结合实战代码演示分层脱敏；给出落地避坑方案，用 ArchUnit 做架构校验防止 PO 外泄。附带决策树，拒绝八股式硬套，按项目... &lt;a href="https://www.cnblogs.com/zrui-xyu/p/23073247" target="_blank"&gt;阅读全文&lt;/a&gt;</content>
+  </entry>
+  <entry>
+    <id>https://www.cnblogs.com/jinjiangongzuoshi/p/23073018</id>
+    <title type="text">cloudflared，不需要服务器和公网 IP 的免费内网穿透，一条命令上手 - 狂师</title>
+    <summary type="text">大家好，我是狂师。 前阵子 Hacker News 首页挂了个老工具，Cloudflare 的隧道服务，页面上一句口号挺扎眼。 Your agent needs a URL, not a laptop. 意思很直白，Agent 要干活，先得有一个公网能访问的地址，光在自己那台笔记本本地跑没用。 现在</summary>
+    <published>2026-09-22T01:13:00Z</published>
+    <updated>2026-09-22T01:13:00Z</updated>
+    <author>
+      <name>狂师</name>
+      <uri>https://www.cnblogs.com/jinjiangongzuoshi/</uri>
+    </author>
+    <link rel="alternate" href="https://www.cnblogs.com/jinjiangongzuoshi/p/23073018" />
+    <link rel="alternate" type="text/html" href="https://www.cnblogs.com/jinjiangongzuoshi/p/23073018" />
+    <content type="html">【摘要】大家好，我是狂师。 前阵子 Hacker News 首页挂了个老工具，Cloudflare 的隧道服务，页面上一句口号挺扎眼。 Your agent needs a URL, not a laptop. 意思很直白，Agent 要干活，先得有一个公网能访问的地址，光在自己那台笔记本本地跑没用。 现在 &lt;a href="https://www.cnblogs.com/jinjiangongzuoshi/p/23073018" target="_blank"&gt;阅读全文&lt;/a&gt;</content>
+  </entry>
+  <entry>
+    <id>https://www.cnblogs.com/zw-awa/p/23068637</id>
+    <title type="text">按键接到 STM32 后：GPIO 输入到底读到了什么 - Zw-awa</title>
+    <summary type="text">按键的一端接在引脚上，另一端接到哪里，芯片看到的并不一样。同一颗按键、同一段程序，只是换一种输入模式，松手之后的读数为什么就没了定论？</summary>
+    <published>2026-09-22T00:45:00Z</published>
+    <updated>2026-09-22T00:45:00Z</updated>
+    <author>
+      <name>Zw-awa</name>
+      <uri>https://www.cnblogs.com/zw-awa/</uri>
+    </author>
+    <link rel="alternate" href="https://www.cnblogs.com/zw-awa/p/23068637" />
+    <link rel="alternate" type="text/html" href="https://www.cnblogs.com/zw-awa/p/23068637" />
+    <content type="html">【摘要】按键的一端接在引脚上，另一端接到哪里，芯片看到的并不一样。同一颗按键、同一段程序，只是换一种输入模式，松手之后的读数为什么就没了定论？ &lt;a href="https://www.cnblogs.com/zw-awa/p/23068637" target="_blank"&gt;阅读全文&lt;/a&gt;</content>
+  </entry>
+  <entry>
+    <id>https://www.cnblogs.com/yuyisi/p/23058239</id>
+    <title type="text">一切都会回潮-写在一个职业周期的低处 - 余一思</title>
+    <summary type="text">我第一次真正意识到“周期”的存在，是在一堆旧代码面前。 几年前，我参与过一个核心系统的重构。它承载着很高的流量，代码库却已经年久失修。许多逻辑层层叠叠地缠在一起，一处看似简单的改动，常常会在另一个看起来毫不相干的地方引发问题。团队里几乎没有人愿意碰它。 我们花了几个月拆解、重写、迁移，像在飞行途中更</summary>
+    <published>2026-09-22T00:38:00Z</published>
+    <updated>2026-09-22T00:38:00Z</updated>
+    <author>
+      <name>余一思</name>
+      <uri>https://www.cnblogs.com/yuyisi/</uri>
+    </author>
+    <link rel="alternate" href="https://www.cnblogs.com/yuyisi/p/23058239" />
+    <link rel="alternate" type="text/html" href="https://www.cnblogs.com/yuyisi/p/23058239" />
+    <content type="html">【摘要】我第一次真正意识到“周期”的存在，是在一堆旧代码面前。 几年前，我参与过一个核心系统的重构。它承载着很高的流量，代码库却已经年久失修。许多逻辑层层叠叠地缠在一起，一处看似简单的改动，常常会在另一个看起来毫不相干的地方引发问题。团队里几乎没有人愿意碰它。 我们花了几个月拆解、重写、迁移，像在飞行途中更 &lt;a href="https://www.cnblogs.com/yuyisi/p/23058239" target="_blank"&gt;阅读全文&lt;/a&gt;</content>
+  </entry>
+  <entry>
+    <id>https://www.cnblogs.com/zhangs1986/p/22956469</id>
+    <title type="text">踩坑记：一次Nacos客户端偶发connect timed out全链路排查 - 一个码农的日常</title>
+    <summary type="text">在某天晚上发完版后一些服务连接nacos偶尔打以下异常日志： nacos [com.alibaba.nacos.client.naming.updater] ERROR com.alibaba.nacos.client.naming -request 192.168.0.11:8848 failed</summary>
+    <published>2026-09-22T00:00:00Z</published>
+    <updated>2026-09-22T00:00:00Z</updated>
+    <author>
+      <name>一个码农的日常</name>
+      <uri>https://www.cnblogs.com/zhangs1986/</uri>
+    </author>
+    <link rel="alternate" href="https://www.cnblogs.com/zhangs1986/p/22956469" />
+    <link rel="alternate" type="text/html" href="https://www.cnblogs.com/zhangs1986/p/22956469" />
+    <content type="html">【摘要】在某天晚上发完版后一些服务连接nacos偶尔打以下异常日志： nacos [com.alibaba.nacos.client.naming.updater] ERROR com.alibaba.nacos.client.naming -request 192.168.0.11:8848 failed &lt;a href="https://www.cnblogs.com/zhangs1986/p/22956469" target="_blank"&gt;阅读全文&lt;/a&gt;</content>
+  </entry>
+  <entry>
+    <id>https://www.cnblogs.com/xiezhr/p/23072190</id>
+    <title type="text">我用豆包 Seed-2.1-pro-0915 做了个「今天吃啥」，中午点菜这事终于不用纠结了 - 程序员晓凡</title>
+    <summary type="text">每天上午快到十一点四十，办公室里就会冒出一句「今天中午吃啥」。 我们几个中午基本在公司附近解决，来来回回就是那几家店。店面是固定的，菜点得越来越窄。我连着四天点了青椒土豆丝，第五天再报这个菜名的时候，同事看我的眼神有点不对。 难处不是没得选。附近几家馆子的菜单加起来少说上百道菜，谁都想不出新花样，也</summary>
+    <published>2026-09-21T23:49:00Z</published>
+    <updated>2026-09-21T23:49:00Z</updated>
+    <author>
+      <name>程序员晓凡</name>
+      <uri>https://www.cnblogs.com/xiezhr/</uri>
+    </author>
+    <link rel="alternate" href="https://www.cnblogs.com/xiezhr/p/23072190" />
+    <link rel="alternate" type="text/html" href="https://www.cnblogs.com/xiezhr/p/23072190" />
+    <content type="html">【摘要】每天上午快到十一点四十，办公室里就会冒出一句「今天中午吃啥」。 我们几个中午基本在公司附近解决，来来回回就是那几家店。店面是固定的，菜点得越来越窄。我连着四天点了青椒土豆丝，第五天再报这个菜名的时候，同事看我的眼神有点不对。 难处不是没得选。附近几家馆子的菜单加起来少说上百道菜，谁都想不出新花样，也 &lt;a href="https://www.cnblogs.com/xiezhr/p/23072190" target="_blank"&gt;阅读全文&lt;/a&gt;</content>
+  </entry>
+  <entry>
+    <id>https://www.cnblogs.com/jyzhao/p/23071778</id>
+    <title type="text">npm 源切换：一条命令搞定 - AlfredZhao</title>
+    <summary type="text">在国内做前端开发，npm install 慢到让人怀疑人生是常事。问题往往不在网络本身，而在默认的 npm 源。本文用最少的命令，把这件事讲清楚。 01 | 先看看当前用的是哪个源 打开终端，输入： npm config get registry 笔者环境里执行后返回： https://regist</summary>
+    <published>2026-09-21T22:56:00Z</published>
+    <updated>2026-09-21T22:56:00Z</updated>
+    <author>
+      <name>AlfredZhao</name>
+      <uri>https://www.cnblogs.com/jyzhao/</uri>
+    </author>
+    <link rel="alternate" href="https://www.cnblogs.com/jyzhao/p/23071778" />
+    <link rel="alternate" type="text/html" href="https://www.cnblogs.com/jyzhao/p/23071778" />
+    <content type="html">【摘要】在国内做前端开发，npm install 慢到让人怀疑人生是常事。问题往往不在网络本身，而在默认的 npm 源。本文用最少的命令，把这件事讲清楚。 01 | 先看看当前用的是哪个源 打开终端，输入： npm config get registry 笔者环境里执行后返回： https://regist &lt;a href="https://www.cnblogs.com/jyzhao/p/23071778" target="_blank"&gt;阅读全文&lt;/a&gt;</content>
+  </entry>
+  <entry>
+    <id>https://www.cnblogs.com/skybot/p/23069801</id>
+    <title type="text">ESP32-WROOM-32 设备管理页从零到上线 - daonidedie</title>
+    <summary type="text">一、背景 玩园子这么多年了一直是在看园子的文章，但我自己没怎么发过。这两天突然发现了我几年前买的esp32 开发板。几年之前准备用nanoFramework 做的,试了几次没成功后来就吃灰了。但是呢，现有有AI了。于是我想到了一个点子，用AI做一下我之前没搞过的嵌入式开发。我准备做一个跑在 ESP3</summary>
+    <published>2026-09-21T15:26:00Z</published>
+    <updated>2026-09-21T15:26:00Z</updated>
+    <author>
+      <name>daonidedie</name>
+      <uri>https://www.cnblogs.com/skybot/</uri>
+    </author>
+    <link rel="alternate" href="https://www.cnblogs.com/skybot/p/23069801" />
+    <link rel="alternate" type="text/html" href="https://www.cnblogs.com/skybot/p/23069801" />
+    <content type="html">【摘要】一、背景 玩园子这么多年了一直是在看园子的文章，但我自己没怎么发过。这两天突然发现了我几年前买的esp32 开发板。几年之前准备用nanoFramework 做的,试了几次没成功后来就吃灰了。但是呢，现有有AI了。于是我想到了一个点子，用AI做一下我之前没搞过的嵌入式开发。我准备做一个跑在 ESP3 &lt;a href="https://www.cnblogs.com/skybot/p/23069801" target="_blank"&gt;阅读全文&lt;/a&gt;</content>
+  </entry>
+  <entry>
+    <id>https://www.cnblogs.com/yanshajiuzhou/p/23069770</id>
+    <title type="text">Redis 数据结构：从五种基础到四种高级 - 烟沙九洲</title>
+    <summary type="text">Redis 表面上是九种数据类型，底层实际由更少的编码结构组合而成。Redis 会根据数据量和元素大小自动选择编码，小数据用紧凑结构省内存，大数据切换到高效结构保性能。</summary>
+    <published>2026-09-21T15:14:00Z</published>
+    <updated>2026-09-21T15:14:00Z</updated>
+    <author>
+      <name>烟沙九洲</name>
+      <uri>https://www.cnblogs.com/yanshajiuzhou/</uri>
+    </author>
+    <link rel="alternate" href="https://www.cnblogs.com/yanshajiuzhou/p/23069770" />
+    <link rel="alternate" type="text/html" href="https://www.cnblogs.com/yanshajiuzhou/p/23069770" />
+    <content type="html">【摘要】Redis 表面上是九种数据类型，底层实际由更少的编码结构组合而成。Redis 会根据数据量和元素大小自动选择编码，小数据用紧凑结构省内存，大数据切换到高效结构保性能。 &lt;a href="https://www.cnblogs.com/yanshajiuzhou/p/23069770" target="_blank"&gt;阅读全文&lt;/a&gt;</content>
+  </entry>
+</feed>

@@ -1,0 +1,169 @@
+<rss version="2.0">
+  <channel>
+    <title>InfoQ - 促进软件开发领域知识与创新的传播</title>
+    <link>https://www.infoq.cn</link>
+    <description>InfoQ 是一个实践驱动的社区资讯站点，致力于促进软件开发领域知识与创新的传播。</description>
+    <pubDate>Tue, 22 Sep 2026 16:16:02 GMT</pubDate>
+    <copyright>Copyright © 2019, Geekbang Technology Ltd. All rights reserved. 极客邦控股（北京）有限公司</copyright>
+    <item>
+      <title>Meta 开源 Astryx：面向 Agent 的 React 设计系统</title>
+      <link>https://www.infoq.cn/article/He6bUhlNIuPEa99GGRYC?utm_source=rss&amp;utm_medium=article</link>
+      <description>&lt;div align=&#39;right&#39;&gt;&lt;a href=&#39;https://www.infoq.cn/article/He6bUhlNIuPEa99GGRYC?utm_source=rss&amp;utm_medium=article&#39;&gt;点击查看原文&gt;&lt;/a&gt;&lt;/div&gt;</description>
+      <author>作者：Bruno Couriol</author>
+      <guid>https://www.infoq.cn/article/He6bUhlNIuPEa99GGRYC?utm_source=rss&amp;utm_medium=article</guid>
+      <pubDate>Tue, 22 Sep 2026 15:12:00 GMT</pubDate>
+    </item>
+    <item>
+      <title>从 AI 工具到经营智能体：快手分销增长 Agent 实践</title>
+      <link>https://www.infoq.cn/article/7suOC8BJWYA4yx6dvZXa?utm_source=rss&amp;utm_medium=article</link>
+      <description>&lt;div align=&#39;right&#39;&gt;&lt;a href=&#39;https://www.infoq.cn/article/7suOC8BJWYA4yx6dvZXa?utm_source=rss&amp;utm_medium=article&#39;&gt;点击查看原文&gt;&lt;/a&gt;&lt;/div&gt;</description>
+      <author>作者：祁慧</author>
+      <guid>https://www.infoq.cn/article/7suOC8BJWYA4yx6dvZXa?utm_source=rss&amp;utm_medium=article</guid>
+      <pubDate>Tue, 22 Sep 2026 14:32:17 GMT</pubDate>
+    </item>
+    <item>
+      <title>AI Coding 贡献率超 90%，需求交付却只快了 10%：菜鸟如何用 Agent 托管端到端交付？</title>
+      <link>https://www.infoq.cn/article/XPo33yALUEeIsBhQ4zGI?utm_source=rss&amp;utm_medium=article</link>
+      <description>&lt;div align=&#39;right&#39;&gt;&lt;a href=&#39;https://www.infoq.cn/article/XPo33yALUEeIsBhQ4zGI?utm_source=rss&amp;utm_medium=article&#39;&gt;点击查看原文&gt;&lt;/a&gt;&lt;/div&gt;</description>
+      <author>作者：郭凤钊</author>
+      <guid>https://www.infoq.cn/article/XPo33yALUEeIsBhQ4zGI?utm_source=rss&amp;utm_medium=article</guid>
+      <pubDate>Tue, 22 Sep 2026 14:17:25 GMT</pubDate>
+    </item>
+    <item>
+      <title>Netflix 重构 Conductor，以支持每月 4.2 亿次的工作流执行以及 10 倍规模的工作流</title>
+      <link>https://www.infoq.cn/article/MejovdhJpA8y4wbWlTMU?utm_source=rss&amp;utm_medium=article</link>
+      <description>&lt;div align=&#39;right&#39;&gt;&lt;a href=&#39;https://www.infoq.cn/article/MejovdhJpA8y4wbWlTMU?utm_source=rss&amp;utm_medium=article&#39;&gt;点击查看原文&gt;&lt;/a&gt;&lt;/div&gt;</description>
+      <author>作者： Leela Kumili</author>
+      <guid>https://www.infoq.cn/article/MejovdhJpA8y4wbWlTMU?utm_source=rss&amp;utm_medium=article</guid>
+      <pubDate>Tue, 22 Sep 2026 13:00:00 GMT</pubDate>
+    </item>
+    <item>
+      <title>华为云码道面向鸿蒙开发者升级：上线鸿蒙编码大模型，覆盖开发到编译全流程</title>
+      <link>https://www.infoq.cn/article/jCdqhiUJHJlVgOYGfWGx?utm_source=rss&amp;utm_medium=article</link>
+      <description>&lt;div align=&#39;right&#39;&gt;&lt;a href=&#39;https://www.infoq.cn/article/jCdqhiUJHJlVgOYGfWGx?utm_source=rss&amp;utm_medium=article&#39;&gt;点击查看原文&gt;&lt;/a&gt;&lt;/div&gt;</description>
+      <author>褚杏娟</author>
+      <guid>https://www.infoq.cn/article/jCdqhiUJHJlVgOYGfWGx?utm_source=rss&amp;utm_medium=article</guid>
+      <pubDate>Tue, 22 Sep 2026 11:22:09 GMT</pubDate>
+    </item>
+    <item>
+      <title>阿里吴泳铭：千问将训练5-10万亿参数规模的新模型</title>
+      <link>https://www.infoq.cn/article/L9QQKUgo3DEjschVRKD9?utm_source=rss&amp;utm_medium=article</link>
+      <description>&lt;div align=&#39;right&#39;&gt;&lt;a href=&#39;https://www.infoq.cn/article/L9QQKUgo3DEjschVRKD9?utm_source=rss&amp;utm_medium=article&#39;&gt;点击查看原文&gt;&lt;/a&gt;&lt;/div&gt;</description>
+      <author>青和</author>
+      <guid>https://www.infoq.cn/article/L9QQKUgo3DEjschVRKD9?utm_source=rss&amp;utm_medium=article</guid>
+      <pubDate>Tue, 22 Sep 2026 10:48:37 GMT</pubDate>
+    </item>
+    <item>
+      <title>NVIDIA Personal AI Router 将 AI 任务分配到本地计算资源上</title>
+      <link>https://www.infoq.cn/article/ZSAtWPoOgIDcANYa8CXc?utm_source=rss&amp;utm_medium=article</link>
+      <description>&lt;div align=&#39;right&#39;&gt;&lt;a href=&#39;https://www.infoq.cn/article/ZSAtWPoOgIDcANYa8CXc?utm_source=rss&amp;utm_medium=article&#39;&gt;点击查看原文&gt;&lt;/a&gt;&lt;/div&gt;</description>
+      <author>作者：Sergio De Simone</author>
+      <guid>https://www.infoq.cn/article/ZSAtWPoOgIDcANYa8CXc?utm_source=rss&amp;utm_medium=article</guid>
+      <pubDate>Tue, 22 Sep 2026 10:44:00 GMT</pubDate>
+    </item>
+    <item>
+      <title>复杂业务 Agent 的持续进化：快手电商导购的 Harness Loop 实践｜QCon上海</title>
+      <link>https://www.infoq.cn/article/jeG84GGVYvIHaQKQfIo2?utm_source=rss&amp;utm_medium=article</link>
+      <description>&lt;div align=&#39;right&#39;&gt;&lt;a href=&#39;https://www.infoq.cn/article/jeG84GGVYvIHaQKQfIo2?utm_source=rss&amp;utm_medium=article&#39;&gt;点击查看原文&gt;&lt;/a&gt;&lt;/div&gt;</description>
+      <author>QCon全球软件开发大会</author>
+      <guid>https://www.infoq.cn/article/jeG84GGVYvIHaQKQfIo2?utm_source=rss&amp;utm_medium=article</guid>
+      <pubDate>Tue, 22 Sep 2026 10:00:00 GMT</pubDate>
+    </item>
+    <item>
+      <title>Rustls 十周年：发展历程、基准测试与未来路线图</title>
+      <link>https://www.infoq.cn/article/slZSm1Qr5I1QJi0JaZjr?utm_source=rss&amp;utm_medium=article</link>
+      <description>&lt;div align=&#39;right&#39;&gt;&lt;a href=&#39;https://www.infoq.cn/article/slZSm1Qr5I1QJi0JaZjr?utm_source=rss&amp;utm_medium=article&#39;&gt;点击查看原文&gt;&lt;/a&gt;&lt;/div&gt;</description>
+      <author>作者： Olimpiu Pop</author>
+      <guid>https://www.infoq.cn/article/slZSm1Qr5I1QJi0JaZjr?utm_source=rss&amp;utm_medium=article</guid>
+      <pubDate>Tue, 22 Sep 2026 09:06:00 GMT</pubDate>
+    </item>
+    <item>
+      <title>MiniMax H3 开源后，本地 AIGC 走到了哪里？</title>
+      <link>https://www.infoq.cn/video/fJe6qRKX70UqqCEDMRTK?utm_source=rss&amp;utm_medium=article</link>
+      <description>&lt;div align=&#39;right&#39;&gt;&lt;a href=&#39;https://www.infoq.cn/video/fJe6qRKX70UqqCEDMRTK?utm_source=rss&amp;utm_medium=article&#39;&gt;点击查看原文&gt;&lt;/a&gt;&lt;/div&gt;</description>
+      <author>凌敏</author>
+      <guid>https://www.infoq.cn/video/fJe6qRKX70UqqCEDMRTK?utm_source=rss&amp;utm_medium=article</guid>
+      <pubDate>Mon, 21 Sep 2026 21:31:00 GMT</pubDate>
+    </item>
+    <item>
+      <title>70强项目观察之具身未来：机器人走进现实世界，关键不只是完成动作</title>
+      <link>https://www.infoq.cn/article/EU5m831fwoFA6RdhcOlo?utm_source=rss&amp;utm_medium=article</link>
+      <description>&lt;div align=&#39;right&#39;&gt;&lt;a href=&#39;https://www.infoq.cn/article/EU5m831fwoFA6RdhcOlo?utm_source=rss&amp;utm_medium=article&#39;&gt;点击查看原文&gt;&lt;/a&gt;&lt;/div&gt;</description>
+      <author>世界人工智能开源大赛</author>
+      <guid>https://www.infoq.cn/article/EU5m831fwoFA6RdhcOlo?utm_source=rss&amp;utm_medium=article</guid>
+      <pubDate>Mon, 21 Sep 2026 18:23:23 GMT</pubDate>
+    </item>
+    <item>
+      <title>70强项目观察之前沿探索：AI进入科学发现，答案之外还要验证什么</title>
+      <link>https://www.infoq.cn/article/ihH1ltOG7d2YCelYKJYe?utm_source=rss&amp;utm_medium=article</link>
+      <description>&lt;div align=&#39;right&#39;&gt;&lt;a href=&#39;https://www.infoq.cn/article/ihH1ltOG7d2YCelYKJYe?utm_source=rss&amp;utm_medium=article&#39;&gt;点击查看原文&gt;&lt;/a&gt;&lt;/div&gt;</description>
+      <author>世界人工智能开源大赛</author>
+      <guid>https://www.infoq.cn/article/ihH1ltOG7d2YCelYKJYe?utm_source=rss&amp;utm_medium=article</guid>
+      <pubDate>Mon, 21 Sep 2026 18:21:03 GMT</pubDate>
+    </item>
+    <item>
+      <title>70强项目观察之无界应用：AI应用正在从“有功能”走向“能完成任务”</title>
+      <link>https://www.infoq.cn/article/te2qjg2J6Ausgc6vAeNy?utm_source=rss&amp;utm_medium=article</link>
+      <description>&lt;div align=&#39;right&#39;&gt;&lt;a href=&#39;https://www.infoq.cn/article/te2qjg2J6Ausgc6vAeNy?utm_source=rss&amp;utm_medium=article&#39;&gt;点击查看原文&gt;&lt;/a&gt;&lt;/div&gt;</description>
+      <author>世界人工智能开源大赛</author>
+      <guid>https://www.infoq.cn/article/te2qjg2J6Ausgc6vAeNy?utm_source=rss&amp;utm_medium=article</guid>
+      <pubDate>Mon, 21 Sep 2026 18:18:29 GMT</pubDate>
+    </item>
+    <item>
+      <title>70强项目观察之新智基座：Agent正在从“会聊”走向“会干活”</title>
+      <link>https://www.infoq.cn/article/G58AHJw8gT8CQuiq5sap?utm_source=rss&amp;utm_medium=article</link>
+      <description>&lt;div align=&#39;right&#39;&gt;&lt;a href=&#39;https://www.infoq.cn/article/G58AHJw8gT8CQuiq5sap?utm_source=rss&amp;utm_medium=article&#39;&gt;点击查看原文&gt;&lt;/a&gt;&lt;/div&gt;</description>
+      <author>世界人工智能开源大赛</author>
+      <guid>https://www.infoq.cn/article/G58AHJw8gT8CQuiq5sap?utm_source=rss&amp;utm_medium=article</guid>
+      <pubDate>Mon, 21 Sep 2026 18:15:51 GMT</pubDate>
+    </item>
+    <item>
+      <title>Lambda SnapStart 现已支持容器镜像</title>
+      <link>https://www.infoq.cn/article/CIMVueKAjDLqU6zy54Os?utm_source=rss&amp;utm_medium=article</link>
+      <description>&lt;div align=&#39;right&#39;&gt;&lt;a href=&#39;https://www.infoq.cn/article/CIMVueKAjDLqU6zy54Os?utm_source=rss&amp;utm_medium=article&#39;&gt;点击查看原文&gt;&lt;/a&gt;&lt;/div&gt;</description>
+      <author>作者：Steef-Jan Wiggers</author>
+      <guid>https://www.infoq.cn/article/CIMVueKAjDLqU6zy54Os?utm_source=rss&amp;utm_medium=article</guid>
+      <pubDate>Mon, 21 Sep 2026 17:37:00 GMT</pubDate>
+    </item>
+    <item>
+      <title>《2026年中国人工智能计算力发展评估报告》发布，智能体重塑算力基础设施，智能算力规模预计增长87.9%</title>
+      <link>https://www.infoq.cn/article/vA7opkWL5WYlwYcPIdds?utm_source=rss&amp;utm_medium=article</link>
+      <description>&lt;div align=&#39;right&#39;&gt;&lt;a href=&#39;https://www.infoq.cn/article/vA7opkWL5WYlwYcPIdds?utm_source=rss&amp;utm_medium=article&#39;&gt;点击查看原文&gt;&lt;/a&gt;&lt;/div&gt;</description>
+      <author>李冬梅</author>
+      <guid>https://www.infoq.cn/article/vA7opkWL5WYlwYcPIdds?utm_source=rss&amp;utm_medium=article</guid>
+      <pubDate>Mon, 21 Sep 2026 17:07:01 GMT</pubDate>
+    </item>
+    <item>
+      <title>祥峰再次出手，超维动力获超 5 亿融资，我们拆解了这家公司的全栈路线</title>
+      <link>https://www.infoq.cn/article/rIpDfDZXDoN9L7akct7e?utm_source=rss&amp;utm_medium=article</link>
+      <description>&lt;div align=&#39;right&#39;&gt;&lt;a href=&#39;https://www.infoq.cn/article/rIpDfDZXDoN9L7akct7e?utm_source=rss&amp;utm_medium=article&#39;&gt;点击查看原文&gt;&lt;/a&gt;&lt;/div&gt;</description>
+      <author>陈姚戈</author>
+      <guid>https://www.infoq.cn/article/rIpDfDZXDoN9L7akct7e?utm_source=rss&amp;utm_medium=article</guid>
+      <pubDate>Mon, 21 Sep 2026 16:45:15 GMT</pubDate>
+    </item>
+    <item>
+      <title>黄仁勋把矛头对准 AI 实验室：别先谈末日，先为已经发生的事故负责</title>
+      <link>https://www.infoq.cn/article/xlQFjzl2mGPSYJq1RDod?utm_source=rss&amp;utm_medium=article</link>
+      <description>&lt;div align=&#39;right&#39;&gt;&lt;a href=&#39;https://www.infoq.cn/article/xlQFjzl2mGPSYJq1RDod?utm_source=rss&amp;utm_medium=article&#39;&gt;点击查看原文&gt;&lt;/a&gt;&lt;/div&gt;</description>
+      <author>蔡芳芳</author>
+      <guid>https://www.infoq.cn/article/xlQFjzl2mGPSYJq1RDod?utm_source=rss&amp;utm_medium=article</guid>
+      <pubDate>Mon, 21 Sep 2026 15:45:47 GMT</pubDate>
+    </item>
+    <item>
+      <title>智能效能进阶：丰富模型选择，实现智能路由</title>
+      <link>https://www.infoq.cn/article/at5IL3FiObSQ4y9gBv0a?utm_source=rss&amp;utm_medium=article</link>
+      <description>&lt;div align=&#39;right&#39;&gt;&lt;a href=&#39;https://www.infoq.cn/article/at5IL3FiObSQ4y9gBv0a?utm_source=rss&amp;utm_medium=article&#39;&gt;点击查看原文&gt;&lt;/a&gt;&lt;/div&gt;</description>
+      <author>Sridhar Ramaswamy</author>
+      <guid>https://www.infoq.cn/article/at5IL3FiObSQ4y9gBv0a?utm_source=rss&amp;utm_medium=article</guid>
+      <pubDate>Mon, 21 Sep 2026 15:24:23 GMT</pubDate>
+    </item>
+    <item>
+      <title>开源项目为 Apple Silicon 带来了完整的 iOS 27 虚拟化功能</title>
+      <link>https://www.infoq.cn/article/VqzNwHg56aUUjh9PvVCW?utm_source=rss&amp;utm_medium=article</link>
+      <description>&lt;div align=&#39;right&#39;&gt;&lt;a href=&#39;https://www.infoq.cn/article/VqzNwHg56aUUjh9PvVCW?utm_source=rss&amp;utm_medium=article&#39;&gt;点击查看原文&gt;&lt;/a&gt;&lt;/div&gt;</description>
+      <author>作者：Sergio De Simone</author>
+      <guid>https://www.infoq.cn/article/VqzNwHg56aUUjh9PvVCW?utm_source=rss&amp;utm_medium=article</guid>
+      <pubDate>Mon, 21 Sep 2026 15:04:00 GMT</pubDate>
+    </item>
+  </channel>
+</rss>

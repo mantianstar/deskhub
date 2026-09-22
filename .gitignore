@@ -1,0 +1,18 @@
+# 运行时数据
+data/deskhub.db
+data/deskhub.db-wal
+data/deskhub.db-shm
+data/logs/
+
+# 密钥
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# 系统
+.DS_Store

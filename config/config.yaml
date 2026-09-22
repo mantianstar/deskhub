@@ -1,0 +1,41 @@
+app:
+  host: 127.0.0.1
+  port: 8765
+  timezone: Asia/Shanghai
+  db_path: data/deskhub.db
+  log_path: data/logs/deskhub.log
+
+digest:
+  limit: 8              # 日报条数（spec: 5-10）
+  lookback_hours: 48    # 候选池回溯窗口，当日无数据时的回退
+
+fetch:
+  timeout_seconds: 10
+  user_agent: "deskhub/1.0 (personal rss reader)"
+  max_items_per_source: 30    # 首次抓取历史条目上限，防首跑灌爆
+  max_concurrency: 1          # spec §6.2 要求串行；>15 个源时再调
+
+scoring:
+  concurrency: 3
+  max_summary_chars: 1500     # 送模型的摘要截断
+  max_attempts: 2             # 单条最多重试次数
+  prompt_version: v1
+  temperature: 0.2
+
+llm:
+  base_url: https://api.example.com/v1
+  model: deepseek-v4-flash
+  api_key_env: DESKHUB_LLM_API_KEY   # 只写环境变量名，不写密钥本身
+
+modules:
+  agent:
+    label: Agent 开发
+    focus: >
+      框架与工具动态（LangGraph/AutoGen/MCP/agent SDK）、论文与方法（规划、
+      记忆、多智能体协作、评测）、实战案例与踩坑、Agent 产品与行业动态。
+  bigdata:
+    label: 大数据
+    focus: >
+      Hadoop/Spark/Flink/湖仓（Iceberg/Hudi/Paimon）/Hive 技术栈；
+      数据工程与实时计算、数据治理、调度编排（Airflow/DolphinScheduler）、
+      性能调优与生产事故复盘。
