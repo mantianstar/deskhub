@@ -16,3 +16,7 @@ venv/
 
 # 系统
 .DS_Store
+
+# 工具产物（Trae 技能锁文件，与项目代码无关）
+skills-lock.json
+
