@@ -10,7 +10,7 @@
 - 每完成一项，勾选 `[x]` 并在「验证」列留下证据（命令输出 / 截图 / 人工结论）。
 - 验证失败不进入下一个里程碑；测试用例编号对应 plan §13.1。
 - 涉及外部不可控因素（源可达性、LLM 厂商兼容性）的任务，**必须实测**，不得凭猜测打勾。
-- **每次变更都要提交到 git**：改完即 `git add` → `git commit` → `git push origin main`（远端 `git@github.com:mantianstar/deskhub.git`），不要攒着批量提交；commit message 用中文说清「为什么」。代码改动与对应文档改动同一次提交。
+- **提交粒度与推送时机**：以「一个能说清为什么的完整改动」为单位提交（不做无意义的小碎步，也不把多件事混在一笔），代码与对应文档同一次提交；**每天结束或功能完成时** `git push origin main`（远端 `git@github.com:mantianstar/deskhub.git`）。commit message 用中文说清「为什么」，而不是罗列改了哪几行。
 
 **全局禁止项**（plan §16 明确不做，实现时反复对照）
 
