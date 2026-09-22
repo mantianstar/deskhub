@@ -1,7 +1,7 @@
 """手工命令入口：`python -m app.cli <cmd>`（plan §11.3）。
 
-与 Web 服务共用同一套 config / db / fetcher，方便不启动服务就调试管道。
-M1 只提供 `fetch` 与 `sources`，其余命令随里程碑补齐。
+与 Web 服务共用同一套 config / db / fetcher / scorer，方便不启动服务就调试管道。
+M1 提供 `fetch` 与 `sources`，M2 补 `score`；其余命令随里程碑补齐。
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ import logging
 import sys
 import unicodedata
 
-from app import config, db, fetcher, logging_setup, repository
+from app import config, db, fetcher, llm, logging_setup, repository, scorer
 from app.models import FetchStatus
 
 PREVIEW_LIMIT = 5
@@ -107,6 +107,29 @@ def cmd_fetch(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_score(args: argparse.Namespace) -> int:
+    """给待打分池里的条目打分（`--rescore` 先删旧打分再重跑）。"""
+    cfg = _bootstrap()
+    if args.prompt_version and not args.rescore:
+        print("错误：--prompt-version 只与 --rescore 一起使用", file=sys.stderr)
+        return 1
+
+    if args.rescore:
+        version = args.prompt_version or cfg.scoring.prompt_version
+        deleted = repository.delete_scores_by_prompt_version(version)
+        print(f"重打分：已删除 prompt_version={version} 的 {deleted} 条旧打分")
+
+    result = asyncio.run(scorer.run_pending(cfg, limit=args.limit))
+    print(
+        f"待打分 {result.pending} 条：成功 {result.items_scored} 条，失败 {result.items_failed} 条"
+        f"（留在池中下轮重试）\n"
+        f"累计 token：prompt={result.prompt_tokens} completion={result.completion_tokens} "
+        f"total={result.total_tokens}；model={cfg.llm.model} prompt_version={cfg.scoring.prompt_version}"
+    )
+    print(f"item_scores 现有 {repository.count_scored_items()} 行")
+    return 0
+
+
 def cmd_sources(_: argparse.Namespace) -> int:
     """打印源状态表格（module / 启停 / 最近成功 / 失败次数）。"""
     _bootstrap()
@@ -144,6 +167,16 @@ def _build_parser() -> argparse.ArgumentParser:
     sources = subparsers.add_parser("sources", help="打印源状态表格")
     sources.set_defaults(func=cmd_sources)
 
+    score = subparsers.add_parser("score", help="给待打分条目调用 LLM 打分")
+    score.add_argument("--limit", type=int, default=scorer.DEFAULT_LIMIT, help="本轮最多打分条数")
+    score.add_argument("--rescore", action="store_true", help="先删该 prompt_version 的旧打分再重跑")
+    score.add_argument(
+        "--prompt-version",
+        default=None,
+        help="只与 --rescore 一起用，指定要删除的旧打分版本（默认取 config.scoring.prompt_version）",
+    )
+    score.set_defaults(func=cmd_score)
+
     return parser
 
 
@@ -151,7 +184,7 @@ def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     try:
         return args.func(args)
-    except (config.ConfigError, ValueError) as exc:
+    except (config.ConfigError, llm.LLMError, ValueError) as exc:
         print(f"错误：{exc}", file=sys.stderr)
         return 1
 

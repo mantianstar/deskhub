@@ -83,22 +83,63 @@
 
 ---
 
-## M2 — LLM 打分（理由必须可反驳）
+## M2 — LLM 打分（理由必须可反驳）— 已完成
 
 目标：每条条目有 `score` + `reason`，且理由具体到「这条讲了什么、为什么和我有关」。
 
 | # | 任务 | 产出文件 | 依赖 | 验证 |
 |---|---|---|---|---|
-| M2-1 | LLM 抽象层：`LLMClient` 协议 + `OpenAICompatClient`（`POST {base_url}/chat/completions`，Bearer 鉴权，`response_format=json_object` 遇到 400 自动降级并缓存标记）+ `FakeClient`（测试注入，可返回坏 JSON） | `app/llm.py` | M0-3 | 用真实 key 打通一次；降级分支被 FakeClient 覆盖 |
-| M2-2 | prompt v1 组装：system 含 `module_label` / `module_focus` / 三段打分口径（相关度 50 / 信息密度 30 / 时效性 20）；user 含标题、来源、发布时间、截断 1500 字摘要 | `app/scorer.py` | M2-1 | 送模型的 prompt 与 plan §8.2 一致 |
-| M2-3 | 输出校验与兜底：剥 ``` 围栏、取第一个 `{...}` → `json.loads` → `score` clamp 到 [0,100]（`"95"` 转 95）→ `reason` 去空白且 ≥10 字；任一步失败重试 1 次（附加「只输出 JSON」）；仍失败**不写 `item_scores`**，记 WARNING，条目留池下轮重试 | `app/scorer.py` | M2-2 | plan §13.1 用例 6/7 通过 |
-| M2-4 | repository 补齐：`list_pending_score_items(limit, lookback_days=7)`（`LEFT JOIN item_scores WHERE item_id IS NULL`）、`upsert_score()` | `app/repository.py` | M2-3 | 待打分池条数与入库数一致 |
-| M2-5 | 并发与成本：`asyncio.Semaphore(3)`，每条独立重试互不影响；本轮结束打印 `items_scored` / `items_failed` / 累计 token | `app/scorer.py` | M2-4 | 日志中成本数字可核对 |
-| M2-6 | CLI：`score [--limit N]`、`score --rescore --prompt-version v1`（删该版本打分后重跑） | `app/cli.py` | M2-5 | 重跑后 `item_scores` 无重复行 |
-| M2-7 | **人工校准**：随机读 10 条 `reason`，逐条判断**是否可反驳** | — | M2-6 | 10 条全部能反驳；若有空话（「内容优质」类），回改 plan §8.2 prompt 并递增 `prompt_version` 重跑 |
-| M2-8 | 测试：`FakeClient` 注入，覆盖坏 JSON 重试、clamp、reason 过短、全失败不落库 | `tests/test_scorer.py` | M2-7 | `pytest tests/test_scorer.py` 全绿 |
+| [x] M2-1 | LLM 抽象层：`LLMClient` 协议 + `OpenAICompatClient`（`POST {base_url}/chat/completions`，Bearer 鉴权，`response_format=json_object` 遇到 400 自动降级并缓存标记）+ `FakeClient`（测试注入，可返回坏 JSON） | `app/llm.py` | M0-3 | 真实 key 打通：`POST https://api.deepseek.com/chat/completions` 连打 112 条全部 200，日志无降级 WARNING（该厂商支持 `response_format`）；降级分支改由 `tests/test_llm.py` 用 respx 覆盖（见下方「记录订正」） |
+| [x] M2-2 | prompt v1 组装：system 含 `module_label` / `module_focus` / 三段打分口径（相关度 50 / 信息密度 30 / 时效性 20）；user 含标题、来源、发布时间、截断 1500 字摘要 | `app/scorer.py` | M2-1 | `test_prompt_matches_plan_and_truncates_summary` 逐条断言 plan §8.2 的关键句（三段口径 / 禁空话 / 摘要截断到 1500）；`test_prompt_handles_missing_summary_and_published_at` 覆盖无摘要、无发布时间 |
+| [x] M2-3 | 输出校验与兜底：剥 ``` 围栏、取第一个 `{...}` → `json.loads` → `score` clamp 到 [0,100]（`"95"` 转 95）→ `reason` 去空白且 ≥10 字；任一步失败重试 1 次（附加「只输出 JSON」）；仍失败**不写 `item_scores`**，记 WARNING，条目留池下轮重试 | `app/scorer.py` | M2-2 | plan §13.1 用例 6/7 通过：`"150"→100`、`"-20"→0`、`'"95"'→95`；6 种非法输出（非 JSON / 坏 JSON / 缺 score / score 非数字 / reason 过短 / 缺 reason）全部抛错；坏 JSON 第二次成功则正常落库且重试 prompt 带「只输出 JSON」；两次都坏 → `item_scores` 0 行且条目仍在待打分池 |
+| [x] M2-4 | repository 补齐：`list_pending_score_items(limit, lookback_days=7)`（`LEFT JOIN item_scores WHERE item_id IS NULL`）、`upsert_score()` | `app/repository.py` | M2-3 | 真实库：打分前 `pending=112` → 打完 `pending=0`、`item_scores=112`、`items=112`，三者一致；`test_pending_pool_excludes_scored_and_outdated_items` 证明已打分的与超 9 天的都不再入池（窗口放宽到 10 天才回来） |
+| [x] M2-5 | 并发与成本：`asyncio.Semaphore(3)`，每条独立重试互不影响；本轮结束打印 `items_scored` / `items_failed` / 累计 token | `app/scorer.py` | M2-4 | 真实日志：`本轮打分待打分=112 成功=112 失败=0 token(prompt=47786 completion=39361 total=87147)`，91 秒跑完；`test_concurrency_is_capped_by_config` 用探针客户端断言峰值并发恰为 3（6 条也压到 3） |
+| [x] M2-6 | CLI：`score [--limit N]`、`score --rescore --prompt-version v1`（删该版本打分后重跑） | `app/cli.py` | M2-5 | 真实重跑：`重打分：已删除 prompt_version=v1 的 112 条旧打分` → 重新 112 行，`select item_id from item_scores group by item_id having count(*)>1` 返回 0 行；`--prompt-version` 不带 `--rescore` 时报错退出码 1（不静默忽略）；池空时 `score` 打印 0 条且不发任何请求 |
+| [x] M2-7 | **人工校准**：随机读 10 条 `reason`，逐条判断**是否可反驳** | — | M2-6 | 10/10 可反驳，无需改 prompt（结论与样本见下方「M2 校准记录」） |
+| [x] M2-8 | 测试：`FakeClient` 注入，覆盖坏 JSON 重试、clamp、reason 过短、全失败不落库 | `tests/test_scorer.py` | M2-7 | `.venv/bin/python -m pytest tests -q` → **76 passed**（url_hash 30 + fetcher 12 + repository 3 + scorer 21 + llm 10），全程无真实网络访问 |
 
-**M2 完成判据**：`cli score --limit 10` 后人工读 10 条理由**全部可反驳**。（spec §10 第 2 条）
+**M2 完成判据：已满足** —— `cli score` 打完 112 条后人工随机读 10 条理由，10 条全部可反驳。（spec §10 第 2 条）
+
+---
+
+## M2 校准记录（M2-7 的原始证据）
+
+随机抽 10 条（`order by random()`），逐条判断「能不能被反驳」——判定标准是：理由是否说清了「这条讲了什么 + 与关注点什么关系」，能不能拿原文指出它对或错。空话（「内容优质」「值得一读」）、复述标题一律算不合格。
+
+| # | module / 分 | 标题（截断） | reason（截断） | 可反驳 |
+|---|---|---|---|---|
+| 1 | agent / 12 | 华为云码道面向鸿蒙开发者升级：上线鸿蒙编码大模型 | 属 IDE 级代码助手，未涉及 Agent 框架、规划或多智能体，且无技术细节可复用 | ✅ |
+| 2 | bigdata / 3 | 禅道开源版 22.6 发布 | 项目管理工具，只更新需求批量编辑等界面细节，与 Hadoop/Spark/湖仓及数据调度、治理无关 | ✅ |
+| 3 | agent / 33 | 《2026 年中国人工智能计算力发展评估报告》发布 | 只发布算力报告并给宏观预测，无框架、方法或落地细节，对 Agent 开发读者只有间接行业参考 | ✅ |
+| 4 | bigdata / 2 | NeoVim 使用笔记 | 编辑器配置与 LSP 插件笔记，与大数据关注点完全无关 | ✅ |
+| 5 | agent / 42 | 国产数据库跑出 AI 新能力！OceanBase 登顶国际 Data Agent 榜单 | 属 Agent 评测类动态，与关注点相关，但未披露方案架构、指标或复现细节，信息量有限 | ✅ |
+| 6 | bigdata / 3 | 灵界 OS 5.0 稳定版 · 开箱教程上线 | 只新增开箱引导、语言选择等交互流程，与关注点完全无关 | ✅ |
+| 7 | agent / 22 | 70 强项目观察之具身未来 | 摘要为空（正文只写「点击查看原文」），无法判断是否涉及规划、工具调用或记忆，几乎无可提取信息 | ✅ |
+| 8 | bigdata / 16 | cloudflared，不需要服务器和公网 IP 的免费内网穿透 | 网络/运维工具用法，与大数据栈无直接关联，也无架构或调优细节 | ✅ |
+| 9 | agent / 25 | 小米发布并开源 MiMo-V2.6 系列 | 属基础模型发布而非 Agent 框架或方法；读者仅在选底座模型时可能参考，缺少智能体技术细节 | ✅ |
+| 10 | agent / 70 | 腾讯开源了一个项目，让 AI 直接用你已经登录好的浏览器 | 腾讯开源 BrowserSkill，让 Agent 复用本地已登录会话，属浏览器操作类工具动态，对做 agent 工具接入与实战的读者有直接参考价值 | ✅ |
+
+**结论**：prompt v1 的「说清是什么 + 与关注点什么关系」这个结构真的被模型执行了——10 条里没有一条是「内容优质」式空话，也没有复述标题；低分条目还会明确写出「为什么无关」。故**不改 plan §8.2、不递增 prompt_version**。
+
+顺带看到的两点（不是 M2 判据，留给 M3 决策）：
+
+- **高相关条目的判定是准的**：≥50 分的 9 条正好是 LangGraph RAG 按需检索、LangGraph4j Multi-Agent Supervisor、快手分销增长 Agent 实践、AGENTS.md 上下文策略、菜鸟 AI Coding 复盘这类真内容，说明排序信号可用。
+- **分数分布偏左**：112 条里 81 条 <30 分（≥50 分只有 9 条），因为源里混了大量与两个关注点无关的通用新闻（NeoVim 笔记、禅道发布、灵界 OS……）。这正是 spec §1 的首要风险在数据上的样子，M3 做日报时要接受「精选可能凑不满 8 条」，别靠抬分填满。
+
+---
+
+## M2 实测补充（plan 未写明，留给后续里程碑决策）
+
+- **同 prompt 重跑的分数不稳**：temperature 0.2 下，同一批 112 条连跑两轮，分数完全一致的只有 18 条，平均绝对偏差 6.2 分，14 条差 ≥15 分（最大 `85 → 35`）；不过重跑前 ≥50 分的 9 条里有 7 条重跑后仍在 ≥50，**头部是稳的、中段会漂**。影响：M3 日报若要「同一天反复重打分」，列表会跳。M3 可选对策（届时二选一，不现在改）：把 `scoring.temperature` 调到 0；或坚持「每天只对当日新增打分、不重跑历史」。
+- **真实成本比 plan §8.4 的估算高**：plan 按「prompt ≈700 in + 80 out」估，实测 112 条是 prompt 47786（≈427/条）+ completion 39361（≈351/条）= **87147 tokens/轮**，91 秒（并发 3、单条 ≈2.4s）。输出 token 超出预期是因为 prompt 要求 reason 20-60 字、模型还会带上少量结构文字。M6-3 核对账单时要按实测值而不是估算值看。
+- **DeepSeek 的 `base_url` 不带 `/v1` 也能通**：`config.yaml` 写 `https://api.deepseek.com`，代码拼成 `/chat/completions`，112 次全 200；`response_format=json_object` 被接受，未触发降级。**换厂商前先用 `cli score --limit 3` 打一次**，能同时验通「域名 + 模型名 + json_object 支持」三件事，比 curl 更贴近真实调用路径。
+- **`--rescore` 是按版本整表删，不是按条删**：`score --rescore --prompt-version v1 --limit 5` 会先删掉**该版本的全部** 112 条，再只补 5 条，剩下 107 条会退回未评分池。要重跑就整批重跑（`--limit` 给足），别用 `--limit` 配合 `--rescore` 做抽样。
+- **打分失败不留痕**：失败的条目既不写 `item_scores` 也不落任何计数表，只在日志里留 WARNING（plan §8.3 就是这么定的）。好处是重跑不重复计费；代价是「某条一直打不上分」只能靠翻日志发现。若 M6 发现这种情况变多，再考虑加一张失败记录表，现在不加。
+
+### 记录订正
+
+- M2-1 的验证原文是「降级分支被 FakeClient 覆盖」——实际做不到：降级逻辑在 `OpenAICompatClient` 里，FakeClient 直接绕过整个 HTTP 层。已改为用 `respx` 在 `tests/test_llm.py` 里直接驱动 `OpenAICompatClient`：断言首次请求带 `response_format`、400 后第二次不带、且**第三次（新条目）也不再带**（证明标记被缓存），另覆盖 400 二次失败 / 5xx / 非 JSON 响应 / `choices` 为空 / `content` 空白 / 连接超时 6 种失败形态。
+- plan §8.1 的协议签名 `complete_json(system, user) -> str` 未改，但客户端另加 `usage` 属性（累计 token，供 M2-5 打印成本）与 `aclose()`（一个 run 共用一个 httpx 连接池，结束后由 scorer 关闭）。这是实现细节，不影响 plan 描述的分层。
 
 ---
 
@@ -161,7 +202,7 @@
 | spec §10 | 对应任务 | 状态 |
 |---|---|---|
 | 1. 3-5 个真实源能抓到条目并入库 | M1-6、M1-4 | [x] 6 个源 ok、`items`=112 |
-| 2. 新条目能被 LLM 打分，理由具体可反驳 | M2-7、M2-8 | [ ] |
+| 2. 新条目能被 LLM 打分，理由具体可反驳 | M2-7、M2-8 | [x] 112 条全部打上分（0 失败），随机 10 条 reason 全部可反驳 |
 | 3. 首页 5-10 条精选，点击跳转且被记录 | M3-5、M3-7 | [ ] |
 | 4. 历史搜索能按关键词搜到过去条目 | M4-4 | [ ] |
 | 5. 单源挂掉页面标红且不影响其他源 | M5-2、M5-6 | [ ] |
@@ -172,7 +213,7 @@
 | 项 | 默认值 | 影响任务 | 已定 |
 |---|---|---|---|
 | 日报条数 | 8（区间 5-10） | M3-5 | [10 ] |
-| 打分并发与重试 | 并发 3 / 重试 1 次 | M2-5 | [ 并发 3 / 重试 1 次 ] |
+| 打分并发与重试 | 并发 3 / 重试 1 次 | M2-5 | [ 并发 3 / 重试 1 次 ] —— 已按此跑完 112 条，峰值并发实测为 3 |
 | 服务端口 | 8765 | M0-7 | [ 8765] |
 
 ## 附录 C：风险触发信号（plan §16，实现期随手对照）

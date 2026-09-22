@@ -8,11 +8,11 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from app import db, models
 from app.config import SourceConfig
-from app.models import FetchRun, FetchStatus, Item, Source
+from app.models import FetchRun, FetchStatus, Item, ScoreCandidate, Source
 
 # 连续失败达到该次数即在界面标红（plan §7.3）
 FAIL_COUNT_RED_THRESHOLD = 3
@@ -249,3 +249,91 @@ def last_fetch_at() -> str | None:
     with db.connect() as conn:
         row = conn.execute("SELECT MAX(started_at) AS ts FROM fetch_runs").fetchone()
         return row["ts"]
+
+
+# ---------------------------------------------------------------- 打分
+
+# 待打分池的回溯窗口（plan §8.4）：再老的条目不再送模型，避免重扫历史烧 token
+SCORE_LOOKBACK_DAYS = 7
+
+
+def list_pending_score_items(
+    limit: int,
+    lookback_days: int = SCORE_LOOKBACK_DAYS,
+) -> list[ScoreCandidate]:
+    """待打分池：近 `lookback_days` 天抓进来、`item_scores` 里没有记录的条目。
+
+    `LEFT JOIN ... WHERE item_id IS NULL` 即「没打过分」；打分失败的条目不会被写库，
+    所以下一轮自然又落回这个池子里重试（plan §8.3）。
+    """
+    cutoff = to_utc_str(datetime.now(timezone.utc) - timedelta(days=lookback_days))
+    with db.connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT i.id AS item_id, i.module, i.title, i.summary, i.published_at,
+                   s.name AS source_name
+            FROM items i
+            JOIN sources s ON s.id = i.source_id
+            LEFT JOIN item_scores sc ON sc.item_id = i.id
+            WHERE sc.item_id IS NULL
+              AND i.fetched_at >= ?
+            ORDER BY i.fetched_at DESC, i.id DESC
+            LIMIT ?
+            """,
+            (cutoff, limit),
+        ).fetchall()
+    return [
+        ScoreCandidate(
+            item_id=row["item_id"],
+            module=row["module"],
+            title=row["title"],
+            summary=row["summary"],
+            published_at=row["published_at"],
+            source_name=row["source_name"],
+        )
+        for row in rows
+    ]
+
+
+def upsert_score(
+    item_id: int,
+    score: float,
+    reason: str,
+    model: str | None,
+    prompt_version: str,
+    *,
+    conn: sqlite3.Connection | None = None,
+) -> None:
+    """打分落库；同一条目重跑就覆盖（`item_id` 是主键，天然不产生重复行）。"""
+    with _write_conn(conn) as active:
+        active.execute(
+            """
+            INSERT INTO item_scores (item_id, score, reason, model, prompt_version, scored_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(item_id) DO UPDATE SET
+                score          = excluded.score,
+                reason         = excluded.reason,
+                model          = excluded.model,
+                prompt_version = excluded.prompt_version,
+                scored_at      = excluded.scored_at
+            """,
+            (item_id, score, reason, model, prompt_version, utcnow()),
+        )
+
+
+def delete_scores_by_prompt_version(prompt_version: str) -> int:
+    """删掉某个 prompt 版本的全部打分（`cli score --rescore` 用），返回删除行数。
+
+    改 prompt 必须递增 `prompt_version`，否则新旧理由混在一张表里没法对比（plan §8.4）。
+    """
+    with db.connect() as conn, conn:
+        cursor = conn.execute(
+            "DELETE FROM item_scores WHERE prompt_version = ?", (prompt_version,)
+        )
+        return cursor.rowcount
+
+
+def count_scored_items() -> int:
+    with db.connect() as conn:
+        return int(conn.execute("SELECT COUNT(*) AS n FROM item_scores").fetchone()["n"])
+

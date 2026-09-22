@@ -110,6 +110,18 @@ class ItemScore:
 
 
 @dataclass
+class ScoreCandidate:
+    """待打分池里的一条（items LEFT JOIN sources），已带 prompt 需要的字段。"""
+
+    item_id: int
+    module: str
+    title: str
+    summary: str | None
+    published_at: str | None
+    source_name: str
+
+
+@dataclass
 class FetchRun:
     id: int | None
     source_id: int

@@ -379,6 +379,9 @@ CREATE TABLE IF NOT EXISTS schema_meta (key TEXT PRIMARY KEY, value TEXT NOT NUL
 ```python
 class LLMClient(Protocol):
     async def complete_json(self, system: str, user: str) -> str: ...
+    @property
+    def usage(self) -> Usage: ...   # M2 实测补充：累计 token，供成本打印（§8.4）
+    async def aclose(self) -> None: ...  # 一个 run 共用一个 httpx 连接池，结束时关闭
 ```
 
 - `OpenAICompatClient`：`POST {base_url}/chat/completions`，`Authorization: Bearer`，尽量带 `response_format={"type":"json_object"}`；若厂商不支持（400）则降级为纯 prompt 约束并缓存「不支持」标记，后续请求不再带该字段。
@@ -433,6 +436,7 @@ reason 要求：20-60 字，必须具体——说清「这条讲了什么 + 为�
 - 并发 3（`asyncio.Semaphore`），每条独立重试，互不影响。
 - 按 spec §7「每条一次调用」，不做批量合并（批量会牺牲理由的针对性，而理由是本产品的核心资产）。
 - 成本 = 入池条数 × (prompt ≈ 700 in + 80 out tokens)。日志中打印本轮 `items_scored` / `items_failed` / 累计 token，便于事后核对账单。
+  **M2 实测值（2026-09-22，DeepSeek，112 条）**：prompt 47786（≈427/条）+ completion 39361（≈351/条）= 87147 tokens/轮，耗时 91s（并发 3，单条 ≈2.4s）。输出 token 是估算的 4 倍多，核对账单请用实测值。
 - **重打分**：`python -m app.cli score --rescore --prompt-version v1` 会删除该版本打分并重跑；改 prompt 时 `prompt_version` 必须递增。
 
 ---

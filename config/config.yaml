@@ -23,7 +23,7 @@ scoring:
   temperature: 0.2
 
 llm:
-  base_url: https://api.example.com/v1
+  base_url: https://api.deepseek.com
   model: deepseek-v4-flash
   api_key_env: DESKHUB_LLM_API_KEY   # 只写环境变量名，不写密钥本身
 
