@@ -208,10 +208,13 @@ sources:
     url: https://www.infoq.cn/feed
     module: agent
     enabled: true
+    published_tz: Asia/Shanghai   # 可选，见下
   # ... 其余见 §15 首批源清单
 ```
 
 `url` 唯一：重复的 url 在启动校验时直接报错退出（防止同一源配两遍导致重复抓取）。
+
+`published_tz`（可选）：仅当「该源的 pubDate 写的是**本地时间**却标成 GMT/UTC」时才填，抓取时按这个时区把时间重新解释成 UTC。目前只有 InfoQ 中文需要（实测依据见 §12 第 12 条）。不填的源维持原行为：feed 标什么时区就按什么时区解析。
 
 **源清单是唯一真源**：`sync_sources_from_config()` 启动时按 url upsert，配置里已不存在的源自动置 `enabled = 0`（**不删行**，保留 `items` / `fetch_runs` 历史）。故「淘汰一个源」= 从 `sources.yaml` 里删掉它，不要手工改库。
 
@@ -334,6 +337,7 @@ CREATE TABLE IF NOT EXISTS schema_meta (key TEXT PRIMARY KEY, value TEXT NOT NUL
    a. url = entry.link（缺失则跳过）
    b. url_hash = sha256(canonicalize(url))
    c. published_at = 解析 entry.published_parsed / updated_parsed，失败则 None
+      （源声明了 `published_tz` 时按该时区重新解释，见 §12 第 12 条）
    d. summary = 优先 entry.summary，回退 entry.description，HTML 去标签后截断 2000 字
    e. insert_item_if_new → 计数 items_new
 7. 更新源状态 + 写 fetch_runs
@@ -553,6 +557,7 @@ LIMIT :limit
 | 9 | 新增 `/healthz`、`/sources/{id}/fetch` | 本地长期运行的自检最小集；`POST /fetch` 让挂掉的源可以单独重试 |
 | 10 | 首批源只接国内可直连的中文源（spec §2.3 原本也允许「英文源（HN 等）」这一类） | 实测国外源在本机网络不可达；接不通的源会让日报全是空的，直接命中 spec §1 的首要风险。清单见 §15 |
 | 11 | `sync_sources_from_config()` 会把配置里已不存在的源自动置 `enabled = 0` | spec §2.3 说「首批源写死在配置中」，但没规定配置删源后库里那行怎么办。默认 upsert 会让被删的源永远留在表里且继续被抓（M0 收尾时实际发生过：HN 占位已从 `sources.yaml` 删掉，库里仍 `enabled=1`） |
+| 12 | 源配置新增可选字段 `published_tz`，抓取时按它把 feed 时间重新解释成 UTC | spec §2.3 只要求「只接入有 RSS 的源」，没规定「feed 的时间标注本身就错」时怎么办。实测 **InfoQ 中文的 feed 把北京时间当 GMT 标**（2026-09-23：它的 channel `pubDate` 自称 `10:25:06 GMT`，而那一刻真实 UTC 是 `02:25:20`，超前整整 8 小时；09-22 那批里它标称的最新一条比抓取时刻还晚 7 小时，物理上不可能）。照字面存会让该源 24 条 `published_at` 全部偏 8 小时：卡片显示成未来时间、prompt 的「时效性 20 分」虚高、并列排序跟着偏。备选方案「published_at 晚于 fetched_at 就存 NULL」只救得了其中 1 条（其余 23 条只是偏、没到未来），故选择源级声明；这是数据修正，不是 plan §16 禁止的「插件式数据源抽象」 |
 
 除此之外，数据表字段与 spec §5 完全一致（仅补了必要索引与 `CHECK` 约束）。
 
@@ -576,6 +581,7 @@ LIMIT :limit
 | `/go/{id}` 点击两次 | `clicked_at` 保持首次 |
 | 配置里删掉一个源后再 sync | 该源 `enabled=0` 且行保留（不级联删 `items`/`fetch_runs`），其余源不受影响 |
 | 重复 sync 同一清单 | `sources` 行数不变，`last_ok_at` / `fail_count` 不被配置覆盖 |
+| 源声明 `published_tz` | 标成 GMT 的本地时间按声明时区折算（`09:26 GMT` → `01:26Z`）；未声明的源不受影响（plan §12 第 12 条） |
 
 ### 13.2 手工验收（对应 spec §10）
 

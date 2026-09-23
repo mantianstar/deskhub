@@ -13,6 +13,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+from zoneinfo import ZoneInfo
 
 import feedparser
 import httpx
@@ -135,20 +136,32 @@ class FetchOutcome:
     preview: tuple[ParsedEntry, ...] = field(default=())
 
 
-def _entry_published_at(entry: dict) -> str | None:
-    """feedparser 的时间结构是 UTC struct_time；解析不出来返回 None。"""
+def _entry_published_at(entry: dict, published_tz: ZoneInfo | None) -> str | None:
+    """feedparser 的时间结构解析成 UTC 存储串；解析不出来返回 None。
+
+    `published_tz` 不为空时表示「这个源的 feed 把**本地时间**标成了 GMT/UTC」
+    （InfoQ 中文实测如此）：feedparser 会照字面把它当 UTC，我们要按声明时区重新解释一次，
+    否则这条的 `published_at` 会整体偏掉一个时区（plan §12 第 12 条）。
+    """
     for key in ("published_parsed", "updated_parsed"):
         value = entry.get(key)
         if not value:
             continue
         try:
-            return repository.to_utc_str(datetime(*value[:6], tzinfo=timezone.utc))
+            stamp = datetime(*value[:6])
         except (TypeError, ValueError):
             continue
+        stamp = stamp.replace(tzinfo=published_tz or timezone.utc)
+        return repository.to_utc_str(stamp)
     return None
 
 
-def parse_feed(raw: bytes, config: Config) -> tuple[list[ParsedEntry], str | None]:
+def parse_feed(
+    raw: bytes,
+    config: Config,
+    *,
+    published_tz: ZoneInfo | None = None,
+) -> tuple[list[ParsedEntry], str | None]:
     """解析 feed 内容，返回（条目列表，解析错误）。
 
     条目按发布时间降序、取前 `max_items_per_source` 条；无链接或链接无法归一的条目跳过。
@@ -178,7 +191,7 @@ def parse_feed(raw: bytes, config: Config) -> tuple[list[ParsedEntry], str | Non
                 title=clean_text(entry.get("title")) or "(无标题)",
                 url=link,
                 url_hash=hashed,
-                published_at=_entry_published_at(entry),
+                published_at=_entry_published_at(entry, published_tz),
                 summary=clean_text(
                     entry.get("summary") or entry.get("description"),
                     limit=SUMMARY_MAX_CHARS,
@@ -208,6 +221,9 @@ async def _fetch_one(
     status = FetchStatus.OK
     error: str | None = None
     entries: list[ParsedEntry] = []
+    # 源自己声明的时区修正（只有把本地时间标成 GMT 的源才需要，见 plan §12 第 12 条）
+    source_config = config.source_for(source.url)
+    published_tz = source_config.tz if source_config else None
 
     try:
         response = await asyncio.wait_for(
@@ -219,7 +235,9 @@ async def _fetch_one(
             status = FetchStatus.HTTP_ERROR
             error = f"HTTP {http_status}"
         else:
-            entries, parse_error = parse_feed(response.content, config)
+            entries, parse_error = parse_feed(
+                response.content, config, published_tz=published_tz
+            )
             if parse_error:
                 status = FetchStatus.PARSE_ERROR
                 error = parse_error

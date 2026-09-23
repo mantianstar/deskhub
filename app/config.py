@@ -89,6 +89,15 @@ class SourceConfig:
     url: str
     module: str
     enabled: bool
+    published_tz: str | None = None
+
+    @property
+    def tz(self) -> ZoneInfo | None:
+        """源声明的「feed 时间戳所在时区」；未声明返回 None（按 feed 自己标的时区走）。
+
+        只有源把本地时间标错成 GMT/UTC 时才需要声明它（见 plan §7.2 补充）。
+        """
+        return ZoneInfo(self.published_tz) if self.published_tz else None
 
 
 @dataclass(frozen=True)
@@ -106,6 +115,14 @@ class Config:
             return self.modules[key]
         except KeyError:
             raise ConfigError(f"未知 module：{key}（可选：{', '.join(self.modules)}）") from None
+
+    def source_for(self, url: str) -> SourceConfig | None:
+        """按 feed url 取源配置。
+
+        `sources` 表里只有运行状态，`published_tz` 这类配置项不落库（plan §5.2 的源清单是唯一真源），
+        所以抓取时靠 url 回配置里取。
+        """
+        return next((source for source in self.sources if source.url == url), None)
 
 
 _config: Config | None = None
@@ -275,8 +292,32 @@ def _parse_sources(raw: dict[str, Any], modules: dict[str, ModuleConfig]) -> tup
         enabled = entry.get("enabled", True)
         if not isinstance(enabled, bool):
             raise ConfigError(f"{item_where}.enabled：必须是 true/false")
-        sources.append(SourceConfig(name=name, url=url, module=module, enabled=enabled))
+        published_tz = _parse_published_tz(entry, item_where)
+        sources.append(
+            SourceConfig(
+                name=name, url=url, module=module, enabled=enabled, published_tz=published_tz
+            )
+        )
     return tuple(sources)
+
+
+def _parse_published_tz(entry: dict[str, Any], where: str) -> str | None:
+    """源可选声明「feed 时间戳所在时区」。
+
+    用来兜住「把本地时间标成 GMT」的源：InfoQ 中文的 feed 就是这么写的，
+    不声明的话它的 `published_at` 会整体偏 8 小时（见 plan §12 第 12 条）。
+    """
+    raw = entry.get("published_tz")
+    if raw is None:
+        return None
+    if not isinstance(raw, str) or not raw.strip():
+        raise ConfigError(f"{where}.published_tz：必须是非空时区名，如 Asia/Shanghai")
+    value = raw.strip()
+    try:
+        ZoneInfo(value)
+    except (ZoneInfoNotFoundError, ValueError):
+        raise ConfigError(f"{where}.published_tz：无效时区 {value!r}") from None
+    return value
 
 
 def _read_yaml(path: Path) -> dict[str, Any]:

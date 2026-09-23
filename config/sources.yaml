@@ -2,10 +2,16 @@ sources:
   # 均为国内可直连的中文源（2026-09 实测 http_status=200 且有条目）。
   # url 必须唯一，重复会在启动校验时报错退出。
   # 新增源前先实测 http_status 与条目数，不要为了凑数保留坏源。
+  #
+  # published_tz（可选）：仅当「该源的 pubDate 写的是本地时间、却标成 GMT/UTC」时才填，
+  # 抓取时会按这个时区把时间重新解释成 UTC。填错会让该源的时间整体偏掉，改前先实测。
   - name: InfoQ 中文
     url: https://www.infoq.cn/feed
     module: agent
     enabled: true
+    # 实测（2026-09-23）：feed 的 channel 级 pubDate 自称 10:25:06 GMT，而那一刻真实 UTC 是 02:25:20
+    # —— 自称时间比真实 UTC 超前整整 8 小时，即它把北京时间当 GMT 标；不声明的话 24 条 published_at 全部偏 8 小时。
+    published_tz: Asia/Shanghai
   - name: 量子位
     url: https://www.qbitai.com/feed
     module: agent

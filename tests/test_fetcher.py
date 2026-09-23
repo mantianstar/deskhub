@@ -315,6 +315,76 @@ async def test_dry_run_writes_nothing(tmp_path, respx_mock):
     assert row["fail_count"] == 0
 
 
+# ---------------------------------------------------------------- 源级时区修正
+
+
+# 源把北京时间当成 GMT 标（InfoQ 中文实测就是这个写法）
+def _gmt_feed(link: str) -> bytes:
+    return (
+        '<?xml version="1.0" encoding="utf-8"?><rss version="2.0"><channel>'
+        "<title>t</title>"
+        f"<item><title>本地时间标成 GMT</title><link>{link}</link>"
+        "<pubDate>Wed, 23 Sep 2026 09:26:00 GMT</pubDate>"
+        "<description>x</description></item>"
+        "</channel></rss>"
+    ).encode("utf-8")
+
+
+@pytest.mark.asyncio
+async def test_source_timezone_corrects_mislabelled_gmt(tmp_path, respx_mock):
+    """源声明 published_tz 后，feed 里标成 GMT 的本地时间按声明时区重新解释（−8h）。"""
+    config = _prepare(
+        tmp_path,
+        SourceConfig(
+            name="InfoQ 中文", url=BAD_URL, module="agent", enabled=True, published_tz="Asia/Shanghai"
+        ),
+    )
+    respx_mock.get(BAD_URL).mock(return_value=httpx.Response(200, content=_gmt_feed("https://example.com/gmt")))
+
+    await fetcher.run_once(config)
+
+    with db.connect() as conn:
+        assert conn.execute("SELECT published_at FROM items").fetchone()[0] == "2026-09-23T01:26:00Z"
+
+
+@pytest.mark.asyncio
+async def test_without_source_timezone_gmt_is_taken_literally(tmp_path, respx_mock):
+    """没声明 published_tz 的源维持原行为：feed 标 GMT 就按 UTC 存（掘金、博客园都靠这条）。"""
+    config = _prepare(tmp_path, _source("手写源", BAD_URL))
+    respx_mock.get(BAD_URL).mock(return_value=httpx.Response(200, content=_gmt_feed("https://example.com/gmt")))
+
+    await fetcher.run_once(config)
+
+    with db.connect() as conn:
+        assert conn.execute("SELECT published_at FROM items").fetchone()[0] == "2026-09-23T09:26:00Z"
+
+
+@pytest.mark.asyncio
+async def test_source_timezone_does_not_shift_other_sources(tmp_path, respx_mock):
+    """时区修正按 url 生效，不会串到别的源上。"""
+    config = _prepare(
+        tmp_path,
+        SourceConfig(
+            name="被修正的源", url=BAD_URL, module="agent", enabled=True, published_tz="Asia/Shanghai"
+        ),
+        _source("正常源", EMPTY_URL),
+    )
+    respx_mock.get(BAD_URL).mock(return_value=httpx.Response(200, content=_gmt_feed("https://example.com/fixed")))
+    respx_mock.get(EMPTY_URL).mock(return_value=httpx.Response(200, content=_gmt_feed("https://example.com/normal")))
+
+    await fetcher.run_once(config)
+
+    with db.connect() as conn:
+        rows = conn.execute(
+            "SELECT s.name, i.published_at FROM items i JOIN sources s ON s.id = i.source_id "
+            "ORDER BY s.name"
+        ).fetchall()
+    assert [(row["name"], row["published_at"]) for row in rows] == [
+        ("正常源", "2026-09-23T09:26:00Z"),
+        ("被修正的源", "2026-09-23T01:26:00Z"),
+    ]
+
+
 # ---------------------------------------------------------------- 源筛选
 
 
