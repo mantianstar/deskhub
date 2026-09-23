@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block title %}{{ page_title }} · deskhub{% endblock %}
+
+{% block content %}
+<section class="search">
+  <div class="digest-head">
+    <h1>{{ page_title }}</h1>
+    <p class="digest-meta">
+      {%- if total %}共 {{ total }} 条 · 第 {{ page }} / {{ total_pages }} 页{% else %}无匹配结果{% endif -%}
+    </p>
+  </div>
+
+  {# GET 提交：筛选条件全在 URL 上，可分享、可回退（M4-3） #}
+  <form class="search-form" method="get" action="/search">
+    <div class="search-row">
+      <input class="search-input" type="search" name="q" value="{{ q }}"
+             placeholder="搜标题或摘要…" autofocus>
+      <button class="btn btn-primary" type="submit">搜索</button>
+      <button class="btn btn-ghost" type="button" id="toggle-advanced"
+              aria-expanded="{{ 'true' if advanced_active else 'false' }}"
+              aria-controls="advanced-filters">高级筛选</button>
+    </div>
+
+    <div class="search-advanced" id="advanced-filters"{% if not advanced_active %} hidden{% endif %}>
+      {# 时间范围按「发布时间」筛，与卡片上显示的时间同一个口径（plan §12 第 13 条） #}
+      <label class="field">发布起始日期
+        <input type="date" name="start" value="{{ start }}">
+      </label>
+      <label class="field">发布结束日期
+        <input type="date" name="end" value="{{ end }}">
+      </label>
+      <label class="field">入口
+        <select name="module">
+          <option value="">全部</option>
+          {% for key, label in module_options %}
+          <option value="{{ key }}"{% if key == module %} selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      {# 页码不进表单：改筛选条件后自然从第 1 页重新看 #}
+      <input type="hidden" name="page_size" value="{{ page_size }}">
+      <a class="btn btn-ghost" href="/search">清空</a>
+    </div>
+  </form>
+
+  {% if items %}
+    {% for item in items %}
+      {% include "partials/item_card.html" %}
+    {% endfor %}
+
+    <nav class="pager">
+      {% if prev_url %}
+        <a class="btn" href="{{ prev_url }}">上一页</a>
+      {% else %}
+        <span class="btn btn-disabled">上一页</span>
+      {% endif %}
+      <span class="pager-meta">第 {{ page }} / {{ total_pages }} 页</span>
+      {% if next_url %}
+        <a class="btn" href="{{ next_url }}">下一页</a>
+      {% else %}
+        <span class="btn btn-disabled">下一页</span>
+      {% endif %}
+    </nav>
+  {% else %}
+    <p class="empty">没有匹配的条目。换个关键词，或点「清空」看看全部历史。</p>
+  {% endif %}
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  // 高级筛选展开/收起（本页唯一的 JS，无框架、无 CDN）
+  (function () {
+    var button = document.getElementById("toggle-advanced");
+    var panel = document.getElementById("advanced-filters");
+    if (!button || !panel) { return; }
+    button.addEventListener("click", function () {
+      var expanding = panel.hasAttribute("hidden");
+      if (expanding) { panel.removeAttribute("hidden"); } else { panel.setAttribute("hidden", ""); }
+      button.setAttribute("aria-expanded", expanding ? "true" : "false");
+    });
+  })();
+</script>
+{% endblock %}

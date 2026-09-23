@@ -8,7 +8,7 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from app import db, models
@@ -342,24 +342,50 @@ def count_scored_items() -> int:
 # ---------------------------------------------------------------- 日报
 
 
+def day_bounds_utc(tz: ZoneInfo, day: date) -> tuple[str, str]:
+    """业务时区「某一天」的 `[start, end)`，折算成 UTC 存储格式。
+
+    返回左闭右开区间，故上海 00:00:00 与 23:59:59 抓到的条目必然分属不同区间。
+    """
+    day_start = datetime(day.year, day.month, day.day, tzinfo=tz)
+    return to_utc_str(day_start), to_utc_str(day_start + timedelta(days=1))
+
+
 def local_day_bounds(tz: ZoneInfo, *, now: datetime | None = None) -> tuple[str, str]:
     """算出业务时区「今天」的 `[start, end)`，折算成 UTC 存储格式（plan §9.1）。
 
     候选池用 `fetched_at` 而不是 `published_at`：日报要回答的是「**今天**新到的东西里
     哪些值得看」，用发布时间会漏掉「今天抓到的旧发布内容」（plan §12 第 7 条）。
 
-    `now` 仅测试注入用；返回的是左闭右开区间，故上海 00:00:00 与 23:59:59 抓到的
-    条目必然分属不同日报。
+    `now` 仅测试注入用。
     """
     moment = (now or datetime.now(timezone.utc)).astimezone(tz)
-    day_start = moment.replace(hour=0, minute=0, second=0, microsecond=0)
-    return to_utc_str(day_start), to_utc_str(day_start + timedelta(days=1))
+    return day_bounds_utc(tz, moment.date())
 
 
 def lookback_bounds(hours: int, *, now: datetime | None = None) -> tuple[str, str]:
     """当日无候选时的回退窗口：最近 `hours` 小时（页面需标注「非今日数据」）。"""
     moment = now or datetime.now(timezone.utc)
     return to_utc_str(moment - timedelta(hours=hours)), to_utc_str(moment)
+
+
+_DIGEST_COLUMNS = """i.id AS item_id, i.module, i.title, i.url, i.published_at, i.fetched_at,
+               s.name AS source_name, sc.score AS score, sc.reason AS reason"""
+
+
+def _row_to_digest_item(row: sqlite3.Row) -> DigestItem:
+    """items + 源名 + 打分 → 列表卡片对象（`query_digest` 与 `search_items` 共用）。"""
+    return DigestItem(
+        item_id=row["item_id"],
+        module=row["module"],
+        title=row["title"],
+        url=row["url"],
+        source_name=row["source_name"],
+        published_at=row["published_at"],
+        fetched_at=row["fetched_at"],
+        score=row["score"],
+        reason=row["reason"],
+    )
 
 
 def query_digest(
@@ -374,9 +400,8 @@ def query_digest(
     有分的在前、分高在前、并列时新的在前、未打分的落在末尾（`published_at` 为 NULL 的
     —— 如美团 feed —— 也自然排在后面）。
     """
-    sql = """
-        SELECT i.id AS item_id, i.module, i.title, i.url, i.published_at, i.fetched_at,
-               s.name AS source_name, sc.score AS score, sc.reason AS reason
+    sql = f"""
+        SELECT {_DIGEST_COLUMNS}
         FROM items i
         JOIN sources s ON s.id = i.source_id
         LEFT JOIN item_scores sc ON sc.item_id = i.id
@@ -394,20 +419,7 @@ def query_digest(
 
     with db.connect() as conn:
         rows = conn.execute(sql, params).fetchall()
-    return [
-        DigestItem(
-            item_id=row["item_id"],
-            module=row["module"],
-            title=row["title"],
-            url=row["url"],
-            source_name=row["source_name"],
-            published_at=row["published_at"],
-            fetched_at=row["fetched_at"],
-            score=row["score"],
-            reason=row["reason"],
-        )
-        for row in rows
-    ]
+    return [_row_to_digest_item(row) for row in rows]
 
 
 def get_item_url(item_id: int) -> str | None:
@@ -428,4 +440,67 @@ def mark_clicked(item_id: int) -> bool:
             (utcnow(), item_id),
         )
         return cursor.rowcount > 0
+
+
+# ---------------------------------------------------------------- 历史搜索
+
+# 搜索一页的条数；上限防止手改 url 后一次拉爆整库
+SEARCH_PAGE_SIZE = 20
+SEARCH_MAX_PAGE_SIZE = 100
+
+
+def search_items(
+    q: str | None = None,
+    module: str | None = None,
+    start_utc: str | None = None,
+    end_utc: str | None = None,
+    page: int = 1,
+    page_size: int = SEARCH_PAGE_SIZE,
+) -> tuple[list[DigestItem], int]:
+    """历史搜索：标题 + 摘要 LIKE，按发布时间倒序分页，返回（本页条目, 命中总数）。
+
+    时间范围（`start_utc` / `end_utc`）与排序都用 `published_at`：卡片上显示的就是发布时间，
+    页面上「筛什么」与「看到什么」必须是同一个口径（日报候选池用 `fetched_at` 是另一回事，
+    它回答的是「今天新到的东西」，见 plan §12 第 7 条）。
+
+    代价：`published_at` 为 NULL 的条目（源不给发布时间，如美团 feed）在**设了时间范围**时
+    会被排除 —— 它们没有可筛的发布时间。不设时间范围时照常能搜到。这个取舍见 plan §12 第 13 条。
+    """
+    conditions: list[str] = []
+    params: list[object] = []
+    keyword = (q or "").strip()
+    if keyword:
+        like = f"%{keyword}%"
+        conditions.append("(i.title LIKE ? OR i.summary LIKE ?)")
+        params.extend([like, like])
+    if module:
+        conditions.append("i.module = ?")
+        params.append(module)
+    if start_utc:
+        conditions.append("i.published_at >= ?")
+        params.append(start_utc)
+    if end_utc:
+        conditions.append("i.published_at < ?")
+        params.append(end_utc)
+    where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+
+    safe_page = max(1, page)
+    safe_page_size = min(max(1, page_size), SEARCH_MAX_PAGE_SIZE)
+    with db.connect() as conn:
+        total = int(
+            conn.execute(f"SELECT COUNT(*) AS n FROM items i {where}", params).fetchone()["n"]
+        )
+        rows = conn.execute(
+            f"""
+            SELECT {_DIGEST_COLUMNS}
+            FROM items i
+            JOIN sources s ON s.id = i.source_id
+            LEFT JOIN item_scores sc ON sc.item_id = i.id
+            {where}
+            ORDER BY i.published_at DESC, i.id DESC
+            LIMIT ? OFFSET ?
+            """,
+            [*params, safe_page_size, (safe_page - 1) * safe_page_size],
+        ).fetchall()
+    return [_row_to_digest_item(row) for row in rows], total
 

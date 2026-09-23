@@ -15,7 +15,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app import config, db, logging_setup, repository
-from app.routers import STATIC_DIR, digest
+from app.routers import STATIC_DIR, digest, search
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +64,7 @@ app = FastAPI(title="deskhub", lifespan=lifespan, docs_url=None, redoc_url=None)
 
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 app.include_router(digest.router)
+app.include_router(search.router)
 
 
 @app.exception_handler(Exception)

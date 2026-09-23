@@ -36,6 +36,8 @@ OVERALL_TIMEOUT_MARGIN = 5
 _REPEATED_SLASH = re.compile(r"/{2,}")
 _HTML_TAG = re.compile(r"<[^>]+>")
 _WHITESPACE = re.compile(r"\s+")
+# URL 路径里的发布日期，如 https://tech.meituan.com/2026/07/24/xxx.html
+_URL_DATE = re.compile(r"/(\d{4})/(\d{1,2})/(\d{1,2})(?=/|$)")
 
 
 # ---------------------------------------------------------------- URL 规范化
@@ -136,12 +138,39 @@ class FetchOutcome:
     preview: tuple[ParsedEntry, ...] = field(default=())
 
 
+def _published_at_from_url(link: str | None) -> str | None:
+    """feed 完全没给时间时的兜底：从 URL 路径里的 `YYYY/MM/DD` 反解发布日期。
+
+    美团技术团队的 feed 实测如此：`<item>` 里没有 `pubDate`/`dc:date`（channel 级那个是
+    feed 生成时间，不是文章时间），但链接本身带日期 ——
+    `https://tech.meituan.com/2026/07/24/LongCat-MineExplorer.html` 对应文章页上的
+    `2026-07-24`（plan §12 第 14 条）。
+
+    站点只给到「日」粒度，故取该日 00:00Z；页面按东八区显示成同日 08:00，日期不会漂。
+    路径里的数字凑不出合法日期时返回 None —— 宁可不填，也不要编一个时间。
+    """
+    if not link:
+        return None
+    match = _URL_DATE.search(link)
+    if match is None:
+        return None
+    year, month, day = (int(part) for part in match.groups())
+    try:
+        stamp = datetime(year, month, day, tzinfo=timezone.utc)
+    except ValueError:
+        return None
+    return repository.to_utc_str(stamp)
+
+
 def _entry_published_at(entry: dict, published_tz: ZoneInfo | None) -> str | None:
     """feedparser 的时间结构解析成 UTC 存储串；解析不出来返回 None。
 
     `published_tz` 不为空时表示「这个源的 feed 把**本地时间**标成了 GMT/UTC」
     （InfoQ 中文实测如此）：feedparser 会照字面把它当 UTC，我们要按声明时区重新解释一次，
     否则这条的 `published_at` 会整体偏掉一个时区（plan §12 第 12 条）。
+
+    时间字段一个都没有时，再退一步从链接路径里反解日期（`_published_at_from_url`），
+    这条兜底只对「feed 不给时间、但 URL 带日期」的源有意义，对其它源无影响。
     """
     for key in ("published_parsed", "updated_parsed"):
         value = entry.get(key)
@@ -153,7 +182,7 @@ def _entry_published_at(entry: dict, published_tz: ZoneInfo | None) -> str | Non
             continue
         stamp = stamp.replace(tzinfo=published_tz or timezone.utc)
         return repository.to_utc_str(stamp)
-    return None
+    return _published_at_from_url(entry.get("link"))
 
 
 def parse_feed(

@@ -118,6 +118,102 @@ body {
   font-size: 12px;
 }
 
+/* ---------------------------------------------------------------- 历史搜索 */
+
+.search-form {
+  margin-bottom: 18px;
+  padding: 14px 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.search-row { display: flex; gap: 8px; }
+
+.search-input {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 12px;
+  font-size: 14px;
+  font-family: inherit;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.search-input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+
+.btn {
+  display: inline-block;
+  padding: 8px 14px;
+  font-size: 14px;
+  font-family: inherit;
+  text-decoration: none;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.btn:hover { border-color: var(--accent); color: var(--accent); }
+
+.btn-primary {
+  color: #fff;
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.btn-primary:hover { color: #fff; opacity: 0.9; }
+
+.btn-ghost { color: var(--text-muted); background: transparent; }
+
+.btn-disabled { color: var(--score-none-fg); border-style: dashed; cursor: default; }
+.btn-disabled:hover { border-color: var(--border); color: var(--score-none-fg); }
+
+.search-advanced {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--border);
+}
+
+.search-advanced[hidden] { display: none; }
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.field input,
+.field select {
+  padding: 6px 8px;
+  font-size: 13px;
+  font-family: inherit;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  margin-top: 18px;
+}
+
+.pager-meta { color: var(--text-muted); font-size: 13px; }
+
 /* ---------------------------------------------------------------- 条目卡片 */
 
 .card {

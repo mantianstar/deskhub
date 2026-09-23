@@ -30,11 +30,13 @@ FIXTURES = Path(__file__).parent / "fixtures"
 
 INFOQ_URL = "https://www.infoq.cn/feed"
 OSCHINA_URL = "https://www.oschina.net/news/rss"
+MEITUAN_URL = "https://tech.meituan.com/feed/"
 BAD_URL = "https://bad.example.com/feed"
 EMPTY_URL = "https://empty.example.com/feed"
 
 INFOQ_XML = (FIXTURES / "infoq.xml").read_bytes()
 OSCHINA_XML = (FIXTURES / "oschina.xml").read_bytes()
+MEITUAN_XML = (FIXTURES / "meituan.xml").read_bytes()
 # 合法 XML 但 0 条
 EMPTY_XML = (
     b'<?xml version="1.0" encoding="utf-8"?>'
@@ -383,6 +385,64 @@ async def test_source_timezone_does_not_shift_other_sources(tmp_path, respx_mock
         ("正常源", "2026-09-23T09:26:00Z"),
         ("被修正的源", "2026-09-23T01:26:00Z"),
     ]
+
+
+# ---------------------------------------------------------------- 无时间源的日期兜底
+
+
+def test_url_date_parsing_boundaries():
+    """路径里的数字凑不出合法日期就返回 None —— 宁可不填，也不编时间。"""
+    assert (
+        fetcher._published_at_from_url("https://tech.meituan.com/2026/7/4/a.html")
+        == "2026-07-04T00:00:00Z"
+    )
+    assert fetcher._published_at_from_url("https://tech.meituan.com/2026/13/45/a.html") is None
+    assert fetcher._published_at_from_url("https://tech.meituan.com/2026/02/30/a.html") is None
+    assert fetcher._published_at_from_url("https://example.com/2026/09/12345/a.html") is None
+    assert fetcher._published_at_from_url("https://example.com/posts/hello.html") is None
+    assert fetcher._published_at_from_url("") is None
+    assert fetcher._published_at_from_url(None) is None
+
+
+@pytest.mark.asyncio
+async def test_meituan_feed_gets_published_at_from_url(tmp_path, respx_mock):
+    """美团 feed 的 item 没有时间，从 URL 路径反解（plan §12 第 14 条）。"""
+    config = _prepare(tmp_path, _source("美团技术团队", MEITUAN_URL, module="bigdata"))
+    respx_mock.get(MEITUAN_URL).mock(return_value=httpx.Response(200, content=MEITUAN_XML))
+
+    outcomes = await fetcher.run_once(config)
+
+    assert outcomes[0].parsed_count == 10
+    assert outcomes[0].items_new == 10
+
+    with db.connect() as conn:
+        rows = conn.execute("SELECT url, published_at FROM items").fetchall()
+    assert len(rows) == 10
+    assert all(row["published_at"] for row in rows)  # 10 条全部有发布时间
+    assert max(row["published_at"] for row in rows) == "2026-09-22T00:00:00Z"  # 样本里最新的一篇
+    # 抽查：URL 里的日期就是入库的发布日期（文章页上显示的就是这个）
+    july = next(row for row in rows if "/2026/07/24/" in row["url"])
+    assert july["published_at"] == "2026-07-24T00:00:00Z"
+
+
+@pytest.mark.asyncio
+async def test_feed_time_wins_over_url_date(tmp_path, respx_mock):
+    """feed 给了时间就用 feed 的，URL 里的日期只作兜底。"""
+    xml = (
+        '<?xml version="1.0" encoding="utf-8"?><rss version="2.0"><channel><title>t</title>'
+        "<item><title>有 pubDate</title><link>https://example.com/2019/01/01/old.html</link>"
+        "<pubDate>Mon, 21 Sep 2026 10:00:00 GMT</pubDate><description>x</description></item>"
+        "</channel></rss>"
+    ).encode("utf-8")
+    config = _prepare(tmp_path, _source("手写源", BAD_URL))
+    respx_mock.get(BAD_URL).mock(return_value=httpx.Response(200, content=xml))
+
+    await fetcher.run_once(config)
+
+    with db.connect() as conn:
+        assert (
+            conn.execute("SELECT published_at FROM items").fetchone()[0] == "2026-09-21T10:00:00Z"
+        )
 
 
 # ---------------------------------------------------------------- 源筛选
