@@ -1,7 +1,7 @@
 """手工命令入口：`python -m app.cli <cmd>`（plan §11.3）。
 
-与 Web 服务共用同一套 config / db / fetcher / scorer，方便不启动服务就调试管道。
-M1 提供 `fetch` 与 `sources`，M2 补 `score`；其余命令随里程碑补齐。
+与 Web 服务共用同一套 config / db / fetcher / scorer / pipeline，方便不启动服务就调试管道。
+M1 提供 `fetch` 与 `sources`，M2 补 `score`，M3 补 `pipeline`；其余命令随里程碑补齐。
 """
 
 from __future__ import annotations
@@ -11,9 +11,10 @@ import asyncio
 import logging
 import sys
 import unicodedata
+from collections.abc import Sequence
 
-from app import config, db, fetcher, llm, logging_setup, repository, scorer
-from app.models import FetchStatus
+from app import config, db, fetcher, llm, logging_setup, pipeline, repository, scorer
+from app.fetcher import FetchOutcome
 
 PREVIEW_LIMIT = 5
 
@@ -39,6 +40,26 @@ def _print_table(header: tuple[str, ...], rows: list[tuple[str, ...]]) -> None:
     print("  ".join("-" * width for width in widths))
     for row in rows:
         print("  ".join(_pad(cell, widths[index]) for index, cell in enumerate(row)))
+
+
+def _print_fetch_outcomes(outcomes: Sequence[FetchOutcome]) -> None:
+    """`fetch` 与 `pipeline` 共用的抓取结果表。"""
+    rows = [
+        (
+            outcome.status,
+            str(outcome.http_status or "-"),
+            str(outcome.parsed_count),
+            str(outcome.items_new),
+            outcome.source_name,
+            outcome.error or "",
+        )
+        for outcome in outcomes
+    ]
+    _print_table(("status", "http", "解析", "新增", "源", "错误"), rows)
+    print(
+        f"\n共 {len(outcomes)} 个源，新增 {sum(o.items_new for o in outcomes)} 条，"
+        f"失败 {pipeline.count_failed(tuple(outcomes))} 个"
+    )
 
 
 # ---------------------------------------------------------------- 启动
@@ -86,24 +107,28 @@ def cmd_fetch(args: argparse.Namespace) -> int:
                 print(f"  …（其余 {len(outcome.preview) - PREVIEW_LIMIT} 条略）")
         return 0
 
-    rows = [
-        (
-            outcome.status,
-            str(outcome.http_status or "-"),
-            str(outcome.parsed_count),
-            str(outcome.items_new),
-            outcome.source_name,
-            outcome.error or "",
-        )
-        for outcome in outcomes
-    ]
-    _print_table(("status", "http", "解析", "新增", "源", "错误"), rows)
-    failed = sum(
-        1 for o in outcomes if o.status not in (FetchStatus.OK, FetchStatus.EMPTY)
-    )
+    _print_fetch_outcomes(outcomes)
+    return 0
+
+
+def _print_score_result(cfg: config.Config, result: scorer.ScoreRunResult) -> None:
+    """`score` 与 `pipeline` 共用的打分汇总。"""
     print(
-        f"\n共 {len(outcomes)} 个源，新增 {sum(o.items_new for o in outcomes)} 条，失败 {failed} 个"
+        f"待打分 {result.pending} 条：成功 {result.items_scored} 条，失败 {result.items_failed} 条"
+        f"（留在池中下轮重试）\n"
+        f"累计 token：prompt={result.prompt_tokens} completion={result.completion_tokens} "
+        f"total={result.total_tokens}；model={cfg.llm.model} prompt_version={cfg.scoring.prompt_version}"
     )
+    print(f"item_scores 现有 {repository.count_scored_items()} 行")
+
+
+def cmd_pipeline(args: argparse.Namespace) -> int:
+    """抓取 + 打分：一次跑完整个管道（手工出报用）。"""
+    cfg = _bootstrap()
+    result = asyncio.run(pipeline.run(cfg, score_limit=args.limit))
+    _print_fetch_outcomes(result.fetch)
+    print()
+    _print_score_result(cfg, result.score)
     return 0
 
 
@@ -120,13 +145,7 @@ def cmd_score(args: argparse.Namespace) -> int:
         print(f"重打分：已删除 prompt_version={version} 的 {deleted} 条旧打分")
 
     result = asyncio.run(scorer.run_pending(cfg, limit=args.limit))
-    print(
-        f"待打分 {result.pending} 条：成功 {result.items_scored} 条，失败 {result.items_failed} 条"
-        f"（留在池中下轮重试）\n"
-        f"累计 token：prompt={result.prompt_tokens} completion={result.completion_tokens} "
-        f"total={result.total_tokens}；model={cfg.llm.model} prompt_version={cfg.scoring.prompt_version}"
-    )
-    print(f"item_scores 现有 {repository.count_scored_items()} 行")
+    _print_score_result(cfg, result)
     return 0
 
 
@@ -163,6 +182,12 @@ def _build_parser() -> argparse.ArgumentParser:
     fetch.add_argument("--source-id", type=int, default=None, help="只抓指定源（忽略启停）")
     fetch.add_argument("--dry-run", action="store_true", help="只打印解析结果，不写库")
     fetch.set_defaults(func=cmd_fetch)
+
+    pipeline_parser = subparsers.add_parser("pipeline", help="抓取 + 打分（手工出报）")
+    pipeline_parser.add_argument(
+        "--limit", type=int, default=scorer.DEFAULT_LIMIT, help="本轮最多打分条数"
+    )
+    pipeline_parser.set_defaults(func=cmd_pipeline)
 
     sources = subparsers.add_parser("sources", help="打印源状态表格")
     sources.set_defaults(func=cmd_sources)

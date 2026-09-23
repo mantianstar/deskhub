@@ -12,8 +12,10 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from app import config, db, logging_setup, repository
+from app.routers import STATIC_DIR, digest
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +48,7 @@ def _bootstrap() -> None:
     repository.sync_sources_from_config(cfg.sources)
     logger.info("源清单已同步：%d 个源", len(cfg.sources))
 
-    # M6：scheduler.start()；M3：asyncio.create_task(pipeline.run())（启动补拉，不阻塞服务可用）
+    # M6：scheduler.start()（含启动补拉 create_task(pipeline.run())，不 await 不阻塞首页）
 
 
 @asynccontextmanager
@@ -59,6 +61,9 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="deskhub", lifespan=lifespan, docs_url=None, redoc_url=None)
+
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+app.include_router(digest.router)
 
 
 @app.exception_handler(Exception)

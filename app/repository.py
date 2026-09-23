@@ -9,10 +9,11 @@ import sqlite3
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from app import db, models
 from app.config import SourceConfig
-from app.models import FetchRun, FetchStatus, Item, ScoreCandidate, Source
+from app.models import DigestItem, FetchRun, FetchStatus, Item, ScoreCandidate, Source
 
 # 连续失败达到该次数即在界面标红（plan §7.3）
 FAIL_COUNT_RED_THRESHOLD = 3
@@ -336,4 +337,95 @@ def delete_scores_by_prompt_version(prompt_version: str) -> int:
 def count_scored_items() -> int:
     with db.connect() as conn:
         return int(conn.execute("SELECT COUNT(*) AS n FROM item_scores").fetchone()["n"])
+
+
+# ---------------------------------------------------------------- 日报
+
+
+def local_day_bounds(tz: ZoneInfo, *, now: datetime | None = None) -> tuple[str, str]:
+    """算出业务时区「今天」的 `[start, end)`，折算成 UTC 存储格式（plan §9.1）。
+
+    候选池用 `fetched_at` 而不是 `published_at`：日报要回答的是「**今天**新到的东西里
+    哪些值得看」，用发布时间会漏掉「今天抓到的旧发布内容」（plan §12 第 7 条）。
+
+    `now` 仅测试注入用；返回的是左闭右开区间，故上海 00:00:00 与 23:59:59 抓到的
+    条目必然分属不同日报。
+    """
+    moment = (now or datetime.now(timezone.utc)).astimezone(tz)
+    day_start = moment.replace(hour=0, minute=0, second=0, microsecond=0)
+    return to_utc_str(day_start), to_utc_str(day_start + timedelta(days=1))
+
+
+def lookback_bounds(hours: int, *, now: datetime | None = None) -> tuple[str, str]:
+    """当日无候选时的回退窗口：最近 `hours` 小时（页面需标注「非今日数据」）。"""
+    moment = now or datetime.now(timezone.utc)
+    return to_utc_str(moment - timedelta(hours=hours)), to_utc_str(moment)
+
+
+def query_digest(
+    day_start_utc: str,
+    day_end_utc: str,
+    module: str | None = None,
+    limit: int = 8,
+) -> list[DigestItem]:
+    """日报查询：窗口内的条目按「分数优先」排序取前 `limit` 条（plan §9.2）。
+
+    排序即 `(score IS NULL) ASC, score DESC, published_at DESC, id DESC`：
+    有分的在前、分高在前、并列时新的在前、未打分的落在末尾（`published_at` 为 NULL 的
+    —— 如美团 feed —— 也自然排在后面）。
+    """
+    sql = """
+        SELECT i.id AS item_id, i.module, i.title, i.url, i.published_at, i.fetched_at,
+               s.name AS source_name, sc.score AS score, sc.reason AS reason
+        FROM items i
+        JOIN sources s ON s.id = i.source_id
+        LEFT JOIN item_scores sc ON sc.item_id = i.id
+        WHERE i.fetched_at >= ? AND i.fetched_at < ?
+    """
+    params: list[object] = [day_start_utc, day_end_utc]
+    if module is not None:
+        sql += " AND i.module = ?"
+        params.append(module)
+    sql += """
+        ORDER BY (sc.score IS NULL), sc.score DESC, i.published_at DESC, i.id DESC
+        LIMIT ?
+    """
+    params.append(limit)
+
+    with db.connect() as conn:
+        rows = conn.execute(sql, params).fetchall()
+    return [
+        DigestItem(
+            item_id=row["item_id"],
+            module=row["module"],
+            title=row["title"],
+            url=row["url"],
+            source_name=row["source_name"],
+            published_at=row["published_at"],
+            fetched_at=row["fetched_at"],
+            score=row["score"],
+            reason=row["reason"],
+        )
+        for row in rows
+    ]
+
+
+def get_item_url(item_id: int) -> str | None:
+    """条目的原始链接；不存在返回 None（`/go/{id}` 据此返回 404）。"""
+    with db.connect() as conn:
+        row = conn.execute("SELECT url FROM items WHERE id = ?", (item_id,)).fetchone()
+    return row["url"] if row else None
+
+
+def mark_clicked(item_id: int) -> bool:
+    """记录点击：`COALESCE` 保留**首次**点击时间，重复点击不会覆盖它（plan §9.3）。
+
+    返回条目是否存在（`UPDATE` 的 rowcount 反映匹配行数，与值是否变化无关）。
+    """
+    with db.connect() as conn, conn:
+        cursor = conn.execute(
+            "UPDATE items SET clicked_at = COALESCE(clicked_at, ?) WHERE id = ?",
+            (utcnow(), item_id),
+        )
+        return cursor.rowcount > 0
 

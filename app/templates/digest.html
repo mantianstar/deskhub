@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}{{ page_title }} · deskhub{% endblock %}
+
+{% block content %}
+<section class="digest">
+  <div class="digest-head">
+    <h1>{{ page_title }}</h1>
+    <p class="digest-meta">共 {{ items|length }} 条（上限 {{ limit }}）</p>
+  </div>
+
+  {% if is_fallback %}
+  <p class="notice">非今日数据：今天还没有抓到的条目，下面是最近 {{ lookback_hours }} 小时的结果。</p>
+  {% endif %}
+
+  {% if items %}
+    {% for item in items %}
+      {% include "partials/item_card.html" %}
+    {% endfor %}
+  {% elif first_fetch_pending %}
+    <p class="empty">首次抓取进行中：服务刚起来，稍等一会儿刷新本页就能看到今日精选。</p>
+  {% else %}
+    <p class="empty">今天还没有新条目。可以跑 <code>python -m app.cli fetch</code> 手工抓一轮。</p>
+  {% endif %}
+</section>
+{% endblock %}

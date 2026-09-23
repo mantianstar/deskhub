@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}deskhub{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', path='/style.css') }}">
+</head>
+<body>
+  <header class="site-head">
+    <a class="brand" href="/">deskhub</a>
+    <nav class="nav">
+      <a class="nav-link" href="/">日报</a>
+      {# M5 补齐：Agent / 大数据入口、历史搜索、源管理、基金、铜币（先不放入口，避免点了 404） #}
+    </nav>
+  </header>
+
+  <main class="content">
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="site-foot">本地服务 · 只有我一个人用</footer>
+
+  <script>
+    // 点击外链后置灰，防止重复点（无框架、无 CDN）
+    document.addEventListener("click", function (event) {
+      var link = event.target.closest("a.item-link");
+      if (link) { link.classList.add("is-clicked"); }
+    });
+  </script>
+</body>
+</html>

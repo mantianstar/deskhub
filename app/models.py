@@ -122,6 +122,24 @@ class ScoreCandidate:
 
 
 @dataclass
+class DigestItem:
+    """日报/列表页的一条（items + 源名 + 打分），模板直接渲染这个对象。
+
+    `score` / `reason` 为 None 表示这条还没打上分（模板显示「未评分」，plan §9.2）。
+    """
+
+    item_id: int
+    module: str
+    title: str
+    url: str
+    source_name: str
+    published_at: str | None
+    fetched_at: str
+    score: float | None
+    reason: str | None
+
+
+@dataclass
 class FetchRun:
     id: int | None
     source_id: int

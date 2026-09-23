@@ -143,21 +143,74 @@
 
 ---
 
-## M3 — 日报首页
+## M3 — 日报首页 — 已完成
 
 目标：首页能看到当日 5-10 条精选，点击可跳转且被记录。
 
 | # | 任务 | 产出文件 | 依赖 | 验证 |
 |---|---|---|---|---|
-| M3-1 | pipeline 编排：`fetch → sleep(1)（仅日志可读）→ score`，供调度器与 CLI 共用 | `app/pipeline.py` | M2 | `cli pipeline` 一次跑通 |
-| M3-2 | repository 补齐：`query_digest(day_start_utc, day_end_utc, module, limit)`，排序为 `(score IS NULL) ASC, score DESC, published_at DESC, id DESC`；`mark_clicked()` 用 `COALESCE` 保留首次点击时间 | `app/repository.py` | M3-1 | plan §13.1 用例 8/10 通过 |
-| M3-3 | 候选池定义落死：`day_start_utc <= fetched_at < day_end_utc`，边界按 `config.app.timezone`（Asia/Shanghai）折算 UTC；当日为 0 条时回退 `lookback_hours=48` 并在页面顶部标注「非今日数据」 | `app/repository.py`、`app/routers/digest.py` | M3-2 | plan §13.1 用例 9：上海 00:00:00 与 23:59:59 抓到的条目分属不同日报 |
-| M3-4 | 路由 `/`（全模块混合，取 `digest.limit` 条）与 `/go/{item_id}`（`mark_clicked` → 302 外链；`item_id` 不存在返回 404） | `app/routers/digest.py` | M3-3 | 点两次同一链接，`clicked_at` 保持首次 |
-| M3-5 | 模板：`base.html`（导航骨架 + 内容块）、`digest.html`、`partials/item_card.html`（标题/来源/打分/理由/时间，三处复用）；打分视觉分级用 CSS 变量（≥75 绿 / 50-74 灰 / <50 浅 / 无分显示「未评分」） | `app/templates/*`、`app/static/style.css` | M3-4 | 首页渲染 5-10 条，未评分卡片不显示空白分数 |
-| M3-6 | 空数据态：无候选且首轮抓取未完成时显示「首次抓取进行中」 | `app/routers/digest.py`、`digest.html` | M3-5 | 清库后打开首页不报错 |
-| M3-7 | 测试：日报排序（有分在前、降序、未评分末尾、并列按 `published_at` 降序）+ 跨日边界 | `tests/` | M3-6 | `pytest` 相关用例全绿 |
+| [x] M3-1 | pipeline 编排：`fetch → sleep(1)（仅日志可读）→ score`，供调度器与 CLI 共用 | `app/pipeline.py`、`app/cli.py` | M2 | `cli pipeline` 真实跑通：6 个源（量子位 `timeout`，其余 5 个 `ok`）新增 35 条 → 间隔 1s → 打分 35 条全成功、0 失败，`token(prompt=14661 completion=9850 total=24511)`；日志三段齐全（管道开始 / 抓取阶段结束 / 管道结束）；`cli fetch` 的表格与汇总抽成 `_print_fetch_outcomes` 复用，`cli score` 的汇总抽成 `_print_score_result`，两处输出未变 |
+| [x] M3-2 | repository 补齐：`query_digest(day_start_utc, day_end_utc, module, limit)`，排序为 `(score IS NULL) ASC, score DESC, published_at DESC, id DESC`；`mark_clicked()` 用 `COALESCE` 保留首次点击时间 | `app/repository.py`、`app/models.py` | M3-1 | plan §13.1 用例 8/10 通过（`tests/test_digest.py`）：排序断言 `[高分新(88), 高分旧(88), 低分(42), 未评分]`、同分同时间退回 `id DESC`、module 筛选与 limit 生效；`mark_clicked` 两次调用后 `clicked_at` 仍为旧值；条目不存在时 `mark_clicked` 返回 False、`get_item_url` 返回 None |
+| [x] M3-3 | 候选池定义落死：`day_start_utc <= fetched_at < day_end_utc`，边界按 `config.app.timezone`（Asia/Shanghai）折算 UTC；当日为 0 条时回退 `lookback_hours=48` 并在页面顶部标注「非今日数据」 | `app/repository.py`、`app/routers/digest.py` | M3-2 | plan §13.1 用例 9 通过：上海 09-22 00:00:00（UTC 09-21T16:00）与 23:59:59（UTC 09-22T15:59:59）同属 09-22 日报，次日 00:00:00（UTC 09-22T16:00）落到 09-23 日报；`local_day_bounds` 直接断言窗口值；真实回退场景：09-22 抓的 112 条在 09-23 打开首页时已落在当日窗口外，正是靠 48 小时回退才看得见（`tests/test_digest.py::test_home_page_falls_back_to_lookback_window_with_notice` 覆盖标注文案） |
+| [x] M3-4 | 路由 `/`（全模块混合，取 `digest.limit` 条）与 `/go/{item_id}`（`mark_clicked` → 302 外链；`item_id` 不存在返回 404） | `app/routers/digest.py`、`app/main.py` | M3-3 | 真实服务器：`curl /` → HTTP 200；`/go/356` 两次均 302，`Location: https://juejin.cn/post/7688270826491723802`，两次相隔 2 秒而 `clicked_at` 始终是 `2026-09-23T01:54:18Z`（首次未被覆盖）；`/go/999999` → 404 |
+| [x] M3-5 | 模板：`base.html`（导航骨架 + 内容块）、`digest.html`、`partials/item_card.html`（标题/来源/打分/理由/时间，三处复用）；打分视觉分级用 CSS 变量（≥75 绿 / 50-74 灰 / <50 浅 / 无分显示「未评分」） | `app/templates/*`、`app/static/style.css` | M3-4 | 首页渲染 8 条（`共 8 条（上限 8）`），徽标依次 `72 / 45 / 40 / 40 / 38 / 38 / 35 / 34`（降序正确）；`/static/style.css` 返回 200 且浏览器实测生效（卡片白底 + 1px 边框 + 10px 圆角，浅灰底，无横向溢出、无文字重叠），导航「日报」在位；未评分卡片显示「未评分」而非空白分数，由 `test_home_page_renders_cards_and_records_click` 用无分条目覆盖（真实库 147 条全有分，构造不出样本） |
+| [x] M3-6 | 空数据态：无候选且首轮抓取未完成时显示「首次抓取进行中」 | `app/routers/digest.py`、`digest.html` | M3-5 | 清库实跑：`DESKHUB_DB_PATH=/tmp/deskhub-empty.db uvicorn … --port 8766` → `curl /` HTTP 200 且页面显示「首次抓取进行中：服务刚起来，稍等一会儿刷新本页就能看到今日精选。」（不报错、不误导成「今天没内容」） |
+| [x] M3-7 | 测试：日报排序（有分在前、降序、未评分末尾、并列按 `published_at` 降序）+ 跨日边界 | `tests/test_digest.py` | M3-6 | `.venv/bin/python -m pytest tests -q` → **87 passed**（url_hash 30 + fetcher 12 + repository 3 + scorer 21 + llm 10 + digest 11），全程无真实网络访问 |
 
-**M3 完成判据**：打开首页能看到 5-10 条精选，点击能跳转且 `clicked_at` 有值。（spec §10 第 3 条）
+**M3 完成判据：已满足** —— 首页 8 条精选（降序 72→34），点击 `/go/356` 302 跳原文且 `clicked_at` 有值并被保留。（spec §10 第 3 条）
+
+M3 校准记录（M3-3/M3-5 的原始证据）—— 2026-09-23 09:54 打开首页：
+
+| 分 | module | 标题（截断） |
+|---|---|---|
+| 72 | agent | AI Agent 真正干活的 Harness 到底是啥，原来就这 7 个子系统？ |
+| 45 | bigdata | 制造业质量追溯01：最小测试用例与 Oracle 层次查询演示 |
+| 40 | agent | 一个 jar 搞定实时推送：我的轻量级 SSE 中间件 Stream Nexus |
+| 40 | agent | 你的网站准备好被AI Agent阅读了吗？2026年最被忽视的前端工程问题 |
+| 38 | agent | 不受控的 Agent，凭什么上生产系统？ |
+| 38 | bigdata | drain 卡了 40 分钟：PDB 才是节点维护的主语 |
+| 35 | bigdata | 使用 DuckDB 分析 CSV 文件 |
+| 34 | agent | AI 热点日报（2026-09-23）：SpaceXAI发布Grok 4.7…… |
+
+排序、候选池与「非今日数据」判定都按 plan §9 工作；当天 8 条全部 < 75，再次印证 M2 记下的「分数分布偏左」——**没有为了好看抬分**。
+
+实测补充（plan 未写明，留给后续里程碑决策）：
+
+- **M2 留下的「同 prompt 重跑分数会漂」在 M3 不构成问题**：`cli pipeline` 只打「待打分池」（近 7 天、无 `item_scores` 记录），不重跑历史，所以同一天内首页列表不会跳。故 **`scoring.temperature` 保持 0.2，不改**，M2 提的两个对策选了「每天只对新增打分」这条。
+- **base.html 的导航只放了「日报」**：plan §10 列了 7 个入口，但 `/m/{module}`、`/search`、`/sources`、`/funds`、`/coins` 在 M4/M5 才存在，先挂上去就是点了必 404。M5-5 一次性补齐其余 6 个。
+- **Jinja2 环境集中在 `app/routers/__init__.py`**（一份 `templates` + `local_time` / `module_label` 两个过滤器）：M4 的 `search.html`、M5 的 `module.html` / `sources.html` 都要复用同一套渲染与时间显示，各建一份必然漂。plan §4 没列这个文件，属实现细节，不新增能力。
+- **路由写成同步 `def`**：`sqlite3` 是同步库，FastAPI 会把同步处理函数丢进线程池，比在路由里到处写 `asyncio.to_thread` 更省事，也不会阻塞事件循环（plan §6.3 只约束了写操作）。
+- **`mark_clicked()` 的返回值只看「条目在不在」，区分不了「是不是第一次点」**：`UPDATE … COALESCE` 的 rowcount 反映**匹配行数**而非「值是否变化」，重复点击仍返回 True；`/go/{id}` 的 404 判定因此走 `get_item_url()`，`mark_clicked()` 的布尔值只用于「条目不存在」这一种情况。
+- **测试里跑 lifespan 会写真实日志**：`tests/test_digest.py` 的 `web` fixture 靠 `DESKHUB_DB_PATH` 把库切到临时目录，但 `app.log_path` 没有环境变量覆盖口，日志仍写真实的 `data/logs/deskhub.log`。换来的是「首页真的能被渲染出来」这条端到端证据；若以后嫌脏，再给 `log_path` 加一个 `DESKHUB_LOG_PATH`。
+- **首次抓取仍未接回 lifespan**（plan §11.1 第 6 步）：按 plan §14 归属 M6-1，故现在起服务后首页要等 `cli pipeline` 或 M6 的启动补拉才有当日数据；在 M6 之前，空库首页会长时间停在「首次抓取进行中」。
+
+---
+
+## M3 修订记录
+
+### R1（2026-09-23）：源把本地时间标成 GMT → 源级时区修正
+
+**触发**：用户看库时发现 `fetch_runs` 里「刚抓取的怎么是 1 点」，怀疑时区问题并要求「其他表里有问题的也一起修」。
+
+**审计结论（先证伪，再找真问题）**：
+
+- `fetch_runs.started_at` / `sources.last_ok_at` / `items.fetched_at` / `items.clicked_at` / `item_scores.scored_at` **全部一致为 UTC**，符合 plan §6.1 的存储约定；`01:53Z` 就是北京时间 `09:53`，页面也已按 `Asia/Shanghai` 显示。**这几张表不需要改**。
+- 真问题在 `items.published_at`：**InfoQ 中文的 feed 把北京时间当 GMT 标**，导致该源 24 条发布时间整体超前 8 小时。三条实测证据：
+  1. 2026-09-23 10:25:06（北京）下载它的 feed，channel 级 `pubDate` 自称 `10:25:06 GMT`，而那一刻真实 UTC 是 `02:25:20` —— 自称时间比真实时间超前整整 8 小时；
+  2. 09-22 抓取时（UTC `08:15:52`）它标称的最新一条是 `15:12:00 GMT` —— 比抓取时刻还晚 7 小时，物理上不可能；对照同批掘金为 `08:01:28Z`（比抓取早 14 分钟，合理）；
+  3. 库里 InfoQ 的 `published_at` 与它的 pubDate 串逐字一致（`15:12:00` / `14:32:17` / `14:17:25` / `13:00:00` / `11:22:09` 全对得上），排除我方解析引入偏差。
+- 影响：该源卡片显示成未来时间（那条 Cloudflare 显示「09-23 17:26 发布」）、prompt 的「时效性 20 分」虚高、并列排序（按 `published_at`）跟着偏。其余源正常（美团 `published_at` 为 NULL 是 M1 已记录的「源本身不给时间」）。
+
+| # | 任务 | 产出文件 | 依赖 | 验证 |
+|---|---|---|---|---|
+| [x] R1-1 | 源配置新增可选 `published_tz` + 校验 + `Config.source_for(url)` 按 url 回配置取该字段 | `app/config.py` | — | 真实 `sources.yaml` 解析：InfoQ=`Asia/Shanghai`、掘金=`None`；非法值 `Asia/Shanghaix` 与空串都拒绝启动并指出位置（`sources.yaml.sources[0].published_tz：无效时区 'Asia/Shanghaix'`） |
+| [x] R1-2 | 抓取时按该时区把 feed 时间重新解释成 UTC（`_entry_published_at` / `parse_feed` 增加该参数） | `app/fetcher.py` | R1-1 | `tests/test_fetcher.py` 新增 3 条：声明后 `09:26 GMT` → `01:26Z`（−8h）；未声明的源维持 `09:26Z`（掘金/博客园靠这条）；修正只对被声明的 url 生效，同轮其他源不受影响 |
+| [x] R1-3 | 给 InfoQ 加 `published_tz: Asia/Shanghai` 并写明实测依据 | `config/sources.yaml` | R1-2 | 服务重启加载正常（`源清单已同步：6 个源`，无告警） |
+| [x] R1-4 | 回填已有 24 条 `published_at` | — | R1-2 | 24 条全部 −8h：范围从 `2026-09-21T15:04Z` ~ `2026-09-23T09:26Z`（含未来时间）变为 `2026-09-21T07:04Z` ~ `2026-09-23T01:26Z`；全库 `published_at > now` 条数 **0**；真实重抓 InfoQ 新增 2 条（id 431/432）时间为 `02:05:17Z` / `02:00:00Z`，均在抓取时刻 `02:29:40Z` 之前 ✅ |
+| [x] R1-5 | 按层级回写文档 | `spec.md`、`plan.md` | R1-4 | spec §2.3 补「源的时间戳也要当数据看」实测结论；plan §5.2 加字段说明、§7.1 步骤 6c 加解析说明、§12 加第 12 条差异、§13.1 加用例 |
+| [x] R1-6 | 测试回归 | `tests/test_fetcher.py` | R1-2 | `.venv/bin/python -m pytest tests -q` → **90 passed**（fetcher 从 12 → 15） |
+
+**记账（本次不处理）**：这 24 条的打分是用偏 8 小时的发布时间算出来的 —— 时效性只占 20 分且这些条目都是当日新发（本来就接近满分），故不回填打分；下次 `--rescore` 或改 prompt 时会自然修正。若以后要复核，按 M2 的实测值（112 条约 87147 tokens / 91 秒）估算成本。
 
 ---
 
@@ -203,7 +256,7 @@
 |---|---|---|
 | 1. 3-5 个真实源能抓到条目并入库 | M1-6、M1-4 | [x] 6 个源 ok、`items`=112 |
 | 2. 新条目能被 LLM 打分，理由具体可反驳 | M2-7、M2-8 | [x] 112 条全部打上分（0 失败），随机 10 条 reason 全部可反驳 |
-| 3. 首页 5-10 条精选，点击跳转且被记录 | M3-5、M3-7 | [ ] |
+| 3. 首页 5-10 条精选，点击跳转且被记录 | M3-4、M3-5、M3-7 | [x] 首页 8 条（72→34 降序），`/go/356` 302 跳原文且 `clicked_at=2026-09-23T01:54:18Z` 点两次仍保留首次 |
 | 4. 历史搜索能按关键词搜到过去条目 | M4-4 | [ ] |
 | 5. 单源挂掉页面标红且不影响其他源 | M5-2、M5-6 | [ ] |
 | 6. 连续多天我主动打开它 | M6-5（多日观察） | [ ] |

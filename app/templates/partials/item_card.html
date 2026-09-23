@@ -1,0 +1,28 @@
+{# 卡片：digest / module / search 三处复用（plan §10）—— 改这里就是改所有列表的视觉 #}
+<article class="card{% if item.score is not none and item.score >= 75 %} card-top{% endif %}">
+  <div class="card-body">
+    <a class="item-link card-title" href="/go/{{ item.item_id }}" target="_blank" rel="noopener noreferrer">{{ item.title }}</a>
+    <p class="card-meta">
+      <span class="source">{{ item.source_name }}</span>
+      <span class="module">{{ item.module|module_label }}</span>
+      <span class="card-time">
+        {%- if item.published_at %}{{ item.published_at|local_time }} 发布{% else %}发布时间未知{% endif -%}
+      </span>
+    </p>
+    <p class="card-reason">
+      {%- if item.reason %}{{ item.reason }}{% else %}<span class="reason-missing">未评分：本轮还没轮到这条</span>{% endif -%}
+    </p>
+  </div>
+
+  <div class="card-score">
+    {%- if item.score is none %}
+      <span class="score score-none">未评分</span>
+    {%- elif item.score >= 75 %}
+      <span class="score score-high">{{ item.score|round|int }}</span>
+    {%- elif item.score >= 50 %}
+      <span class="score score-mid">{{ item.score|round|int }}</span>
+    {%- else %}
+      <span class="score score-low">{{ item.score|round|int }}</span>
+    {%- endif %}
+  </div>
+</article>
