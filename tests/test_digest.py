@@ -28,8 +28,8 @@ def temp_db(tmp_path):
 
 
 @pytest.fixture()
-def web(tmp_path, monkeypatch):
-    """走一遍真实 lifespan（建库 + 同步源清单），但库文件落在临时目录。
+def web(tmp_path, monkeypatch, no_scheduler):
+    """走一遍真实 lifespan（建库 + 同步源清单），但库文件落在临时目录、调度与补拉走空壳。
 
     副作用：日志仍写真实的 `data/logs/deskhub.log`（`log_path` 没有环境变量覆盖口），
     换来的是「首页真的能被渲染出来」这条端到端证据。

@@ -20,6 +20,11 @@
   --score-none-bg: transparent;
   --score-none-fg: #9aa1ab;
   --score-none-border: #d9dde2;
+
+  /* 源管理标红（连续失败 >=3 次） */
+  --danger-bg: #fdecec;
+  --danger-fg: #b42318;
+  --danger-border: #f3c3c0;
 }
 
 * { box-sizing: border-box; }
@@ -39,6 +44,7 @@ body {
   display: flex;
   align-items: center;
   gap: 24px;
+  flex-wrap: wrap;
   padding: 14px 24px;
   background: var(--surface);
   border-bottom: 1px solid var(--border);
@@ -52,7 +58,7 @@ body {
   letter-spacing: 0.02em;
 }
 
-.nav { display: flex; gap: 16px; }
+.nav { display: flex; flex-wrap: wrap; gap: 16px; }
 
 .nav-link {
   color: var(--text-muted);
@@ -285,3 +291,114 @@ body {
   font-size: 12px;
   font-weight: 400;
 }
+
+/* ---------------------------------------------------------------- 源管理 */
+
+.table-wrap {
+  overflow-x: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.sources-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.sources-table th,
+.sources-table td {
+  padding: 10px 12px;
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid var(--border);
+}
+
+.sources-table th {
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  background: var(--bg);
+}
+
+.sources-table tbody tr:last-child td { border-bottom: none; }
+
+/* 标红：左侧一条红边 + 淡红底，一眼看出哪些源挂了 */
+.row-failing { background: var(--danger-bg); }
+.row-failing td:first-child { box-shadow: inset 3px 0 0 var(--danger-fg); }
+.row-off .source-name { color: var(--text-muted); }
+
+.source-name { display: block; font-weight: 600; }
+
+.source-url {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-muted);
+  font-size: 11.5px;
+  overflow-wrap: anywhere;
+}
+
+.state {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.state-on { color: var(--score-high-fg); background: var(--score-high-bg); border-color: var(--score-high-border); }
+.state-off { color: var(--text-muted); background: var(--score-low-bg); border-color: var(--score-low-border); }
+
+.nowrap { white-space: nowrap; }
+
+.fail-count {
+  display: inline-block;
+  min-width: 26px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--score-none-border);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  cursor: help;
+}
+
+.fail-count-red {
+  color: var(--danger-fg);
+  background: var(--surface);
+  border-color: var(--danger-border);
+  font-weight: 600;
+}
+
+.row-actions { white-space: nowrap; }
+
+.row-actions form { display: inline-block; margin-right: 6px; }
+
+.row-actions .btn { padding: 4px 10px; font-size: 12px; }
+
+/* ---------------------------------------------------------------- 占位页 */
+
+.placeholder {
+  padding: 40px 20px;
+  text-align: center;
+  background: var(--surface);
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+}
+
+.placeholder h1 { margin: 0 0 12px; font-size: 20px; }
+
+.placeholder-state {
+  display: inline-block;
+  margin: 0 0 12px;
+  padding: 3px 14px;
+  border-radius: 999px;
+  border: 1px dashed var(--score-none-border);
+  color: var(--score-none-fg);
+  font-size: 13px;
+}
+
+.placeholder-note { margin: 0; color: var(--text-muted); font-size: 13px; }

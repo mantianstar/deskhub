@@ -1,7 +1,7 @@
 """手工命令入口：`python -m app.cli <cmd>`（plan §11.3）。
 
 与 Web 服务共用同一套 config / db / fetcher / scorer / pipeline，方便不启动服务就调试管道。
-M1 提供 `fetch` 与 `sources`，M2 补 `score`，M3 补 `pipeline`；其余命令随里程碑补齐。
+M1 提供 `fetch` 与 `sources`，M2 补 `score`，M3 补 `pipeline`，M6 补 `purge`。
 """
 
 from __future__ import annotations
@@ -12,6 +12,7 @@ import logging
 import sys
 import unicodedata
 from collections.abc import Sequence
+from datetime import date
 
 from app import config, db, fetcher, llm, logging_setup, pipeline, repository, scorer
 from app.fetcher import FetchOutcome
@@ -171,6 +172,32 @@ def cmd_sources(_: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_purge(args: argparse.Namespace) -> int:
+    """清理旧条目：只删 `--before` 当天 00:00（业务时区）之前抓到的。
+
+    全量保留是默认策略，这个命令只手工触发（spec §11）；不带 `--yes` 时只预览，
+    避免「想看看删多少条」变成真的删掉。
+    """
+    cfg = _bootstrap()
+    try:
+        day = date.fromisoformat(args.before)
+    except ValueError:
+        print(f"错误：--before 需要 YYYY-MM-DD，当前 {args.before!r}", file=sys.stderr)
+        return 1
+    # 按业务时区切日：否则「删 09-22 之前」会按 UTC 切，实际删到本地 09-22 08:00 前
+    cutoff = repository.day_bounds_utc(cfg.app.tz, day)[0]
+    scope = f"fetched_at < {cutoff}（{args.before} 00:00 {cfg.app.timezone} 之前）"
+
+    if not args.yes:
+        print(f"将删除 {repository.count_items_before(cutoff)} 条条目：{scope}")
+        print("item_scores 随外键级联删除；sources / fetch_runs 保留。加 --yes 才真删")
+        return 0
+
+    deleted = repository.purge_items_before(cutoff)
+    print(f"已删除 {deleted} 条：{scope}")
+    return 0
+
+
 # ---------------------------------------------------------------- 入口
 
 
@@ -201,6 +228,13 @@ def _build_parser() -> argparse.ArgumentParser:
         help="只与 --rescore 一起用，指定要删除的旧打分版本（默认取 config.scoring.prompt_version）",
     )
     score.set_defaults(func=cmd_score)
+
+    purge = subparsers.add_parser("purge", help="删掉指定日期之前抓到的条目（不带 --yes 只预览）")
+    purge.add_argument(
+        "--before", required=True, metavar="YYYY-MM-DD", help="删除该日 00:00（业务时区）之前抓到的条目"
+    )
+    purge.add_argument("--yes", action="store_true", help="确认执行删除；不带则只打印将删除的条数")
+    purge.set_defaults(func=cmd_purge)
 
     return parser
 

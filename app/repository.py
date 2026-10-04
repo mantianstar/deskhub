@@ -133,6 +133,17 @@ def set_source_enabled(source_id: int, enabled: bool) -> None:
         conn.execute("UPDATE sources SET enabled = ? WHERE id = ?", (int(enabled), source_id))
 
 
+def toggle_source_enabled(source_id: int) -> bool | None:
+    """启停取反，返回新状态；源不存在返回 None（`/sources/{id}/toggle` 据此判 404）。"""
+    with db.connect() as conn, conn:
+        row = conn.execute("SELECT enabled FROM sources WHERE id = ?", (source_id,)).fetchone()
+        if row is None:
+            return None
+        new_value = not bool(row["enabled"])
+        conn.execute("UPDATE sources SET enabled = ? WHERE id = ?", (int(new_value), source_id))
+        return new_value
+
+
 def count_sources() -> int:
     with db.connect() as conn:
         return int(conn.execute("SELECT COUNT(*) AS n FROM sources").fetchone()["n"])
@@ -250,6 +261,37 @@ def last_fetch_at() -> str | None:
     with db.connect() as conn:
         row = conn.execute("SELECT MAX(started_at) AS ts FROM fetch_runs").fetchone()
         return row["ts"]
+
+
+def _row_to_fetch_run(row: sqlite3.Row) -> FetchRun:
+    return FetchRun(
+        id=row["id"],
+        source_id=row["source_id"],
+        started_at=row["started_at"],
+        finished_at=row["finished_at"],
+        status=row["status"],
+        http_status=row["http_status"],
+        items_new=row["items_new"],
+        error=row["error"],
+    )
+
+
+def latest_fetch_runs() -> dict[int, FetchRun]:
+    """每个源最近一条 `fetch_runs`（按 id 最大），供源管理页显示最后一次的失败原因。
+
+    没有抓取记录的源不会出现在结果里，调用方用 `.get()` 兜底。
+    """
+    with db.connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT r.id, r.source_id, r.started_at, r.finished_at, r.status,
+                   r.http_status, r.items_new, r.error
+            FROM fetch_runs r
+            JOIN (SELECT source_id, MAX(id) AS last_id FROM fetch_runs GROUP BY source_id) t
+              ON t.last_id = r.id
+            """
+        ).fetchall()
+    return {row["source_id"]: _row_to_fetch_run(row) for row in rows}
 
 
 # ---------------------------------------------------------------- 打分
@@ -503,4 +545,27 @@ def search_items(
             [*params, safe_page_size, (safe_page - 1) * safe_page_size],
         ).fetchall()
     return [_row_to_digest_item(row) for row in rows], total
+
+
+# ---------------------------------------------------------------- 清理
+
+
+def count_items_before(cutoff_utc: str) -> int:
+    """`fetched_at < cutoff_utc` 的条目数（`cli purge` 不带 `--yes` 时预览用）。"""
+    with db.connect() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) AS n FROM items WHERE fetched_at < ?", (cutoff_utc,)
+        ).fetchone()
+    return int(row["n"])
+
+
+def purge_items_before(cutoff_utc: str) -> int:
+    """删除 `fetched_at < cutoff_utc` 的条目，返回删除条数。
+
+    只动 `items`：`item_scores` 靠 `ON DELETE CASCADE` 一起走；`sources` / `fetch_runs`
+    保留 —— 清掉的是内容，不是「源的状态与历史」（plan §11.3 / §16）。
+    """
+    with db.connect() as conn, conn:
+        cursor = conn.execute("DELETE FROM items WHERE fetched_at < ?", (cutoff_utc,))
+        return cursor.rowcount
 

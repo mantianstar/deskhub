@@ -11,7 +11,13 @@
     <a class="brand" href="/">deskhub</a>
     <nav class="nav">
       <a class="nav-link" href="/">日报</a>
-      {# M5 补齐：Agent / 大数据入口、历史搜索、源管理、基金、铜币（先不放入口，避免点了 404） #}
+      {% for key, label in nav_modules() %}
+      <a class="nav-link" href="/m/{{ key }}">{{ label }}</a>
+      {% endfor %}
+      <a class="nav-link" href="/search">历史搜索</a>
+      <a class="nav-link" href="/sources">源管理</a>
+      <a class="nav-link" href="/funds">基金</a>
+      <a class="nav-link" href="/coins">铜币</a>
     </nav>
   </header>
 

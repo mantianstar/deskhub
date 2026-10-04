@@ -32,5 +32,12 @@ def module_label(key: str) -> str:
     return config.get().module(key).label
 
 
+def nav_modules() -> list[tuple[str, str]]:
+    """导航栏的 module 入口 `(key, label)`；同样取配置，避免 nav 与入口页标签不一致。"""
+    cfg = config.get()
+    return [(key, cfg.modules[key].label) for key in cfg.modules]
+
+
 templates.env.filters["local_time"] = format_local_time
 templates.env.filters["module_label"] = module_label
+templates.env.globals["nav_modules"] = nav_modules

@@ -2,11 +2,13 @@
 
 启动顺序（plan §11.1）：
     日志就位 → 配置加载校验 → 建库 → 同步源清单 → 调度器 → 启动补拉
-调度器与启动补拉分别在 M6 / M3 接回，此处预留挂载点。
+第 6 步用 `create_task` 不 await：首轮抓取跑多久都不能挡住首页。
 """
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import logging
 from contextlib import asynccontextmanager
 
@@ -14,13 +16,13 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from app import config, db, logging_setup, repository
-from app.routers import STATIC_DIR, digest, search
+from app import config, db, logging_setup, repository, scheduler
+from app.routers import STATIC_DIR, digest, placeholders, search, sources
 
 logger = logging.getLogger(__name__)
 
 
-def _bootstrap() -> None:
+def _bootstrap() -> config.Config:
     """启动阶段：任一步失败都不允许带病启动。"""
     # 文件日志路径本身来自配置，所以先用控制台日志保证错误可见
     logging.basicConfig(
@@ -48,15 +50,24 @@ def _bootstrap() -> None:
     repository.sync_sources_from_config(cfg.sources)
     logger.info("源清单已同步：%d 个源", len(cfg.sources))
 
-    # M6：scheduler.start()（含启动补拉 create_task(pipeline.run())，不 await 不阻塞首页）
+    return cfg
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    _bootstrap()
+    cfg = _bootstrap()
+
+    active_scheduler = scheduler.start(cfg)
+    # 启动补拉是后台任务：源多时首轮可能几十秒，首页不等它（plan §11.1 第 6 步）
+    startup_task = asyncio.create_task(scheduler.startup_fetch(cfg))
+
     try:
         yield
     finally:
+        startup_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await startup_task
+        active_scheduler.shutdown(wait=False)
         logger.info("deskhub 已停止")
 
 
@@ -65,6 +76,8 @@ app = FastAPI(title="deskhub", lifespan=lifespan, docs_url=None, redoc_url=None)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 app.include_router(digest.router)
 app.include_router(search.router)
+app.include_router(sources.router)
+app.include_router(placeholders.router)
 
 
 @app.exception_handler(Exception)

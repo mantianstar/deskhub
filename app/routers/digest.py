@@ -63,6 +63,21 @@ def digest_page(request: Request) -> Response:
     )
 
 
+@router.get("/m/{module}")
+def module_page(request: Request, module: str) -> Response:
+    """入口视图：只列该 module 的今日条目，复用同一候选池与卡片（plan §10）。
+
+    非法 module 直接 404：`/m/xxx` 只可能是手改 URL，悄悄当成「全部」会让人以为入口生效了。
+    """
+    cfg = config.get()
+    if module not in cfg.modules:
+        raise HTTPException(status_code=404, detail=f"入口不存在：{module}")
+    label = cfg.modules[module].label
+    return templates.TemplateResponse(
+        request, "module.html", _digest_context(request, module, f"{label} · 今日精选")
+    )
+
+
 @router.get("/go/{item_id}")
 def go(item_id: int) -> RedirectResponse:
     """记一次点击后 302 跳外链；`item_id` 不存在返回 404。"""

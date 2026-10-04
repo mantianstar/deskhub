@@ -28,8 +28,8 @@ def temp_db(tmp_path):
 
 
 @pytest.fixture()
-def web(tmp_path, monkeypatch):
-    """走真实 lifespan（建库 + 同步源清单），库文件落在临时目录。"""
+def web(tmp_path, monkeypatch, no_scheduler):
+    """走真实 lifespan（建库 + 同步源清单），库文件落在临时目录、调度与补拉走空壳。"""
     monkeypatch.setenv("DESKHUB_DB_PATH", str(tmp_path / "web.db"))
     config.reset()
     with TestClient(fastapi_app) as client:

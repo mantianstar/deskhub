@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}源管理 · deskhub{% endblock %}
+
+{% block content %}
+<section class="sources">
+  <div class="digest-head">
+    <h1>源管理</h1>
+    <p class="digest-meta">
+      共 {{ rows|length }} 个源{% if failing_count %}，其中 {{ failing_count }} 个连续失败 &ge; {{ fail_threshold }} 次{% endif %}
+    </p>
+  </div>
+
+  {% if failing_count %}
+  <p class="notice">有 {{ failing_count }} 个源连续失败 {{ fail_threshold }} 次以上（下表标红）：鼠标悬停「失败次数」可看最后一次的错误与 HTTP 状态。它们只影响自己，其他源不受影响。</p>
+  {% endif %}
+
+  <div class="table-wrap">
+    <table class="sources-table">
+      <thead>
+        <tr>
+          <th>入口</th>
+          <th>源</th>
+          <th>状态</th>
+          <th>最近成功</th>
+          <th>失败次数</th>
+          <th>操作</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+        <tr class="{% if row.is_failing %}row-failing{% endif %}{% if not row.enabled %} row-off{% endif %}">
+          <td class="nowrap">{{ row.module|module_label }}</td>
+          <td>
+            <span class="source-name">{{ row.name }}</span>
+            <span class="source-url">{{ row.url }}</span>
+          </td>
+          <td>
+            {% if row.enabled %}<span class="state state-on">启用</span>{% else %}<span class="state state-off">停用</span>{% endif %}
+          </td>
+          <td class="nowrap">{% if row.last_ok_at %}{{ row.last_ok_at|local_time }}{% else %}从未成功{% endif %}</td>
+          <td>
+            <span class="fail-count{% if row.is_failing %} fail-count-red{% endif %}" title="{{ row.tip }}">{{ row.fail_count }}</span>
+          </td>
+          <td class="row-actions">
+            <form method="post" action="/sources/{{ row.id }}/toggle">
+              <button class="btn btn-ghost" type="submit">{% if row.enabled %}停用{% else %}启用{% endif %}</button>
+            </form>
+            <form method="post" action="/sources/{{ row.id }}/fetch">
+              <button class="btn btn-ghost" type="submit">立即抓取</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}

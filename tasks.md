@@ -16,6 +16,8 @@
 
 不做用户体系 · 不做点赞/踩 · 不做 AI 自动发现源 · 不做浏览器渲染抓取 · 不做标题相似度去重 · 不做调仓/交易建议 · 不做插件式数据源抽象 · 不做自动数据清理 · 不接入公众号/知乎/即刻/小红书 · 不做基金/铜币的业务逻辑。
 
+> 执行规则（读取边界 + 轮次边界）见 [RULES.md](./RULES.md)。
+
 ---
 
 ## M0 — 骨架 — 已完成
@@ -284,28 +286,112 @@ M3 校准记录（M3-3/M3-5 的原始证据）—— 2026-09-23 09:54 打开首�
 
 ---
 
-## M5 — 外壳（最后做）
+## M5 — 外壳（最后做）— 已完成
 
-| # | 任务 | 产出文件 | 依赖 | 验证 |
-|---|---|---|---|---|
-| M5-1 | 入口视图 `/m/{module}`（`agent` / `bigdata`），复用同一候选池与卡片 | `app/routers/digest.py`、`app/templates/module.html` | M4 | 两个入口各自只出现本 module 条目；非法 module 返回 404 |
-| M5-2 | 源管理 `/sources`：列表（module / 启停 / 最近成功 / 失败次数），`fail_count >= 3` 标红 + tooltip 显示最后 `error` 与 `http_status` | `app/routers/sources.py`、`app/templates/sources.html` | M4 | 手工把某源 url 改成不存在域名 → 连跑 3 次 → 页面标红 |
-| M5-3 | 源操作：`POST /sources/{id}/toggle`（启停取反）、`POST /sources/{id}/fetch`（单源立即重试），均 302 回 `/sources` | `app/routers/sources.py` | M5-2 | 挂掉的源可单独重试，成功 `fail_count` 归零、红点消失 |
-| M5-4 | 占位页 `/funds`、`/coins`：仅显示「未启用」，**不写任何抓取逻辑** | `app/routers/placeholders.py`、`app/templates/placeholder.html` | M5-1 | 页面只有状态说明，无数据源代码 |
-| M5-5 | 导航栏（日报 / Agent / 大数据 / 历史搜索 / 源管理 / 基金 / 铜币）+ `style.css` 视觉统一 | `app/templates/base.html`、`app/static/style.css` | M5-4 | 手工点完所有导航无 404 |
-| M5-6 | 验收：源集体失效时其他源不受影响，页面标红提示准确 | — | M5-5 | spec §10 第 5 条 |
+> 读取软上限 ≤ 12 个文件。「读（必读）」= 不读没法开工；「读（预期波及）」= 不读也能开工，但改到这里必然要看（规则见 [RULES.md](./RULES.md)）。
+
+| # | 任务 | 读（必读） | 读（预期波及） | 产出文件 | 依赖 | 验证 |
+|---|---|---|---|---|---|---|
+| [x] M5-1 | 入口视图 `/m/{module}`（`agent` / `bigdata`），复用同一候选池与卡片 | `app/routers/digest.py`、`app/templates/digest.html`、`app/templates/partials/item_card.html`、plan §9 / §10 | `app/routers/__init__.py`（新增路由的注册点）、`tests/test_sources.py`（本里程碑新建，覆盖 `/m/{module}` 与非法 module 404） | `app/routers/digest.py`、`app/templates/module.html`、`app/templates/partials/item_list.html` | M4 | 真实服务（8770，真实库）：`/m/agent` 渲染 8 条且 `module` 标签全为「Agent 开发」（`grep -o '<span class="module">…'` 计数 **8 / 0**），`/m/bigdata` 全为「大数据」（8 / 0），标题分别「Agent 开发 · 今日精选」「大数据 · 今日精选」；非法 module `/m/unknown` → **404**；`tests/test_sources.py::test_module_page_shows_only_that_module_and_404_for_unknown` |
+| [x] M5-2 | 源管理 `/sources`：列表（module / 启停 / 最近成功 / 失败次数），`fail_count >= 3` 标红 + tooltip 显示最后 `error` 与 `http_status` | `app/repository.py`（`list_sources` / 健康检查计数）、`app/models.py`、`config/sources.yaml`、plan §10 | `app/routers/__init__.py`（新增路由的注册点）、`tests/test_sources.py`（本里程碑新建，覆盖标红与 tooltip） | `app/routers/sources.py`、`app/templates/sources.html`、`app/repository.py`（新增 `latest_fetch_runs`） | M4 | 真实服务：`/sources` 列出 **7** 个源（6 配置 + 历史停用的 Hacker News）、表头 6 列；真实 tooltip 实测 `title="最近一次 2026-09-23T01:53:21Z：timeout / 无 HTTP 状态 / ReadTimeout: "`（fail_count=1 的源），当前无标红行（全库 fail_count 均 <3）。标红场景（临时库 `/tmp/m5.db`）：插入 `https://nonexistent.invalid/feed` 后经**真实抓取管道**连抓 3 次（`ConnectError: nodename nor servname provided`），`fail_count=3` → 页面 `row-failing` **=1**、该格带 `fail-count-red` 与含 error 的 tooltip，其余 6 行不受影响，顶部出现「有 1 个源连续失败 3 次以上…」 |
+| [x] M5-3 | 源操作：`POST /sources/{id}/toggle`（启停取反）、`POST /sources/{id}/fetch`（单源立即重试），均 302 回 `/sources` | `app/routers/sources.py`、`app/cli.py`（单源抓取入口）、`app/fetcher.py`（单源抓取流程）、plan §10 | `app/routers/__init__.py`（新增路由的注册点）、`tests/test_sources.py`（本里程碑新建，覆盖 toggle / fetch） | `app/routers/sources.py`、`app/repository.py`（新增 `toggle_source_enabled`） | M5-2 | 真实服务：`POST /sources/7/toggle` → **302 → http://127.0.0.1:8771/sources**，`row-off` 1 → 0（再 toggle 回去）；`POST /sources/7/fetch` → **302** 回 `/sources`；「挂掉的源修好后单次重试」：把坏源 url 换成可达地址后 `fail_count 5 → 0`、`row-failing 1 → 0`（**红点消失**）；非法 id 的 toggle / fetch 均 **404** |
+| [x] M5-4 | 占位页 `/funds`、`/coins`：仅显示「未启用」，**不写任何抓取逻辑** | `app/templates/base.html`、plan §10 / §16 | `app/routers/__init__.py`（新增路由的注册点） | `app/routers/placeholders.py`、`app/templates/placeholder.html` | M5-1 | 真实服务：`/funds`、`/coins` 均 200，页面含 `<p class="placeholder-state">未启用</p>`；`placeholders.py` 只有渲染模板，无 fetcher / 网络调用 |
+| [x] M5-5 | 导航栏（日报 / Agent / 大数据 / 历史搜索 / 源管理 / 基金 / 铜币）+ `style.css` 视觉统一 | `app/templates/base.html`、`app/routers/__init__.py`、`app/static/style.css`、tasks.md M3 实测补充（导航当时只放了「日报」） | —（本行改的就是导航与样式本身，无额外波及） | `app/templates/base.html`、`app/routers/__init__.py`、`app/static/style.css` | M5-4 | 真实服务：7 个入口 `curl` 循环全部 **200**（含 `/m/unknown` 应为 404）；浏览器实测 `/sources` 表头 6 列、每行「停用/启用」+「立即抓取」两按钮、`scrollWidth==clientWidth` 无横向滚动、无重叠；`/m/agent` 卡片徽章在右上角且与标题 `overlapsTitle=false`；`/funds` 显示灰色「未启用」胶囊。module 入口用 `config.yaml` 的 label（渲染成「Agent 开发」） |
+| [x] M5-6 | 验收：源集体失效时其他源不受影响，页面标红提示准确 | spec §10 第 5 条、plan §13.2 | M5-1 ~ M5-5 的全部产出文件 | — | M5-5 | spec §10 第 5 条：一个源连败 3 次只标红它自己（`row-failing`=1），其余 6 源列表照常、页面 200（`tests/test_sources.py::test_sources_page_marks_only_failing_source_red` 断言同一事实）；测试回归 `.venv/bin/python -m pytest tests -q` → **109 passed**（新增 `tests/test_sources.py` 8 条，全程无真实网络访问） |
+
+**M5 完成判据：已满足** —— 7 个导航入口全部 200（非法 module 404），源管理页能列源、能启停、能单源重试，标红与 tooltip 准确，基金/铜币为纯占位页。（spec §10 第 5 条）
+
+实测补充（plan 未写明，留给后续里程碑决策）：
+
+- **界面启停「重启后被覆盖」的决策：保持「配置优先」，不改 DB 优先**（M0-6 留下的待决项）。理由：plan §16 把 `sources.yaml` 当源清单的唯一真源，改成 DB 优先会让「配置里删源/停源」不再生效（会与 R1-1 的语义打架）。代价：在 `/sources` 上临时停用的源，下次服务重启会被 `sources.yaml` 覆盖回来 —— 本服务是长期常驻的（spec §9 调度随进程存活），所以进程存活期内启停**确实生效**（抓取只取 `enabled=1`），只有重启会丢。若哪天要让界面启停长期生效，改法是让 `sync_sources_from_config()` 只对**新行**写 `enabled`、已存在的行不动 `enabled`（R1-1 的「配置删源自动置 0」要一并调整）。
+- **新增 `app/templates/partials/item_list.html`**：日报 `/` 与入口 `/m/{module}` 的列表主体**完全相同**（只有 `page_title` 与 module 筛选不同），抽成一份共用，避免 M3-6 那句「首次抓取进行中」两处漂。plan §4 / §10 只列了 `partials/item_card.html`，这属实现细节，不新增能力。
+- **导航的 module 入口用 `config.yaml` 的 label**（渲染成「Agent 开发」），不是 plan §10 里手写的「Agent」；理由同 `module_label` 过滤器：label 是唯一真源，模板里不写死。
+- **单源重试路由是 `async def` 且直接 `await fetcher.run_once(...)`**：这是网络 I/O，不是 sqlite 写操作，不需要 `to_thread`（写库在 `fetcher` 内部已经 `to_thread`）；`/sources` 与 toggle 保持同步 `def`（同 M3 的取舍）。
+- **302 而不是 303**：plan §10 明确写「302 回 `/sources`」，照做；`POST → GET` 语义上 303 更规范，此处属已知取舍。
+- **非法 id 的 toggle / fetch 返回 404**（不是静默 302）：与 `/go/{id}` 的处理一致 —— 只有合法 id 才 302 回 `/sources`；`fetcher.run_once(source_id=...)` 对不存在的源抛 `ValueError`，路由层转成 404。
+- **`latest_fetch_runs()` 按 `MAX(id)` 取每个源最近一条**：`fetch_runs` 的 id 是自增插入序，同一轮里并发写入的先后不保证等于完成顺序，但「最近一次写库的记录」用于 tooltip 足够准确（plan §10 只要求显示最后一次的 error 与 http_status）。
 
 ---
 
-## M6 — 收口
+## M6 — 收口 — 已完成
 
-| # | 任务 | 产出文件 | 依赖 | 验证 |
-|---|---|---|---|---|
-| M6-1 | 调度器：`startup_fetch`（启动后立即、一次性）+ `daily_pipeline`（每天 08:00 Asia/Shanghai，`coalesce=True`、`misfire_grace_time=3600`、`max_instances=1`）；接回 lifespan，启动补拉用 `create_task` 不 await 不阻塞首页 | `app/scheduler.py`、`app/main.py` | M5 | 改系统时间/触发点验证 misfire 仍执行；服务启动后首轮抓取不阻塞 `/` |
-| M6-2 | CLI：`purge --before YYYY-MM-DD [--yes]`（删 `items` 级联删 `item_scores`，打印删除条数） | `app/cli.py`、`app/repository.py` | M5 | 全量保留是默认策略，purge 只手工触发 |
-| M6-3 | 日志轮转确认：`RotatingFileHandler` 大小/备份数生效，抓取与打分关键字段（源、status、items_new、token）可追溯 | `app/logging_setup.py` | M6-1 | 人为触发一次轮转 |
-| M6-4 | 测试补齐：`tests/test_repository.py`（临时 db 跑 SQL），对齐 plan §13.1 全部 10 条用例 | `tests/` | M6-3 | `pytest` 全绿 |
-| M6-5 | 终验：逐条对照 spec §10 六条验收标准 + plan §13.2 六条手工验收，记录结论 | — | M6-4 | 尤其第 6 条「连续多天我主动打开它」需**真实观察多日**才可判定 |
+> 本里程碑读取软上限 ≤ 12 个文件；本轮是**复跑**（代码不改，只把 M6 重新执行一遍、证据整段换成这一轮的），**实际读了 16 个**（必读 11 + 预期波及 3 + 真探索 2，不含任务文件 `tasks.md` 本身）。读取面比实现轮小，因为复跑不用再动代码 —— RULES.md 里「M6 实测 20 个」记的是实现轮的口径。任务行里的「读」两列仍是**该任务的读取边界**（实现轮定的），本轮实际读了什么见文末清单。
+
+| # | 任务 | 读（必读） | 读（预期波及） | 产出文件 | 依赖 | 验证 |
+|---|---|---|---|---|---|---|
+| [x] M6-1 | 调度器：`startup_fetch`（启动后立即、一次性）+ `daily_pipeline`（每天 08:00 Asia/Shanghai，`coalesce=True`、`misfire_grace_time=3600`、`max_instances=1`）；接回 lifespan，启动补拉用 `create_task` 不 await 不阻塞首页 | `app/main.py`（lifespan 钩子位）、`app/pipeline.py`（`fetch → score` 编排）、`app/config.py`（调度时间 / 时区）、plan §11.1 / §11.2、`requirements.txt`（确认 `apscheduler` 已在依赖里，未新增依赖） | `tests/test_digest.py` / `test_search.py` / `test_sources.py` 的 `web` 夹具（lifespan 现在会抓 6 个源，必须挡住） | `app/scheduler.py`、`app/main.py`、`tests/conftest.py` | M5 | 真实服务（8765，真实库；先把 09:15 启动的「改动前」旧进程停掉，再用当前代码重启）：启动日志按 plan §11.1 顺序齐全 —— `deskhub 启动：host=127.0.0.1 port=8765 timezone=Asia/Shanghai` → `数据库就绪` → `源清单已同步：6 个源` → `调度器已启动：daily_pipeline 每天 08:00（Asia/Shanghai）` → `启动补拉开始` → `管道开始：fetch → score`；**补拉进行中**连打 3 次首页 → **200，11.7ms / 3.0ms / 2.8ms**（不阻塞）；整轮 11:48:19 → 11:48:44（**25 秒**）收尾：6 个源全 `status=ok`、解析 110 条、新增 30 条、失败 0 个，打分 30 成功 / 0 失败 / `token(total=22565)`，日志末行 `启动补拉结束：新增=30 打分成功=30 token(total=22565)`。misfire 与 job 参数由 `tests/test_scheduler.py` 4 条覆盖（`hour=8` / `timezone=Asia/Shanghai` / `coalesce=True` / `misfire_grace_time=3600` / `max_instances=1`；过去 30 分钟的一次性任务在 grace 内 `start()` 后立即补跑，错过 90 秒的对照组不补跑） |
+| [x] M6-2 | CLI：`purge --before YYYY-MM-DD [--yes]`（删 `items` 级联删 `item_scores`，打印删除条数） | `app/cli.py`、`app/repository.py`、`app/models.py`（DDL 与外键级联）、plan §11.3 / §16、`config/config.yaml`（purge 切日要用业务时区） | `tests/test_repository.py`（purge 用例的落点） | `app/cli.py`、`app/repository.py` | M5 | 在库副本（用 `sqlite3` 的备份 API 从真库复制出的 `/tmp/m6-purge.db`，266 条，真库不动）实测：不带 `--yes` 打印「将删除 112 条条目：fetched_at < 2026-09-22T16:00:00Z（2026-09-23 00:00 Asia/Shanghai 之前）」且副本仍 266 条（只预览）；`--yes` 后 `已删除 112 条`，`items` 266 → 154、`item_scores` 266 → 154（**外键级联生效**）、`sources` 7 与 `fetch_runs` 37 不变；非法日期 `2026-13-99` → `错误：--before 需要 YYYY-MM-DD，当前 '2026-13-99'`，退出码 1。全量保留仍是默认策略，只有手工触发才会删 |
+| [x] M6-3 | 日志轮转确认：`RotatingFileHandler` 大小/备份数生效，抓取与打分关键字段（源、status、items_new、token）可追溯 | `app/logging_setup.py`、`app/fetcher.py` / `app/scorer.py`（关键字段产生处）、plan §11.2 | —（本行只确认既有配置，无额外波及） | `app/logging_setup.py`（**未改，仅确认**） | M6-1 | 人为触发轮转（临时目录，把 `MAX_BYTES` 压到 1024）后写 200 行 → 出现 `deskhub.log` + `.1` ~ `.5`（各 1008B），`.6` 不产生（被 `backupCount=5` 卡住）→ 大小与备份数都生效。真实日志字段可追溯（下面几行都是本轮非测试产生的）：`抓取完成 source=InfoQ 中文 status=ok http=200 解析=20 新增=2`（6 个源各一行）、`抓取完成 source=坏源 status=timeout http=None 解析=0 新增=0 error=ConnectError: [Errno 8] nodename nor servname provided, or not known`（对着临时库里的坏源跑 `cli fetch --source-id` 得到真失败）、`本轮打分待打分=30 成功=30 失败=0 token(prompt=12495 completion=10070 total=22565)`、`启动补拉结束：新增=30 打分成功=30 token(total=22565)`。原配置即满足，代码一行未动 |
+| [x] M6-4 | 测试补齐：`tests/test_repository.py`（临时 db 跑 SQL），对齐 plan §13.1 全部用例 | `tests/test_repository.py`（R1-2 起头）、`app/repository.py`、`app/models.py`、plan §13.1 | `tests/test_digest.py` / `test_search.py` / `test_sources.py`（对齐 §13.1 用例要看已有测试、避免重复覆盖，未改其内容） | `tests/test_repository.py`、`tests/test_scheduler.py` | M6-3 | `.venv/bin/python -m pytest tests -q` → **119 passed in 2.67s**（119 = 109 + 仓库层 6 + 调度器 4，后 10 条是 M6 实现轮补的，本轮未新增用例），全程无真实网络访问（119 条 2.67 秒跑完本身就是佐证）。§13.1 逐条落点见下方对照表 |
+| [x] M6-5 | 终验：逐条对照 spec §10 六条验收标准 + plan §13.2 六条手工验收，记录结论 | spec §10、plan §13.2 | `README.md`（其中「调度器与 purge 尚未实现」的表述必须回写） | `tasks.md`、`plan.md`、`README.md` | M6-4 | 见下方「M6 终验记录」：spec §10 前 5 条已满足（第 5 条这轮另在临时库上用**真实抓取**重新复现了一遍），第 6 条**要真实观察多日**，本轮只起算、不打勾。本轮是复跑，只回写了本文件；plan §12 第 15-17 条与 README 的相应改动在实现轮已落盘，无需再动 |
+
+**M6 完成判据：前 5 条已满足（第 6 条除外）** —— 服务启动即自动补拉且不阻塞首页、每天 08:00 定时出报、日志可轮转可追溯、`cli purge` 手工可控；`pytest` 全绿 **119** 条。spec §10 第 6 条「连续多天我主动打开它」是时间才能给的答案，不代填。
+
+### M6 终验记录（spec §10 / plan §13.2 逐条，2026-09-24 11:48 起服务复跑实测）
+
+| 标准 | 结论 | 证据 |
+|---|---|---|
+| spec §10-1 真实源能抓到条目并入库 | ✅ | 6/6 源 `status=ok`、解析 110 条、0 失败，`items` 236 → 266（启动补拉新增 30） |
+| spec §10-2 新条目能被 LLM 打分且理由可反驳 | ✅ | 30 条待打分全部成功、0 失败（`token(total=22565)`）；今日抽样 4 条理由逐条可反驳（见下表） |
+| spec §10-3 首页 5-10 条精选、点击跳转且被记录 | ✅ | 首页 **8** 条，分数 85/84/80/80/78/74/70/70，卡片顺序与分数和 `query_digest` 逐条一致、页面无「未评分」标注；`/go/511` 两次均 302 跳 `https://www.cnblogs.com/SelectDB/p/23099320`，`clicked_at=2026-09-24T01:59:21Z` **保留首次**；`/go/999999` → 404 |
+| spec §10-4 历史搜索能按关键词搜到过去条目 | ✅ | 用今日抓到的 511 标题里的「SeleectDB」搜 → `/search?q=SeleectDB` 命中 `/go/511` |
+| spec §10-5 单源挂掉页面标红且不影响其他源 | ✅ | 临时库（`/tmp/m6-bad.db`）插坏源，经**真实抓取**连跑 3 次（`ConnectError: nodename nor servname provided`）→ `fail_count` 1→2→3；`/sources` 7 行中**只有该行** `row-failing`（=1）、`fail-count-red`=1、顶部出现「有 1 个源连续失败 3 次以上…」，其余 6 源 `fail_count=0`、页面 200。当前真库 `/healthz` `sources_failing=0` |
+| spec §10-6 连续多天我主动打开它 | ⏳ 待观察 | 只能由真实使用给出，本轮起算（2026-09-24） |
+| plan §13.2-1 `cli fetch` 后 `items` > 0 | ✅ | `items=266`（`sqlite3` 直查） |
+| plan §13.2-2 `cli score` 后人工读 reason 能反驳 | ✅ | 今日抽样 4 条，见下表 |
+| plan §13.2-3 首页 5-10 条 + 点击 + `clicked_at` 有值 | ✅ | 同 spec §10-3 |
+| plan §13.2-4 搜索关键词命中当日抓到的条目 | ✅ | 同 spec §10-4 |
+| plan §13.2-5 坏源连跑 3 次 → 标红、其他源正常 | ✅ | 同 spec §10-5；数据层另有 `test_success_after_three_failures_resets_fail_count` 覆盖状态机 |
+| plan §13.2-6 连续多天主动打开 | ⏳ 待观察 | 同 spec §10-6 |
+
+全部路由复查（无阻塞、无 500）：`/`、`/search`、`/search?q=DuckDB`、`/m/agent`、`/m/bigdata`、`/sources`、`/funds`、`/coins`、`/healthz` 均 **200**；`/m/unknown` **404**、`/go/999999` **404**。`/m/agent` 8 条的 module 标签全为「Agent 开发」、`/m/bigdata` 8 条全为「大数据」；`/funds` 显示「未启用」；`/healthz` → `{"db":"ok","sources_total":7,"sources_failing":0,"last_fetch_at":"2026-09-24T03:48:20Z"}`；`cli sources` 列出 7 个源（6 开 1 关）、连败全为 0。
+
+今日（09-24 11:55）从 `query_digest` 直接取首页前 4 条 reason（原文照抄，未截断），逐条判断「可反驳」（沿用 M2 标准：说清「这条讲了什么 + 与关注点什么关系」，能拿原文指对错）：
+
+| 分 | 标题 | reason | 可反驳 |
+|---|---|---|---|
+| 85 | Apache Doris 高性能 Open Lake Variant 读写技术解析（含对比数据） - SeleectDB | 讲 Doris 4.2+ 如何读写 Iceberg/Paimon 中的 Variant 半结构化数据，给出按需读取、拆列优化和向量化对比数据，对湖仓选型与查询调优有直接参考价值。 | ✅ |
+| 84 | 用户纠正一次，模型下次还是会错：Shopify怎样把失败写进权重 | 讲Shopify GraphQL Agent把线上失败案例转难例、经审查生成成功轨迹后做SFT和强化学习，是Agent持续学习与评测的可复现工程方法。 | ✅ |
+| 80 | 共享黑板模式（Blackboard）实战：多 Agent 如何并发协作而不冲突？ | 讲多 Agent 并发协作下共享黑板模式的状态读写与冲突规避，属多智能体协作架构实战，对做 Agent 编排与状态管理的读者有直接参考价值。 | ✅ |
+| 80 | MCP 到底接在了哪一层？从“Agent 调工具”说起 | 辨析 MCP 在模型、Agent、Harness、Client、Server 间的分层位置，厘清 Agent 调工具时的调用链边界，对理解 MCP 集成有帮助。 | ✅ |
+
+### M6-4：plan §13.1 用例落点对照
+
+| §13.1 用例 | 落点（测试文件::用例） |
+|---|---|
+| `canonicalize` 边界 | `test_url_hash.py`（30 条：6 种非法 URL 抛错 + 4 种改写的 hash 相同） |
+| 同一 feed 抓两次 | `test_repository.py::test_same_feed_twice_inserts_items_once`（数据层）、`test_fetcher.py::test_same_feed_twice_only_inserts_once`（走 HTTP） |
+| 源返回 500 | `test_repository.py::test_http_error_bumps_fail_count_and_keeps_last_ok_at`、`test_fetcher.py::test_http_500_marks_failure_and_other_sources_survive`（含「其他源仍被处理」） |
+| 合法 XML 但 0 条 | `test_repository.py::test_empty_feed_touches_last_ok_at_but_keeps_fail_count`、`test_fetcher.py::test_empty_feed_keeps_fail_count_and_touches_last_ok_at` |
+| 连续 3 次失败后成功 | `test_repository.py::test_success_after_three_failures_resets_fail_count`、`test_fetcher.py::test_three_failures_then_success_resets_fail_count` |
+| LLM 返回坏 JSON | `test_scorer.py::test_bad_json_then_good_scores_on_retry` / `test_all_attempts_bad_json_leaves_item_pending` |
+| LLM 返回 `score=150` / `"95"` | `test_scorer.py::test_score_is_coerced_and_clamped` |
+| 日报排序 | `test_digest.py::test_digest_orders_scored_first_then_score_desc` / `test_digest_ties_fall_back_to_newest_id` |
+| 跨日边界 | `test_digest.py::test_items_at_day_boundaries_split_into_two_digests` |
+| `/go/{id}` 点击两次 | `test_digest.py::test_mark_clicked_keeps_first_click` + 路由级 `test_home_page_renders_cards_and_records_click` |
+| 配置里删掉一个源后再 sync | `test_repository.py::test_sync_disables_sources_removed_from_config` |
+| 重复 sync 同一清单 | `test_repository.py::test_sync_preserves_runtime_state`（+ `test_config_enabled_overrides_db_toggle`） |
+| 源声明 `published_tz` | `test_fetcher.py::test_source_timezone_corrects_mislabelled_gmt` 等 3 条 |
+| **（§13.1 之外新增）** `cli purge` | `test_repository.py::test_purge_deletes_older_items_and_cascades_scores` / `test_purge_preview_counts_without_deleting` |
+| **（§13.1 之外新增）** 调度器 | `test_scheduler.py` 4 条：触发点与参数、grace 内补跑、超 grace 不补跑、启动补拉就地兜异常 |
+
+这 10 条是 M6 实现轮补上的（仓库层 6 + 调度器 4）；复跑轮**未新增任何用例**，只做定位核对，也没改过测试内容。
+
+M6 复跑实测补充（plan 未写明，留给后续决策）：
+
+- **启动补拉的耗时几乎全在打分**：本轮新增 30 条、待打分 30 条 —— 抓取 11:48:19 → 11:48:21（≈2 秒，6 源串行），打分 → 11:48:44（≈23 秒，并发 3），整轮 25 秒。抓取是秒级，整轮时长基本由**待打分条数**决定，含义是**服务起来后日报要等一会儿才完整**，页面在这期间是「上一次的库 + 刚抓进来的部分」（不报错，但内容会变）。想更快可调 `scoring.concurrency`（注意厂商 RPM）或把首轮拆成两次触发。
+- **日志里的 `port` 是配置值，不是实际监听端口**：`deskhub 启动：… port=8765` 读的是 `config.yaml`（`app/main.py` 打的是 `cfg.app.port`），用 `--port 8769` 覆盖时这行照样打印 8765。uvicorn 自己那行 `Uvicorn running on …:8769` 才是准的，功能无影响，但排查端口冲突时会被这行误导 —— 是否改成读实际值，留待后续决定。本轮就在配置端口 8765 上跑，这行与实际一致。
+- **改了代码必须重启才带调度器**：本轮先把 8765 上那个 09:15 启动的「改动前」旧进程停掉、换当前代码重启，才拿到调度器日志与补拉记录；不重启会误以为「自动抓取没生效」。
+- **`--reload` 与调度器冲突**：重载等于重启进程，会打断正在跑的补拉、也会重排每日任务。README 已把这条从「开发期建议加」改成「接上调度器后别用」。
+- **`tests/conftest.py` 的 `no_scheduler` 是显式夹具、不是 autouse**：需要真实调度器的 `test_scheduler.py` 不请求它。以后再有走 lifespan 的用例，记得一并请求，否则它会真去抓 6 个源。
+- **pytest 与真实运行共用同一个日志文件**：测试用例也走 `logging_setup.setup(cfg.app.log_path)`，所以 `data/logs/deskhub.log` 里混着一批测试产生的行（同一秒成批出现，源名会出现 `坏源` / `超时源` / `手写源` / `被修正的源` 这类夹具名）。查真实运行记录时按时间戳与源名区分，别把这批当成线上抓取。
+
+**M6 复跑实际读取文件清单（16 个：必读 11 + 预期波及 3 + 真探索 2）**
+
+- **必读 11 个**：`app/main.py`、`app/scheduler.py`、`app/logging_setup.py`、`app/cli.py`、`app/config.py`、`app/repository.py`、`app/models.py`（DDL 与外键级联）、`config/config.yaml`（业务时区 / 端口 / 日志路径）、`plan.md`（§11.1-11.3 / §13.1-13.2）、`spec.md`（§10 六条验收标准原文）、`RULES.md`（读取与轮次边界）
+- **预期波及 3 个**：`app/templates/sources.html`（`row-failing` / `fail-count-red` / tooltip 的落点，§10-5 要靠它数行）、`app/templates/partials/item_card.html`（首页「8 条」这类计数靠它的 class 才数得出来）、`data/logs/deskhub.log`（M6-1 / M6-3 的日志证据来源）
+- **真探索 2 个**：`app/routers/digest.py`（走到 §10-3 / §10-4 才发现得先确认 `/m/{module}` 与 `/go/{id}` 的实际行为）、`.env`（确认 `DESKHUB_LLM_API_KEY` 有配置，只列键名、不看值）
+- 与实现轮的关系：实现轮实测 20 个（必读 14 + 预期波及 4 + 真探索 2，超限说明见 [RULES.md](./RULES.md)）；本轮 16 个，少掉的是「改代码才要看」的那几个（`app/pipeline.py`、`app/fetcher.py`、`app/scorer.py`、`tests/test_repository.py`、`requirements.txt`、`README.md`）—— 复跑不动代码，测试直接跑全量，所以它们没进本轮必读。
 
 ---
 
@@ -317,8 +403,8 @@ M3 校准记录（M3-3/M3-5 的原始证据）—— 2026-09-23 09:54 打开首�
 | 2. 新条目能被 LLM 打分，理由具体可反驳 | M2-7、M2-8 | [x] 112 条全部打上分（0 失败），随机 10 条 reason 全部可反驳 |
 | 3. 首页 5-10 条精选，点击跳转且被记录 | M3-4、M3-5、M3-7 | [x] 首页 8 条（72→34 降序），`/go/356` 302 跳原文且 `clicked_at=2026-09-23T01:54:18Z` 点两次仍保留首次 |
 | 4. 历史搜索能按关键词搜到过去条目 | M4-4、M4-R1 | [x] `/search?q=Open+Code+Review` 命中今日抓到的条目（id 431）；`q=DuckDB&module=bigdata` 命中 1 条，`module=agent` 0 条；时间范围按发布时间筛：`2026-09-23` 共 11 条、`2026-09-22` 共 88 条，均与 `sqlite3` 计数一致 |
-| 5. 单源挂掉页面标红且不影响其他源 | M5-2、M5-6 | [ ] |
-| 6. 连续多天我主动打开它 | M6-5（多日观察） | [ ] |
+| 5. 单源挂掉页面标红且不影响其他源 | M5-2、M5-6 | [x] 临时库插坏源连抓 3 次 → `/sources` 仅该行 `row-failing`（=1）且带 `fail-count-red` + error/http_status tooltip，其余 6 源正常、页面 200；修好后单次「立即抓取」`fail_count 5 → 0`、红点消失 |
+| 6. 连续多天我主动打开它 | M6-5（多日观察） | [ ] —— 2026-09-24 起算；调度器接上后每天 08:00 自动出报、启动即补拉，剩下的只能靠真实使用来判 |
 
 ## 附录 B：开工前待拍板（plan §17）
 
