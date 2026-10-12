@@ -2,7 +2,7 @@
 
 本地 Web 应用，单用户。v1 只做一件事：把 RSS/Atom 源的内容抓下来、用 LLM 打分，生成一份「今天值得看什么」的日报。
 
-需求见 [spec.md](./spec.md)，技术方案见 [plan.md](./plan.md)，执行任务见 [tasks.md](./tasks.md)。
+需求见 [spec.md](./spec.md)，技术方案见 [plan.md](./plan.md)，执行任务见 [tasks.md](./tasks.md)（索引，按模块分文件：`tasks/knowledge.md` / `tasks/coins.md`）。
 
 ## 环境
 
@@ -205,7 +205,7 @@ curl -s 127.0.0.1:8765/healthz | python3 -m json.tool
 - M3（日报首页）：`fetch → score` 由 `app/pipeline.py` 编排（调度器与 `cli pipeline` 共用）；首页按 `score` 降序展示当日精选，点击经 `/go/{id}` 记录 `clicked_at`（保留首次）。
 - M4（历史搜索）：`/search` 支持关键词（标题 + 摘要 LIKE）+ 时间范围 + 入口筛选 + 分页，结果复用日报卡片；筛选条件都在 URL 上，可分享、可回退。
 - M5（外壳）：导航栏 7 个入口全部可用；`/m/{agent,bigdata}` 入口视图、`/sources` 源管理（启停 / 单源重试 / 连败标红 + tooltip）、`/funds` 与 `/coins` 占位页；非法 `/m/xxx` 返回 404。
-- M6（收口）：`app/scheduler.py` 接进 lifespan（启动补拉 + 每天 08:00 出报）、`cli purge` 手工清理旧条目、日志轮转与关键字段可追溯确认、数据层测试补齐。v1 六条验收标准的逐条结论见 `tasks.md` M6 小节。
+- M6（收口）：`app/scheduler.py` 接进 lifespan（启动补拉 + 每天 08:00 出报）、`cli purge` 手工清理旧条目、日志轮转与关键字段可追溯确认、数据层测试补齐。v1 六条验收标准的逐条结论见 `tasks/knowledge.md` M6 小节。
 - M7（铜币画像）：`data/orders.xlsx` 1567 条全部解析入库（0 失败）、产出 979 个画像标签（英国 297 / 1便士 219…）；`/coins/profile` 可启停 / 改权重 / 增删。
 - M8（铜币采集）：Playwright 持久化会话 + `--headful` 人工过滑块 + `blocked` 检测与提示链路已跑通；**站点解析器只用手工构造的 fixture 回归过，真实 DOM 样本待 `--headful` 跑通后校正**。
 - M9（铜币推荐与页面）：匹配 / 定价（中位数 + P25–P75，样本 <3 只给区间、0 样本不报价）/ 两个页面均已实现并有离线用例。

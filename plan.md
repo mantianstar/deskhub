@@ -893,6 +893,10 @@ coins:
   profile_dir: data/mxiqi-profile      # Playwright 持久化会话（.gitignore）
   browser: chromium
   headless: true                        # 首次过验证用 CLI --headful
+  browser_channel: ""                    # 空 = 用自带 chromium；填 chrome = 用本机真实 Chrome
+  cdp_url: "http://127.0.0.1:9222"       # 连本机已开的 Chrome（人机验证与登录态都在它里面）
+                                         # 前提：那个 Chrome 用 --remote-debugging-port=9222 启动并常开；
+                                         # 没开时定时任务只记一条明确错误，不影响知识模块
   request_interval_seconds: 3           # 限速
   max_sessions_per_run: 20              # 单轮采集上限（防触发风控）
   session_timeout_seconds: 30
@@ -932,5 +936,5 @@ coins:
 
 ### 18.12 里程碑
 
-见 §14 的 M7~M10 行；任务级拆解与验证证据落在 `tasks.md`。
+见 §14 的 M7~M10 行；任务级拆解与验证证据落在 `tasks/` 下按模块分文件（`tasks/knowledge.md` / `tasks/coins.md`）。
 

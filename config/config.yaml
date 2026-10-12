@@ -51,7 +51,9 @@ coins:
   browser: chromium
   headless: true                         # 首次过滑块用 CLI --headful
   browser_channel: ""                    # 空 = 用自带 chromium；填 chrome = 用本机真实 Chrome
-  cdp_url: ""                            # 填 http://127.0.0.1:9222 = 连本机已开的 Chrome（人工过滑块最稳）
+  cdp_url: "http://127.0.0.1:9222"       # 连本机已开的 Chrome（人机验证/登录态都在它里面）
+                                          # 前提：那个 Chrome 得用 --remote-debugging-port=9222 启动并保持常开；
+                                          # 没开时定时任务会记一条明确的错误（不会静默、也不影响知识模块）
   request_interval_seconds: 3            # 限速：每次请求间隔
   max_sessions_per_run: 20               # 单轮采集专场上限（防触发风控）
   session_timeout_seconds: 30

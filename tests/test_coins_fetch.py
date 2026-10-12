@@ -71,12 +71,18 @@ def test_looks_usable_requires_expected_content():
 
 
 def test_interactive_only_for_headful_or_cdp():
-    """只有「有人能手动过滑块」的模式才给 180 秒等待：headful 或连本机 Chrome。"""
-    cfg = config_module.load()
-    assert mxiqi.MxiqiClient(cfg).interactive is False
-    headful = replace(cfg, coins=replace(cfg.coins, headless=False))
+    """只有「有人能手动过滑块 / 登录」的模式才给 180 秒等待：headful 或 CDP。"""
+    base = config_module.load()
+    # 配置里默认不连 CDP 的场景：自己启动 headless —— 没人能操作，不给人工时间
+    local = replace(base, coins=replace(base.coins, cdp_url=""))
+    assert mxiqi.MxiqiClient(local).interactive is False
+
+    headful = replace(local, coins=replace(local.coins, headless=False))
     assert mxiqi.MxiqiClient(headful).interactive is True
-    assert mxiqi.MxiqiClient(cfg, cdp_url="http://127.0.0.1:9222").interactive is True
+
+    # 显式传 --cdp，或配置里配了 coins.cdp_url，都算 interactive
+    assert mxiqi.MxiqiClient(base, cdp_url="http://127.0.0.1:9222").interactive is True
+    assert mxiqi.MxiqiClient(replace(base, coins=replace(base.coins, cdp_url="http://127.0.0.1:9222"))).interactive is True
 
 
 # ---------------------------------------------------------------- 列表页（真实 DOM）

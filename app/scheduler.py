@@ -79,11 +79,19 @@ async def startup_coins(config: Config) -> coins_pipeline.CoinsRunResult | None:
 
 
 async def daily_coins(config: Config) -> coins_pipeline.CoinsRunResult | None:
-    """每天 08:00 的铜币任务；**与 `daily_pipeline` 互不传播失败**（spec §14.9）。"""
+    """每天 08:00 的铜币任务；**与 `daily_pipeline` 互不传播失败**（spec §14.9）。
+
+    就地兜住异常：配了 `coins.cdp_url` 时，那个 Chrome 没开着（或还没启动）是**正常情况**，
+    不该把一坨堆栈丢给 APScheduler —— 只记一条能看懂的错误，明天再试。
+    """
     if not config.coins.enabled:
         return None
     logger.info("定时任务触发：%s", DAILY_COINS_JOB_ID)
-    return await coins_pipeline.run(config)
+    try:
+        return await coins_pipeline.run(config)
+    except Exception as exc:  # noqa: BLE001 - 任何失败都只记日志，不影响知识日报
+        logger.warning("铜币定时任务失败，等下一次触发重试：%s", exc)
+        return None
 
 
 def _cron_job(scheduler: AsyncIOScheduler, func, config: Config, job_id: str) -> None:

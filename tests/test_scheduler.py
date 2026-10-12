@@ -136,3 +136,21 @@ async def test_startup_fetch_swallows_errors(tmp_path, monkeypatch):
     monkeypatch.setattr(scheduler.pipeline, "run", failing_run)
 
     assert await scheduler.startup_fetch(_config(tmp_path)) is None
+
+
+@pytest.mark.asyncio
+async def test_daily_coins_swallows_errors(tmp_path, monkeypatch):
+    """铜币定时任务也要就地兜异常：配了 cdp_url 后「那个 Chrome 没开着」是常态，
+    不该把堆栈丢给 APScheduler，更不能影响知识日报（spec §14.9）。"""
+    from dataclasses import replace
+
+    async def failing_run(config) -> None:
+        raise RuntimeError("连不上本机 Chrome（http://127.0.0.1:9222）")
+
+    monkeypatch.setattr(scheduler.coins_pipeline, "run", failing_run)
+
+    cfg = _config(tmp_path)
+    enabled = replace(cfg, coins=replace(cfg.coins, enabled=True))
+    assert await scheduler.daily_coins(enabled) is None
+    # 未启用时直接返回，连任务日志都不打
+    assert await scheduler.daily_coins(cfg) is None
