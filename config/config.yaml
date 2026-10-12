@@ -26,6 +26,8 @@ llm:
   base_url: https://api.deepseek.com
   model: deepseek-v4-flash
   api_key_env: DESKHUB_LLM_API_KEY   # 只写环境变量名，不写密钥本身
+  # 单次请求超时（秒）。批量抽取画像实测 30s 会把大多数请求打成 ReadTimeout，故放宽
+  timeout_seconds: 120
 
 modules:
   agent:
@@ -39,3 +41,30 @@ modules:
       Hadoop/Spark/Flink/湖仓（Iceberg/Hudi/Paimon）/Hive 技术栈；
       数据工程与实时计算、数据治理、调度编排（Airflow/DolphinScheduler）、
       性能调优与生产事故复盘。
+
+# 铜币拍卖（spec §14 / plan §18.10）
+coins:
+  enabled: true
+  orders_xlsx: data/orders.xlsx          # 画像输入（麦稀奇历史成交导出）
+  base_url: https://www.mxiqi.com
+  profile_dir: data/mxiqi-profile        # Playwright 持久化会话；含登录态，绝不入库
+  browser: chromium
+  headless: true                         # 首次过滑块用 CLI --headful
+  browser_channel: ""                    # 空 = 用自带 chromium；填 chrome = 用本机真实 Chrome
+  cdp_url: ""                            # 填 http://127.0.0.1:9222 = 连本机已开的 Chrome（人工过滑块最稳）
+  request_interval_seconds: 3            # 限速：每次请求间隔
+  max_sessions_per_run: 20               # 单轮采集专场上限（防触发风控）
+  session_timeout_seconds: 30
+  match_threshold: 1.5                   # 匹配分阈值（spec §14.11，跑通后按真实数据校准）
+  price:
+    status: 成交                          # 只用成交样本，不拿挂牌/流拍
+    window_days: 180                      # 历史成交回溯窗口
+    min_samples: 3                        # 少于 3 条只给区间，不给单一价
+    statistic: median                     # median | mean
+    # 成交价要登录才能查 —— 等于拿我自己的账号在查，所以**宁可慢也别被封**：
+    query_interval_seconds: 15            # 每次查价之间停 15 秒（实际带 ±40% 抖动 → 9~21 秒）
+    max_queries_per_run: 20               # 单轮最多查 20 条；剩下的留到下一轮/第二天
+  profile_llm:
+    prompt_version: coins-v1
+    batch_size: 20                        # 每次送模型抽取的订单条数
+    concurrency: 6                        # 抽取批次的并发数（一次性批量任务，可比打分高）

@@ -167,11 +167,24 @@ def test_fetch_unknown_source_returns_404(web):
 
 
 def test_placeholder_pages_show_not_enabled(web):
-    for path, title in (("/funds", "基金监控"), ("/coins", "铜币拍卖")):
-        page = web.get(path)
-        assert page.status_code == 200
-        assert title in page.text
-        assert "未启用" in page.text
+    page = web.get("/funds")
+    assert page.status_code == 200
+    assert "基金监控" in page.text
+    assert "未启用" in page.text
+
+
+def test_coins_page_is_a_real_module_not_placeholder(web):
+    """铜币 2026-10-09 升级为正式模块：`/coins` 渲染专场列表，不再是「未启用」占位页。"""
+    page = web.get("/coins")
+    assert page.status_code == 200
+    assert "铜币拍卖" in page.text
+    assert "未启用" not in page.text
+
+
+def test_coins_profile_page_renders(web):
+    page = web.get("/coins/profile")
+    assert page.status_code == 200
+    assert "铜币画像" in page.text
 
 
 def test_all_nav_links_resolve(web):

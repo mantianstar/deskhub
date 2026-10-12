@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
@@ -13,7 +14,24 @@ from zoneinfo import ZoneInfo
 
 from app import db, models
 from app.config import SourceConfig
-from app.models import DigestItem, FetchRun, FetchStatus, Item, ScoreCandidate, Source
+from app.models import (
+    CoinFetchRun,
+    CoinLot,
+    CoinLotCard,
+    CoinOrder,
+    CoinPriceRef,
+    CoinProfileTag,
+    CoinSession,
+    CoinSessionCard,
+    CoinSessionDetail,
+    CoinShop,
+    DigestItem,
+    FetchRun,
+    FetchStatus,
+    Item,
+    ScoreCandidate,
+    Source,
+)
 
 # 连续失败达到该次数即在界面标红（plan §7.3）
 FAIL_COUNT_RED_THRESHOLD = 3
@@ -568,4 +586,623 @@ def purge_items_before(cutoff_utc: str) -> int:
     with db.connect() as conn, conn:
         cursor = conn.execute("DELETE FROM items WHERE fetched_at < ?", (cutoff_utc,))
         return cursor.rowcount
+
+
+# ================================================================ 铜币拍卖
+# 全部 SQL 集中在这里；`app/coins/*` 只调这些函数（layering 同知识聚合，plan §3.2）。
+
+
+def _json_list(raw: str | None) -> list[str]:
+    if not raw:
+        return []
+    try:
+        value = json.loads(raw)
+    except (TypeError, ValueError):
+        return []
+    return [str(item) for item in value] if isinstance(value, list) else []
+
+
+def _json_dict(raw: str | None) -> dict[str, str]:
+    if not raw:
+        return {}
+    try:
+        value = json.loads(raw)
+    except (TypeError, ValueError):
+        return {}
+    if not isinstance(value, dict):
+        return {}
+    return {str(k): str(v) for k, v in value.items()}
+
+
+def _dump(value: object) -> str:
+    return json.dumps(value, ensure_ascii=False)
+
+
+# ---------------------------------------------------------------- 订单与画像
+
+
+def upsert_coin_order(order: CoinOrder) -> None:
+    """写一条画像原料；`(order_no, item_name)` 冲突则覆盖抽取字段（幂等重跑）。"""
+    with db.connect() as conn, conn:
+        conn.execute(
+            """
+            INSERT INTO coin_orders
+                (order_no, shop_name, item_name, price,
+                 country, era, denomination, category, condition, parsed_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(order_no, item_name) DO UPDATE SET
+                shop_name    = excluded.shop_name,
+                price        = excluded.price,
+                country      = excluded.country,
+                era          = excluded.era,
+                denomination = excluded.denomination,
+                category     = excluded.category,
+                condition    = excluded.condition,
+                parsed_at    = excluded.parsed_at
+            """,
+            (
+                order.order_no,
+                order.shop_name,
+                order.item_name,
+                order.price,
+                order.country,
+                order.era,
+                order.denomination,
+                order.category,
+                order.condition,
+                utcnow(),
+            ),
+        )
+
+
+def count_coin_orders() -> int:
+    with db.connect() as conn:
+        return int(conn.execute("SELECT COUNT(*) AS n FROM coin_orders").fetchone()["n"])
+
+
+def list_coin_orders() -> list[CoinOrder]:
+    """全部订单解析结果，供「不重新调 LLM 也能重算画像」。"""
+    with db.connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT order_no, shop_name, item_name, price,
+                   country, era, denomination, category, condition
+            FROM coin_orders ORDER BY id
+            """
+        ).fetchall()
+    return [
+        CoinOrder(
+            order_no=row["order_no"],
+            shop_name=row["shop_name"],
+            item_name=row["item_name"],
+            price=row["price"],
+            country=row["country"],
+            era=row["era"],
+            denomination=row["denomination"],
+            category=row["category"],
+            condition=row["condition"],
+        )
+        for row in rows
+    ]
+
+
+def _row_to_coin_tag(row: sqlite3.Row) -> CoinProfileTag:
+    return CoinProfileTag(
+        id=row["id"],
+        dimension=row["dimension"],
+        value=row["value"],
+        weight=row["weight"],
+        hit_count=row["hit_count"],
+        enabled=bool(row["enabled"]),
+        note=row["note"],
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
+
+
+def list_coin_profile_tags(only_enabled: bool = False) -> list[CoinProfileTag]:
+    """画像标签，按权重降序（权重大 = 我更常买）。"""
+    sql = "SELECT * FROM coin_profile_tags"
+    if only_enabled:
+        sql += " WHERE enabled = 1"
+    sql += " ORDER BY weight DESC, id"
+    with db.connect() as conn:
+        return [_row_to_coin_tag(row) for row in conn.execute(sql)]
+
+
+def upsert_coin_tag(dimension: str, value: str, weight: float, hit_count: int) -> None:
+    """聚合结果写回画像标签。
+
+    **保留人工编辑**：冲突时只更新 `weight` / `hit_count` / `updated_at`，
+    不动 `enabled` / `note` —— 否则每次重跑 `coins-parse-orders` 都会把我关掉的标签打开
+    （同 `sync_sources_from_config` 保留运行时状态的取舍）。
+    """
+    now = utcnow()
+    with db.connect() as conn, conn:
+        conn.execute(
+            """
+            INSERT INTO coin_profile_tags
+                (dimension, value, weight, hit_count, enabled, note, created_at, updated_at)
+            VALUES (?, ?, ?, ?, 1, NULL, ?, ?)
+            ON CONFLICT(dimension, value) DO UPDATE SET
+                weight     = excluded.weight,
+                hit_count  = excluded.hit_count,
+                updated_at = excluded.updated_at
+            """,
+            (dimension, value, weight, hit_count, now, now),
+        )
+
+
+def add_coin_tag(dimension: str, value: str, weight: float = 1.0, note: str | None = None) -> bool:
+    """手工新增标签；`(dimension, value)` 已存在则返回 False（不覆盖）。"""
+    now = utcnow()
+    with db.connect() as conn, conn:
+        cursor = conn.execute(
+            """
+            INSERT INTO coin_profile_tags
+                (dimension, value, weight, hit_count, enabled, note, created_at, updated_at)
+            VALUES (?, ?, ?, 0, 1, ?, ?, ?)
+            ON CONFLICT(dimension, value) DO NOTHING
+            """,
+            (dimension, value, weight, note, now, now),
+        )
+        return cursor.rowcount > 0
+
+
+def set_coin_tag_enabled(tag_id: int, enabled: bool) -> bool:
+    with db.connect() as conn, conn:
+        cursor = conn.execute(
+            "UPDATE coin_profile_tags SET enabled = ?, updated_at = ? WHERE id = ?",
+            (int(enabled), utcnow(), tag_id),
+        )
+        return cursor.rowcount > 0
+
+
+def set_coin_tag_weight(tag_id: int, weight: float) -> bool:
+    with db.connect() as conn, conn:
+        cursor = conn.execute(
+            "UPDATE coin_profile_tags SET weight = ?, updated_at = ? WHERE id = ?",
+            (weight, utcnow(), tag_id),
+        )
+        return cursor.rowcount > 0
+
+
+def delete_coin_tag(tag_id: int) -> bool:
+    with db.connect() as conn, conn:
+        cursor = conn.execute("DELETE FROM coin_profile_tags WHERE id = ?", (tag_id,))
+        return cursor.rowcount > 0
+
+
+def get_coin_tag(tag_id: int) -> CoinProfileTag | None:
+    with db.connect() as conn:
+        row = conn.execute("SELECT * FROM coin_profile_tags WHERE id = ?", (tag_id,)).fetchone()
+    return _row_to_coin_tag(row) if row else None
+
+
+# ---------------------------------------------------------------- 店铺 / 专场 / 拍品
+
+
+def upsert_coin_shop(shop: CoinShop) -> int:
+    """按 `mxiqi_uid` upsert，返回 `coin_shops.id`。"""
+    with db.connect() as conn, conn:
+        conn.execute(
+            """
+            INSERT INTO coin_shops (mxiqi_uid, name, avatar_url, badges, fetched_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(mxiqi_uid) DO UPDATE SET
+                name       = excluded.name,
+                avatar_url = excluded.avatar_url,
+                badges     = excluded.badges,
+                fetched_at = excluded.fetched_at
+            """,
+            (shop.mxiqi_uid, shop.name, shop.avatar_url, _dump(shop.badges), shop.fetched_at),
+        )
+        row = conn.execute(
+            "SELECT id FROM coin_shops WHERE mxiqi_uid = ?", (shop.mxiqi_uid,)
+        ).fetchone()
+        return int(row["id"])
+
+
+def upsert_coin_session(session: CoinSession) -> int:
+    """按 `mxiqi_id` upsert，返回 `coin_sessions.id`。"""
+    with db.connect() as conn, conn:
+        conn.execute(
+            """
+            INSERT INTO coin_sessions
+                (mxiqi_id, shop_id, title, status, auction_at, auction_at_raw,
+                 deposit, lot_total, view_count, cover_urls, fetched_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(mxiqi_id) DO UPDATE SET
+                shop_id        = excluded.shop_id,
+                title          = excluded.title,
+                status         = excluded.status,
+                auction_at     = excluded.auction_at,
+                auction_at_raw = excluded.auction_at_raw,
+                deposit        = excluded.deposit,
+                lot_total      = excluded.lot_total,
+                view_count     = excluded.view_count,
+                cover_urls     = excluded.cover_urls,
+                fetched_at     = excluded.fetched_at
+            """,
+            (
+                session.mxiqi_id,
+                session.shop_id,
+                session.title,
+                session.status,
+                session.auction_at,
+                session.auction_at_raw,
+                session.deposit,
+                session.lot_total,
+                session.view_count,
+                _dump(session.cover_urls),
+                session.fetched_at,
+            ),
+        )
+        row = conn.execute(
+            "SELECT id FROM coin_sessions WHERE mxiqi_id = ?", (session.mxiqi_id,)
+        ).fetchone()
+        return int(row["id"])
+
+
+def upsert_coin_lot(lot: CoinLot) -> int:
+    """按 `mxiqi_id` upsert，返回 `coin_lots.id`。
+
+    匹配分与推荐位**只在首次入库时写**；后续重抓不覆盖已算过的匹配结果
+    （匹配由 M9 的 matcher 单独更新，避免每次采集把推荐擦掉）。
+    """
+    with db.connect() as conn, conn:
+        conn.execute(
+            """
+            INSERT INTO coin_lots
+                (session_id, mxiqi_id, lot_no, title, start_price, current_price,
+                 image_urls, tags, match_score, is_recommended, fetched_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(mxiqi_id) DO UPDATE SET
+                session_id    = excluded.session_id,
+                lot_no        = excluded.lot_no,
+                title         = excluded.title,
+                start_price   = excluded.start_price,
+                current_price = excluded.current_price,
+                image_urls    = excluded.image_urls,
+                tags          = excluded.tags,
+                fetched_at    = excluded.fetched_at
+            """,
+            (
+                lot.session_id,
+                lot.mxiqi_id,
+                lot.lot_no,
+                lot.title,
+                lot.start_price,
+                lot.current_price,
+                _dump(lot.image_urls),
+                _dump(lot.tags),
+                lot.match_score,
+                int(lot.is_recommended),
+                lot.fetched_at,
+            ),
+        )
+        row = conn.execute(
+            "SELECT id FROM coin_lots WHERE mxiqi_id = ?", (lot.mxiqi_id,)
+        ).fetchone()
+        return int(row["id"])
+
+
+def update_coin_lot_match(lot_id: int, match_score: float, is_recommended: bool) -> None:
+    """写回匹配结果（matcher 用）。"""
+    with db.connect() as conn, conn:
+        conn.execute(
+            "UPDATE coin_lots SET match_score = ?, is_recommended = ? WHERE id = ?",
+            (match_score, int(is_recommended), lot_id),
+        )
+
+
+def list_coin_lots_for_matching() -> list[CoinLot]:
+    """全部拍品（含未推荐），供 matcher 重算匹配分。"""
+    with db.connect() as conn:
+        rows = conn.execute("SELECT * FROM coin_lots ORDER BY id").fetchall()
+    return [_row_to_coin_lot(row) for row in rows]
+
+
+def _row_to_coin_lot(row: sqlite3.Row) -> CoinLot:
+    return CoinLot(
+        id=row["id"],
+        session_id=row["session_id"],
+        mxiqi_id=row["mxiqi_id"],
+        lot_no=row["lot_no"],
+        title=row["title"],
+        start_price=row["start_price"],
+        current_price=row["current_price"],
+        image_urls=_json_list(row["image_urls"]),
+        tags=_json_dict(row["tags"]),
+        match_score=row["match_score"],
+        is_recommended=bool(row["is_recommended"]),
+        fetched_at=row["fetched_at"],
+    )
+
+
+# ---------------------------------------------------------------- 推荐价取证
+
+
+def upsert_coin_price_ref(ref: CoinPriceRef) -> None:
+    """同一条拍品只留最新一条取证（重查覆盖）。"""
+    with db.connect() as conn, conn:
+        conn.execute(
+            "DELETE FROM coin_price_refs WHERE lot_id = ?",
+            (ref.lot_id,),
+        )
+        conn.execute(
+            """
+            INSERT INTO coin_price_refs
+                (lot_id, keyword, sample_count, p25, median, p75, raw, queried_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                ref.lot_id,
+                ref.keyword,
+                ref.sample_count,
+                ref.p25,
+                ref.median,
+                ref.p75,
+                ref.raw,
+                ref.queried_at,
+            ),
+        )
+
+
+def get_coin_price_ref(lot_id: int) -> CoinPriceRef | None:
+    with db.connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM coin_price_refs WHERE lot_id = ? ORDER BY id DESC LIMIT 1", (lot_id,)
+        ).fetchone()
+    if row is None:
+        return None
+    return CoinPriceRef(
+        lot_id=row["lot_id"],
+        keyword=row["keyword"],
+        sample_count=row["sample_count"],
+        p25=row["p25"],
+        median=row["median"],
+        p75=row["p75"],
+        raw=row["raw"],
+        queried_at=row["queried_at"],
+    )
+
+
+# ---------------------------------------------------------------- 采集日志
+
+
+def record_coin_fetch_run(run: CoinFetchRun, *, conn: sqlite3.Connection | None = None) -> int:
+    with _write_conn(conn) as active:
+        cursor = active.execute(
+            """
+            INSERT INTO coin_fetch_runs
+                (kind, target, started_at, finished_at, status, http_status, items_new, error)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                run.kind,
+                run.target,
+                run.started_at,
+                run.finished_at,
+                run.status,
+                run.http_status,
+                run.items_new,
+                run.error,
+            ),
+        )
+        return int(cursor.lastrowid)
+
+
+def latest_coin_fetch_runs(limit: int = 20) -> list[CoinFetchRun]:
+    """最近若干条采集日志（任何 kind），供页面显示「数据停在什么时候」。"""
+    with db.connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM coin_fetch_runs ORDER BY id DESC LIMIT ?", (limit,)
+        ).fetchall()
+    return [
+        CoinFetchRun(
+            id=row["id"],
+            kind=row["kind"],
+            target=row["target"],
+            started_at=row["started_at"],
+            finished_at=row["finished_at"],
+            status=row["status"],
+            http_status=row["http_status"],
+            items_new=row["items_new"],
+            error=row["error"],
+        )
+        for row in rows
+    ]
+
+
+def coin_fetch_summary() -> dict[str, object]:
+    """给页面顶部用的汇总：最近一次成功时间、最近一次是否被反爬拦下。
+
+    `blocked` 取「最近一条日志」的状态：反爬是全局的，最新一轮被拦就该提示
+    （spec §14.3 要求会话失效显著提示，不静默）。
+    """
+    with db.connect() as conn:
+        last_ok = conn.execute(
+            "SELECT MAX(finished_at) AS ts FROM coin_fetch_runs WHERE status = 'ok'"
+        ).fetchone()["ts"]
+        last = conn.execute("SELECT * FROM coin_fetch_runs ORDER BY id DESC LIMIT 1").fetchone()
+        # 只看**最近一次查价**：登录成功后再跑，历史那条「要登录」的报错就不该继续提示
+        price_row = conn.execute(
+            "SELECT error FROM coin_fetch_runs WHERE kind = 'price_search' ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+    last_error = last["error"] if last else None
+    return {
+        "last_ok_at": last_ok,
+        "last_status": last["status"] if last else None,
+        "last_error": last_error,
+        "blocked": bool(last) and last["status"] == "blocked",
+        # 站内成交价要登录；用文本判定是为了不动 status 取值（页面据此提示去登录）
+        "needs_login": bool(price_row) and "登录" in (price_row["error"] or ""),
+        "login_error": price_row["error"] if price_row else None,
+    }
+
+
+# ---------------------------------------------------------------- 页面查询
+
+
+_SESSION_CARD_SQL = """
+    SELECT s.id AS session_id, s.mxiqi_id, s.title, s.status,
+           s.auction_at, s.auction_at_raw, s.lot_total, s.view_count, s.cover_urls,
+           sh.name AS shop_name, sh.avatar_url AS shop_avatar,
+           (SELECT COUNT(*) FROM coin_lots l
+             WHERE l.session_id = s.id AND l.is_recommended = 1) AS recommended_count
+    FROM coin_sessions s
+    LEFT JOIN coin_shops sh ON sh.id = s.shop_id
+"""
+
+
+def _row_to_session_card(row: sqlite3.Row) -> CoinSessionCard:
+    return CoinSessionCard(
+        session_id=row["session_id"],
+        mxiqi_id=row["mxiqi_id"],
+        title=row["title"],
+        status=row["status"],
+        auction_at=row["auction_at"],
+        auction_at_raw=row["auction_at_raw"],
+        lot_total=row["lot_total"],
+        view_count=row["view_count"],
+        cover_urls=_json_list(row["cover_urls"]),
+        shop_name=row["shop_name"],
+        shop_avatar=row["shop_avatar"],
+        recommended_count=row["recommended_count"],
+    )
+
+
+def list_coin_session_cards(limit: int | None = None) -> list[CoinSessionCard]:
+    """第一页：**只列出至少命中 1 条推荐拍品的专场**（spec §14.7「没有就不展示」）。
+
+    未命中的专场仍全量入库，只是不在这里出现 —— 画像改动后可以重新匹配，不必重抓。
+    """
+    sql = (
+        _SESSION_CARD_SQL
+        + """
+    WHERE (SELECT COUNT(*) FROM coin_lots l
+            WHERE l.session_id = s.id AND l.is_recommended = 1) > 0
+    ORDER BY (s.auction_at IS NULL), s.auction_at DESC, s.id DESC
+    """
+    )
+    params: list[object] = []
+    if limit is not None:
+        sql += " LIMIT ?"
+        params.append(limit)
+    with db.connect() as conn:
+        rows = conn.execute(sql, params).fetchall()
+    return [_row_to_session_card(row) for row in rows]
+
+
+def get_coin_session_card(session_id: int) -> CoinSessionCard | None:
+    with db.connect() as conn:
+        row = conn.execute(
+            _SESSION_CARD_SQL + " WHERE s.id = ?", (session_id,)
+        ).fetchone()
+    return _row_to_session_card(row) if row else None
+
+
+def _row_to_coin_shop(row: sqlite3.Row) -> CoinShop:
+    return CoinShop(
+        id=row["id"],
+        mxiqi_uid=row["mxiqi_uid"],
+        name=row["name"],
+        avatar_url=row["avatar_url"],
+        badges=_json_list_badges(row["badges"]),
+        fetched_at=row["fetched_at"],
+    )
+
+
+def _json_list_badges(raw: str | None) -> list[dict]:
+    if not raw:
+        return []
+    try:
+        value = json.loads(raw)
+    except (TypeError, ValueError):
+        return []
+    return [item for item in value if isinstance(item, dict)] if isinstance(value, list) else []
+
+
+def get_coin_session_detail(session_id: int) -> CoinSessionDetail | None:
+    """第二页：店铺头 + 推荐拍品（按匹配分降序），每条拍品带上推荐价取证。"""
+    with db.connect() as conn:
+        session = conn.execute(
+            "SELECT * FROM coin_sessions WHERE id = ?", (session_id,)
+        ).fetchone()
+        if session is None:
+            return None
+        shop_row = (
+            conn.execute("SELECT * FROM coin_shops WHERE id = ?", (session["shop_id"],)).fetchone()
+            if session["shop_id"] is not None
+            else None
+        )
+        lot_rows = conn.execute(
+            """
+            SELECT * FROM coin_lots
+            WHERE session_id = ? AND is_recommended = 1
+            ORDER BY match_score DESC, (lot_no IS NULL), lot_no, id
+            """,
+            (session_id,),
+        ).fetchall()
+        ref_rows = conn.execute(
+            """
+            SELECT * FROM coin_price_refs
+            WHERE lot_id IN (SELECT id FROM coin_lots WHERE session_id = ? AND is_recommended = 1)
+            """,
+            (session_id,),
+        ).fetchall()
+
+    refs = {row["lot_id"]: row for row in ref_rows}
+    lots = [_row_to_lot_card(row, refs.get(row["id"])) for row in lot_rows]
+    return CoinSessionDetail(
+        session_id=session["id"],
+        mxiqi_id=session["mxiqi_id"],
+        title=session["title"],
+        status=session["status"],
+        auction_at=session["auction_at"],
+        auction_at_raw=session["auction_at_raw"],
+        deposit=session["deposit"],
+        lot_total=session["lot_total"],
+        view_count=session["view_count"],
+        recommended_count=len(lots),
+        shop=_row_to_coin_shop(shop_row) if shop_row else None,
+        lots=lots,
+    )
+
+
+def _row_to_lot_card(row: sqlite3.Row, ref: sqlite3.Row | None) -> CoinLotCard:
+    return CoinLotCard(
+        lot_id=row["id"],
+        lot_no=row["lot_no"],
+        title=row["title"],
+        start_price=row["start_price"],
+        current_price=row["current_price"],
+        image_urls=_json_list(row["image_urls"]),
+        tags=_json_dict(row["tags"]),
+        match_score=row["match_score"],
+        keyword=ref["keyword"] if ref else None,
+        sample_count=ref["sample_count"] if ref else None,
+        p25=ref["p25"] if ref else None,
+        median=ref["median"] if ref else None,
+        p75=ref["p75"] if ref else None,
+    )
+
+
+def count_coin_sessions() -> int:
+    with db.connect() as conn:
+        return int(conn.execute("SELECT COUNT(*) AS n FROM coin_sessions").fetchone()["n"])
+
+
+def count_coin_lots() -> int:
+    with db.connect() as conn:
+        return int(conn.execute("SELECT COUNT(*) AS n FROM coin_lots").fetchone()["n"])
+
+
+def count_recommended_lots() -> int:
+    with db.connect() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) AS n FROM coin_lots WHERE is_recommended = 1"
+        ).fetchone()
+        return int(row["n"])
 

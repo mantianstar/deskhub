@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<!--
+  反爬拦截页样本（从 2026-10-12 真实拦截响应里**摘出来的关键片段**，原始页约 54KB）：
+  保留了三处关键特征 —— <title>Verification</title>、验证弹窗的配置串、以及全站都有的
+  captchaV2.js 引用（后者**不能**当拦截特征，见 mxiqi.py 的注释与 test）。
+-->
+<html lang="zh-CN">
+<head>
+  <title>Verification</title>
+  <script src="https://o.alicdn.com/cdn-fe/custom-slider/captchaV2.js"></script>
+</head>
+<body>
+  <div id="captcha-root"></div>
+  <script>
+    window.captchaConfig = {"verify_text":"Please complete the operation to verify that you are a real person.","captcha_color":"#ee4320","show_trace_id":false};
+  </script>
+</body>
+</html>

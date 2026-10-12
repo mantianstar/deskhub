@@ -1,4 +1,7 @@
-"""基金 / 铜币占位页（spec §2.2、plan §10）：只有外壳，不写任何抓取或业务逻辑。"""
+"""基金占位页（spec §2.2 / plan §10）：只有外壳，不写任何抓取或业务逻辑。
+
+> 铜币拍卖已于 2026-10-09 升级为正式模块（见 `app/routers/coins.py`），不再走占位页。
+"""
 
 from __future__ import annotations
 
@@ -24,13 +27,4 @@ def funds_page(request: Request) -> Response:
         request,
         "基金监控",
         "v1 只保留入口：这里没有任何行情或持仓数据，等知识聚合跑顺了再说。",
-    )
-
-
-@router.get("/coins")
-def coins_page(request: Request) -> Response:
-    return _placeholder(
-        request,
-        "铜币拍卖",
-        "v1 只保留入口：这里没有任何拍卖或竞价数据，等知识聚合跑顺了再说。",
     )

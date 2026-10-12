@@ -27,7 +27,8 @@ from app.config import Config
 logger = logging.getLogger(__name__)
 
 CHAT_COMPLETIONS_PATH = "/chat/completions"
-# chat 场景经验值：超时短于 30s 会把正常的长回复打成失败（skill 手册同样建议 30s）
+# 默认超时：M2 单条打分实测 2.4s，30s 够用。批量抽取（铜币画像一次 20 条）要久得多，
+# 故改由 `config.llm.timeout_seconds` 传入（实测 30s 会把大多数抽取请求打成 ReadTimeout）。
 LLM_TIMEOUT_SECONDS = 30
 # 落在日志里的响应片段长度：够定位问题，又不至于把整页 HTML 灌进日志
 ERROR_BODY_PREVIEW = 300
@@ -203,4 +204,5 @@ def get_client(config: Config) -> LLMClient:
         api_key=config.llm.api_key,
         model=config.llm.model,
         temperature=config.scoring.temperature,
+        timeout_seconds=config.llm.timeout_seconds,
     )

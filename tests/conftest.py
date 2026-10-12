@@ -21,10 +21,12 @@ class NoopScheduler:
 
 @pytest.fixture()
 def no_scheduler(monkeypatch):
-    """把调度器与启动补拉换成空壳（`web` 这类走真实 lifespan 的夹具用它）。"""
+    """把调度器与两个启动补拉换成空壳（`web` 这类走真实 lifespan 的夹具用它）。"""
     monkeypatch.setattr(scheduler, "start", lambda config: NoopScheduler())
 
     async def _noop(config) -> None:
         return None
 
     monkeypatch.setattr(scheduler, "startup_fetch", _noop)
+    # 铜币启动补拉会开浏览器（M10）；测试里必须一并挡住，否则每个 web 用例都去抓站点
+    monkeypatch.setattr(scheduler, "startup_coins", _noop)

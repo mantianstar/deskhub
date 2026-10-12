@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% block title %}{{ page_title }} · deskhub{% endblock %}
+
+{% block content %}
+{% if not detail %}
+<div class="empty">
+  这个专场不存在（可能已被清理）。<a href="/coins">返回铜币首页</a>
+</div>
+{% else %}
+
+{% if summary.blocked %}
+<p class="notice notice-danger">
+  麦稀奇会话可能已失效（最近一次采集被反爬拦下）。本页数据可能不是最新的。
+</p>
+{% endif %}
+
+<p class="crumb"><a href="/coins">← 铜币专场</a></p>
+
+<section class="coin-shop-head">
+  {% if detail.shop and detail.shop.avatar_url %}
+  <img class="coin-avatar-lg" src="{{ detail.shop.avatar_url }}" alt="" loading="lazy">
+  {% endif %}
+  <div class="coin-shop-main">
+    <div class="coin-shop-name">{{ detail.shop.name if detail.shop else '未知店铺' }}</div>
+    {% if detail.shop and detail.shop.badges %}
+    <div class="coin-badges">
+      {% for badge in detail.shop.badges %}
+      <span class="coin-badge">{{ badge.label or badge.kind }}</span>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </div>
+</section>
+
+<div class="coin-session-bar">
+  <span class="coin-status coin-status-{{ detail.status or 'unknown' }}">
+    {{ coin_session_status_labels.get(detail.status, detail.status or '未知') }}
+  </span>
+  <span class="coin-time">{{ detail.auction_at_raw or (detail.auction_at | local_time) }}</span>
+</div>
+
+<h1 class="coin-session-title-lg">{{ detail.title }}</h1>
+
+<div class="coin-facts">
+  <span class="coin-fact">押金 ¥{{ detail.deposit | price }}</span>
+  <span class="coin-fact">共 {{ detail.lot_total if detail.lot_total is not none else '—' }} 件</span>
+  <span class="coin-fact coin-fact-hit">推荐 {{ detail.recommended_count }} 件</span>
+  <span class="coin-fact">{{ detail.view_count or 0 }} 人次围观</span>
+</div>
+
+{% for lot in detail.lots %}
+<section class="coin-lot">
+  <h3 class="coin-lot-title">{{ lot.lot_no or ('Lot.' ~ loop.index) }} {{ lot.title }}</h3>
+
+  <div class="coin-lot-prices">
+    <span>起价：<b>{{ lot.start_price | price }}</b> 元</span>
+    <span>当前价：<b>{{ lot.current_price | price }}</b> 元</span>
+  </div>
+
+  <div class="coin-lot-ref">
+    {% if lot.median is not none %}
+      <span class="coin-ref-main">推荐价 ¥{{ lot.median | price }}</span>
+      {% if lot.p25 is not none and lot.p75 is not none %}
+      <span class="coin-ref-range">{{ lot.p25 | price }}–{{ lot.p75 | price }} 元</span>
+      {% endif %}
+      <span class="coin-ref-meta">参考 {{ lot.sample_count }} 条成交</span>
+    {% elif lot.sample_count == 0 %}
+      <span class="coin-ref-none">无成交样本，不报价</span>
+    {% elif lot.sample_count is not none %}
+      <span class="coin-ref-none">样本不足（仅 {{ lot.sample_count }} 条）</span>
+      {% if lot.p25 is not none and lot.p75 is not none and lot.p25 != lot.p75 %}
+      <span class="coin-ref-range">{{ lot.p25 | price }}–{{ lot.p75 | price }} 元</span>
+      {% endif %}
+    {% else %}
+      <span class="coin-ref-none">未报价</span>
+    {% endif %}
+    {% if lot.keyword %}<span class="coin-ref-meta">关键词「{{ lot.keyword }}」</span>{% endif %}
+    <span class="coin-ref-meta">匹配分 {{ lot.match_score | round(2) }}</span>
+  </div>
+
+  {% if lot.image_urls %}
+  <div class="coin-lot-imgs">
+    {% for url in lot.image_urls[:3] %}
+    <img class="coin-lot-img" src="{{ url }}" alt="" loading="lazy">
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {% if lot.tags %}
+  <div class="coin-lot-tags">
+    {% for key, value in lot.tags.items() %}
+    <span class="coin-tag">【{{ key }}】{{ value }}</span>
+    {% endfor %}
+  </div>
+  {% endif %}
+</section>
+{% endfor %}
+
+{% if not detail.lots %}
+<div class="empty">这个专场没有命中你画像的拍品。</div>
+{% endif %}
+
+{% endif %}
+{% endblock %}

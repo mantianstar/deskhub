@@ -6,6 +6,11 @@ feedparser
 apscheduler
 pyyaml
 python-dotenv
+python-multipart   # 铜币画像页的表单（画像标签启停 / 改权重 / 增删）
+
+# 铜币拍卖（spec §14 / plan §18.1）
+openpyxl        # 读 data/orders.xlsx
+playwright      # 麦稀奇是 JS SPA + 滑块验证，需要浏览器渲染
 
 # dev
 pytest

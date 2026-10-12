@@ -18,6 +18,12 @@ pip install -r requirements.txt
 cp .env.example .env   # 填入 DESKHUB_LLM_API_KEY
 ```
 
+铜币拍卖要用浏览器渲染（麦稀奇是 JS SPA + 滑块），**额外装一次 chromium**（约 95MB）：
+
+```bash
+.venv/bin/python -m playwright install chromium
+```
+
 ## 启动
 
 ```bash
@@ -62,7 +68,74 @@ feed 和 URL 都拿不到发布时间的条目，设了时间范围会搜不到�
   鼠标悬停「失败次数」能看到最后一次的 `error` 与 `http_status`。某个源挂了只标红它自己，
   不影响其他源。**注意**：界面上的启停只在本进程存活期内有效 —— 重启会被
   `config/sources.yaml` 覆盖回来（源清单是配置的唯一真源，plan §16）。
-- `/funds`、`/coins`：纯占位页，只显示「未启用」，没有任何数据逻辑。
+- `/funds`：纯占位页，只显示「未启用」。
+- `/coins`：**铜币拍卖**（v1.1 正式模块，见下节）。
+
+## 铜币拍卖（v1.1）
+
+按你的收藏画像，每天从**麦稀奇（mxiqi.com）**筛出相关专场与拍品，并给出**参考价区间**。
+定义见 [spec.md §14](./spec.md)，实现见 [plan.md §18](./plan.md)。
+
+- `/coins`：**专场列表**。只列「至少命中 1 条推荐拍品」的专场（没命中就不展示）；
+  卡片含拍卖时间 / 专场名 / 店铺头像 / 4 张商品图 / 拍品数 / 围观数。
+- `/coins/session/{id}`：**拍品页**。店铺头（头像 / 名称 / 认证标识 / 拍卖时间 / 专场名 / 押金 / 拍品总数 / 推荐拍品数）
+  + 推荐拍品（名称 / 起拍价 / 当前价 / **推荐价 + 区间 + 样本数 + 关键词** / 最多 3 张图）。
+- `/coins/profile`：**画像**。标签按维度分组，可启停 / 改权重 / 增删。
+
+**画像**由 `data/orders.xlsx`（你的历史成交导出，1567 条）生成：LLM 从「宝贝名称」抽出
+国家 / 年代 / 面值 / 品类 / 品相，再按维度统计频次得到权重。
+
+**推荐价**的依据是麦稀奇**站内历史成交**（按关键词搜「成交」），不是你的个人成交：
+主价取中位数、另给 P25–P75；**样本 < 3 条只给区间、0 条不报价**（不给不可验证的数字）。
+
+### 怎么采集（推荐：连本机 Chrome）
+
+麦稀奇有阿里云滑块，**Playwright 自己启动的 Chromium 会被识别、滑块过不去**
+（实测连续两次报「验证失败」）。可靠做法是**连你自己已经打开的 Chrome**：
+
+```bash
+# 方式一（推荐，复用你平时的登录态）：先 Cmd+Q 完全退出 Chrome，再这样启动
+"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --remote-debugging-port=9222
+
+# 方式二（不动你正在用的窗口）：用一个独立 profile 起第二个 Chrome
+#   注意：那是全新的 profile，**里面没有你的登录态**，要在那个窗口里单独登录一次
+"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+  --remote-debugging-port=9222 --user-data-dir="$HOME/.chrome-mxiqi"
+
+# 采集（会在那个 Chrome 里开标签页；遇到滑块请手动滑一下，最多等 180 秒）
+.venv/bin/python -m app.cli coins-pipeline --cdp http://127.0.0.1:9222 --limit 20
+```
+
+### 推荐价需要登录（一次性）
+
+实测：**成交价要登录才看得到**（页面显示「登录后查看成交价」）。请在**上面那个 Chrome
+窗口里**登录一次麦稀奇 —— 如果你用的是方式二，登录要发生在那**独立 profile 的窗口**里
+（不是平时的 Chrome）；会话会留在对应 profile 里，之后所有 `--cdp` 命令自动带上登录态。
+
+> `spec §14.3` 的约定：**程序不保存你的账号密码**；登录由你在真实浏览器里做，只复用会话。
+> 没登录时页面会红字提示「成交价要登录才能看」，拍品显示「未查价」，其余功能照常。
+
+### 查价限速（防封号）
+
+成交价是**拿你自己账号**在查，所以默认很保守（`config.yaml` 的 `coins.price`）：
+
+| 参数 | 默认 | 含义 |
+|---|---|---|
+| `query_interval_seconds` | `15` | 每次查价之间停 15 秒（实际带 ±40% 抖动 → 9~21 秒，避免固定节奏） |
+| `max_queries_per_run` | `20` | 单轮最多查 20 条；**超出的自动推迟到下一轮**（CLI 会打印「推迟 N 条」） |
+
+再加上「当日查过的当天不重复查」，正常一天最多几十次请求。要更保守就把这两个值调大/调小。
+
+### 其它命令
+
+```bash
+.venv/bin/python -m app.cli coins-dump --cdp http://127.0.0.1:9222 \
+    --path /auction --target sessions        # 存渲染后的真实 HTML（站点改版时校正解析器）
+.venv/bin/python -m app.cli coins-fetch --headful --limit 3   # 退路：Playwright 自带浏览器（可能过不了滑块）
+```
+
+> 服务进程里跑的采集是 headless 的，**页面上的「刷新采集」按钮过不了滑块** ——
+> 那条路只适合会话还有效时自愈。
 
 ## 停止与重启
 
@@ -133,6 +206,11 @@ curl -s 127.0.0.1:8765/healthz | python3 -m json.tool
 - M4（历史搜索）：`/search` 支持关键词（标题 + 摘要 LIKE）+ 时间范围 + 入口筛选 + 分页，结果复用日报卡片；筛选条件都在 URL 上，可分享、可回退。
 - M5（外壳）：导航栏 7 个入口全部可用；`/m/{agent,bigdata}` 入口视图、`/sources` 源管理（启停 / 单源重试 / 连败标红 + tooltip）、`/funds` 与 `/coins` 占位页；非法 `/m/xxx` 返回 404。
 - M6（收口）：`app/scheduler.py` 接进 lifespan（启动补拉 + 每天 08:00 出报）、`cli purge` 手工清理旧条目、日志轮转与关键字段可追溯确认、数据层测试补齐。v1 六条验收标准的逐条结论见 `tasks.md` M6 小节。
+- M7（铜币画像）：`data/orders.xlsx` 1567 条全部解析入库（0 失败）、产出 979 个画像标签（英国 297 / 1便士 219…）；`/coins/profile` 可启停 / 改权重 / 增删。
+- M8（铜币采集）：Playwright 持久化会话 + `--headful` 人工过滑块 + `blocked` 检测与提示链路已跑通；**站点解析器只用手工构造的 fixture 回归过，真实 DOM 样本待 `--headful` 跑通后校正**。
+- M9（铜币推荐与页面）：匹配 / 定价（中位数 + P25–P75，样本 <3 只给区间、0 样本不报价）/ 两个页面均已实现并有离线用例。
+- M10（铜币收口）：`startup_coins` + `daily_coins`（08:00，与知识日报互不阻塞）、导航改正式入口、`pytest` 170 passed。
+  **端到端与多日观察卡在麦稀奇滑块**：本机 headless 必被拦，需先人工过一次滑块。
 
 ## 手工命令
 
@@ -147,6 +225,18 @@ curl -s 127.0.0.1:8765/healthz | python3 -m json.tool
 .venv/bin/python -m app.cli score --rescore --prompt-version v1  # 删该版本打分并整批重跑
 .venv/bin/python -m app.cli purge --before 2026-09-01            # 预览会删多少条（不删任何东西）
 .venv/bin/python -m app.cli purge --before 2026-09-01 --yes       # 真删：items 级联删 item_scores
+```
+
+铜币拍卖（v1.1）：
+
+```bash
+.venv/bin/python -m app.cli coins-parse-orders        # 解析 data/orders.xlsx → 画像（调 LLM，一次性）
+.venv/bin/python -m app.cli coins-rebuild-profile     # 只用已入库订单重算画像标签（不调 LLM）
+.venv/bin/python -m app.cli coins-tags                # 打印画像标签表格
+.venv/bin/python -m app.cli coins-fetch --headful     # 采集专场+拍品；--headful 用来人工过一次滑块
+.venv/bin/python -m app.cli coins-price               # 只对已入库的推荐拍品查价
+.venv/bin/python -m app.cli coins-pipeline --limit 20  # 采集 → 匹配 → 定价 一整轮
+.venv/bin/python -m app.cli coins-dump --path /auction --target sessions  # 存渲染后的 HTML 供校正解析器
 ```
 
 `purge` 删的是 `--before` 那天 `00:00`（业务时区）之前**抓到的**条目（`fetched_at`），

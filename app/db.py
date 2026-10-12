@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -12,7 +13,14 @@ from pathlib import Path
 
 from app import models
 
+logger = logging.getLogger(__name__)
+
 BUSY_TIMEOUT_MS = 5000
+
+# 允许「向前直接抬版本号」的升级：这些升级只**新增表/索引**，DDL 里是 `CREATE ... IF NOT EXISTS`，
+# `executescript(models.DDL)` 已经把它们建好了，所以不需要额外迁移，只把版本号抬上去即可。
+# 加列 / 改列 / 改约束**不在其列** —— 那种必须写 app/migrations/vN.py 手工执行（plan §6.2）。
+FORWARD_ADDITIVE_UPGRADES = {("1", "2")}
 
 _db_path: Path | None = None
 
@@ -60,11 +68,23 @@ def _check_schema_version(conn: sqlite3.Connection) -> None:
         return
 
     current = row["value"]
-    if current != models.SCHEMA_VERSION:
-        raise SchemaVersionError(
-            f"库文件 schema_version={current}，代码要求 {models.SCHEMA_VERSION}；"
-            "本版本不做自动迁移，请手工处理（见 plan §6.2）"
-        )
+    if current == models.SCHEMA_VERSION:
+        return
+
+    # 只新增表的向前升级：DDL 已由 init_db 里的 executescript 建好，这里仅抬版本号
+    if (current, models.SCHEMA_VERSION) in FORWARD_ADDITIVE_UPGRADES:
+        with conn:
+            conn.execute(
+                "UPDATE schema_meta SET value = ? WHERE key = 'schema_version'",
+                (models.SCHEMA_VERSION,),
+            )
+        logger.info("schema 版本向前升级：%s → %s（仅新增表，DDL 已建）", current, models.SCHEMA_VERSION)
+        return
+
+    raise SchemaVersionError(
+        f"库文件 schema_version={current}，代码要求 {models.SCHEMA_VERSION}；"
+        "本版本不做自动迁移，请手工处理（见 plan §6.2）"
+    )
 
 
 def health_check() -> bool:

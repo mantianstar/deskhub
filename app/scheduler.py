@@ -1,11 +1,13 @@
-"""APScheduler 任务定义（plan §11.2）。
+"""APScheduler 任务定义（plan §11.2、§18.9）。
 
-两个入口，走法有意不同：
+四个入口，走法有意不同：
 
 - `startup_fetch`：启动补拉，一次性，覆盖休眠/关机期间漏跑（spec §9）。由 lifespan 用
   `asyncio.create_task` 直接调起，**不经过 APScheduler** —— 首轮抓取可能几十秒，
   不能让首页等到超时（plan §11.1 第 6 步）。
 - `daily_pipeline`：每天 `08:00`（`config.app.timezone`）出报，交给 APScheduler。
+- `startup_coins` / `daily_coins`：铜币拍卖的补拉与每日任务，与知识聚合**各自独立**
+  （spec §14.8/§14.9）：任一条挂掉不影响另一条。
 
 不依赖 FastAPI；`app/main.py` 只负责把两者接进 lifespan。
 """
@@ -17,12 +19,14 @@ import logging
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from app import pipeline
+from app.coins import pipeline as coins_pipeline
 from app.config import Config
 from app.pipeline import PipelineResult
 
 logger = logging.getLogger(__name__)
 
 DAILY_JOB_ID = "daily_pipeline"
+DAILY_COINS_JOB_ID = "daily_coins"
 DAILY_HOUR = 8
 # 本机 08:05 才醒，这一轮仍要执行而不是被丢弃（plan §11.2）
 MISFIRE_GRACE_SECONDS = 3600
@@ -53,27 +57,66 @@ async def daily_pipeline(config: Config) -> PipelineResult:
     return await pipeline.run(config)
 
 
-def start(config: Config) -> AsyncIOScheduler:
-    """建调度器、注册每日任务并启动。
+async def startup_coins(config: Config) -> coins_pipeline.CoinsRunResult | None:
+    """铜币启动补拉；失败只记日志，不让服务起不来（同 `startup_fetch` 的取舍）。"""
+    if not config.coins.enabled:
+        logger.info("铜币模块未启用（config.coins.enabled=false），跳过启动补拉")
+        return None
+    logger.info("铜币启动补拉开始")
+    try:
+        result = await coins_pipeline.run(config)
+    except Exception:
+        logger.exception("铜币启动补拉失败，等下一次定时任务重试")
+        return None
+    logger.info(
+        "铜币启动补拉结束：status=%s 专场=%d 推荐=%d 查价=%d",
+        result.status,
+        result.sessions_stored,
+        result.lots_recommended,
+        result.lots_priced,
+    )
+    return result
 
-    时区取 `config.app.timezone`，所以 `08:00` 是本地时间；`coalesce=True` 让「错过多次」
-    只补跑一次，`max_instances=1` 让定时任务不与上一轮重叠（plan §11.2）。
-    """
-    scheduler = AsyncIOScheduler(timezone=config.app.tz)
+
+async def daily_coins(config: Config) -> coins_pipeline.CoinsRunResult | None:
+    """每天 08:00 的铜币任务；**与 `daily_pipeline` 互不传播失败**（spec §14.9）。"""
+    if not config.coins.enabled:
+        return None
+    logger.info("定时任务触发：%s", DAILY_COINS_JOB_ID)
+    return await coins_pipeline.run(config)
+
+
+def _cron_job(scheduler: AsyncIOScheduler, func, config: Config, job_id: str) -> None:
     scheduler.add_job(
-        daily_pipeline,
+        func,
         trigger="cron",
         hour=DAILY_HOUR,
         minute=0,
         args=[config],
-        id=DAILY_JOB_ID,
+        id=job_id,
         replace_existing=True,
         coalesce=True,
         misfire_grace_time=MISFIRE_GRACE_SECONDS,
         max_instances=1,
     )
+
+
+def start(config: Config) -> AsyncIOScheduler:
+    """建调度器、注册每日任务并启动。
+
+    时区取 `config.app.timezone`，所以 `08:00` 是本地时间；`coalesce=True` 让「错过多次」
+    只补跑一次，`max_instances=1` 让定时任务不与上一轮重叠（plan §11.2 / §18.9）。
+    """
+    scheduler = AsyncIOScheduler(timezone=config.app.tz)
+    _cron_job(scheduler, daily_pipeline, config, DAILY_JOB_ID)
+    if config.coins.enabled:
+        _cron_job(scheduler, daily_coins, config, DAILY_COINS_JOB_ID)
     scheduler.start()
     logger.info(
-        "调度器已启动：%s 每天 %02d:00（%s）", DAILY_JOB_ID, DAILY_HOUR, config.app.timezone
+        "调度器已启动：%s%s 每天 %02d:00（%s）",
+        DAILY_JOB_ID,
+        f" + {DAILY_COINS_JOB_ID}" if config.coins.enabled else "",
+        DAILY_HOUR,
+        config.app.timezone,
     )
     return scheduler

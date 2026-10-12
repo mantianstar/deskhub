@@ -79,7 +79,7 @@ respx
                     └────────────────┘              └─────────────────┘
 
    浏览器  ──►  FastAPI routers  ──►  repository (纯 SQL)  ──►  data/deskhub.db
-     │              digest / search / sources / placeholders / go
+     │              digest / search / sources / placeholders / coins / go
      └── Jinja2 templates（服务端渲染，无前端状态）
 ```
 
@@ -118,7 +118,7 @@ deskhub/
 │   │   ├── digest.py        # 首页日报、入口视图、/go/{id} 点击记录
 │   │   ├── search.py        # 历史搜索
 │   │   ├── sources.py       # 源管理（查看状态、启停、单源重试）
-│   │   └── placeholders.py  # 基金 / 铜币 占位页
+│   │   └── placeholders.py  # 基金占位页（铜币 2026-10-09 升级为正式模块，见 §18）
 │   ├── templates/
 │   │   ├── base.html
 │   │   ├── digest.html
@@ -490,7 +490,7 @@ LIMIT :limit
 | `/sources/{id}/fetch` | POST | 立即抓单个源（调试/自愈用），302 回 `/sources` | — |
 | `/go/{item_id}` | GET | 记 `clicked_at` + 302 外链 | — |
 | `/funds` | GET | 基金监控占位（「未启用」） | `placeholder.html` |
-| `/coins` | GET | 铜币拍卖占位（「未启用」） | `placeholder.html` |
+| `/coins` | GET | ~~铜币拍卖占位（「未启用」）~~ → **已升级为正式模块，路由见 §18.8** | `coins/sessions.html` |
 | `/healthz` | GET | JSON：`{db, sources_total, sources_failing, last_fetch_at}` | — |
 
 **模板约定**
@@ -563,8 +563,12 @@ LIMIT :limit
 | 15 | `startup_fetch` 在 `app/scheduler.py` 里定义，但由 lifespan 用 `asyncio.create_task` 直接调起，**不注册成 APScheduler 的 job** | §11.1 第 6 步写的是 `asyncio.create_task(pipeline.run())`（不 await），§11.2 的任务清单又把它列成一条 job（「启动后立即（一次性）」），两处措辞不一致。按 §11.1 实现：首轮抓取要尽早开始，走调度器反而多一层「等 `start()` 完成」的时序。**代价**：它的失败不会进 APScheduler 的 job 统计，所以它自己就地兜住异常并打堆栈 —— 否则 `create_task` 抛出的异常只会变成 `Task exception was never retrieved`，服务还在跑但没人知道这轮抓挂了。`daily_pipeline` 仍在调度器里，失败由 APScheduler 记录 |
 | 16 | `cli purge` 的两点补充：① 不带 `--yes` 只预览（打印将删除条数）不删；② 切日按 `config.app.timezone`（复用 `day_bounds_utc`） | §11.3 只给了命令形式 `purge --before YYYY-MM-DD [--yes]`，没说 `--yes` 缺省时是交互确认还是直接删，也没说日期按哪个时区切。选预览而非交互确认，是为了在脚本里也安全；时区取业务时区，与日报/搜索同一口径，否则会出现「页面按东八区算 09-23、purge 却按 UTC 切日」的错位。实测（库副本）：`--before 2026-09-23` 预览 112 条且 `items` 保持 149，`--yes` 后 `items` 149 → 37、`item_scores` 147 → 35（外键级联）、`sources` 7 与 `fetch_runs` 25 不变；非法日期 `2026-13-99` 打印明确错误并返回退出码 1 |
 | 17 | 新增 `tests/conftest.py`（`no_scheduler` 夹具）与 `tests/test_scheduler.py` | §4 的目录树只列了 4 个测试文件。`lifespan` 接上调度器后，`TestClient` 走 lifespan 的用例会真的去抓 6 个源，破坏 §13.1「测试不发真实网络请求」这条前提；故在 conftest 里把 `scheduler.start` / `startup_fetch` 换成空壳，由 `web` 这类夹具显式请求。`test_scheduler.py` 单独放调度器用例：它是 §13.1 之外的新增覆盖（触发点 08:00 Asia/Shanghai、`coalesce` / `misfire_grace_time=3600` / `max_instances=1`、错过 grace 就不补跑、启动补拉就地兜异常） |
+| 18 | **放宽「不做浏览器渲染抓取 / 不做反爬对抗」——仅对铜币拍卖模块生效**（spec §14.3） | §16 的不做清单原写死这两条，前提是知识聚合只走 RSS。铜币拍卖的目标站（麦稀奇）实测是 JS 单页应用 + 阿里云滑块验证，直连只返回约 1.3KB 验证页（2026-10-09 实测），httpx 路径不可用。用户明确「修改需求，需要反爬」。故新增 §18 一章，仅该模块允许 Playwright 渲染与会话复用；**知识聚合一行未改**，验证码自动破解仍不做 |
+| 19 | 新增依赖 `playwright`、`openpyxl` | spec §14.3 要浏览器渲染、§14.2 要读 `orders.xlsx`。`openpyxl` 只读一个工作表，不引 `pandas`（§2 的技术选型一贯「单用户无收益就不引重依赖」） |
+| 20 | 新增 `app/coins/*`、`app/routers/coins.py`、`config.yaml` 的 `coins:` 段、`data/mxiqi-profile/`（gitignore） | spec §14 要求一个与知识聚合**完全独立**的模块。放成 `app/coins/` 子包是「站点耦合只落一处」的落地方式（§18.2），不违反 §16「不做插件式数据源抽象」——那里禁止的是**可插拔的数据层抽象**，这里只有一个写死的实现 |
+| 21 | `schema_version` 1 → 2（新增 `coin_*` 表，纯 `CREATE TABLE IF NOT EXISTS`，无 ALTER） | spec §14.5 新增 7 张 `coin_*` 表。§6.2 的迁移策略要求加列写 `migrations/vN.py`；本次只建新表、不动旧表，故只需在 `db.init_db()` 里补建并抬版本号 |
 
-除此之外，数据表字段与 spec §5 完全一致（仅补了必要索引与 `CHECK` 约束）。
+除此之外，数据表字段与 spec §5 完全一致（仅补了必要索引与 `CHECK` 约束）；`coin_*` 七表的 DDL 见 §18.7。
 
 ---
 
@@ -610,6 +614,10 @@ LIMIT :limit
 | **M4 历史搜索** | `routers/search.py`、`search.html` | 关键词 + 时间 + module 筛选，分页 | §13.2 第 4 条 |
 | **M5 外壳** | `routers/digest.py`（`/m/{module}`）、`sources.py`+`sources.html` 标红、`placeholders.py`、导航栏、`style.css` | 两入口视图 + 源管理 + 两个占位页 | §13.2 第 5 条；手工点完所有导航 |
 | **M6 收口** | `scheduler.py`、`cli purge`、日志轮转、`tests/` 补齐 | 定时出报、手动清理、测试全绿 | `pytest` 通过；改系统时间或改 cron 验证 misfire |
+| **M7 铜币·画像** | `coins/profile.py`、`repository.py`（`coin_*`）、`routers/coins.py`（画像页）、`orders.xlsx` 解析 | `orders.xlsx` → `coin_orders` + `coin_profile_tags`；画像可编辑 | spec §14.12 第 1 条；离线 fixture 用例 |
+| **M8 铜币·采集** | `coins/mxiqi.py`（Playwright 会话）、`app/coins/pipeline.py`、`cli coins-fetch` | 能拿到当日专场 + 拍品并入库 | spec §14.12 第 2 条；离线 HTML fixture 解析用例；会话失效判定用例 |
+| **M9 铜币·推荐与页面** | `coins/matcher.py`、`coins/pricing.py`、`routers/coins.py`、`templates/coins/*` | 两个页面（专场列表 / 拍品页）+ 推荐价取证 | spec §14.12 第 3/4/5 条 |
+| **M10 铜币·收口** | `scheduler.py`（`daily_coins`）、`tests/`、导航改正式入口 | 每天 08:00 独立任务；测试全绿 | spec §14.12 第 6 条起算；`pytest` 通过 |
 
 **M1 的额外动作**：把每个源的原始 XML 存到 `tests/fixtures/`，后续所有解析改动都靠离线样本回归，不在测试里访问真实网络。
 
@@ -644,7 +652,9 @@ LIMIT :limit
 | SQLite 写冲突 | `database is locked` | WAL + `busy_timeout=5000` + 写操作集中在 `to_thread`；若仍出现，改为全局 `asyncio.Lock` 串行写 |
 | 服务未启动导致漏天 | 日报页显示「非今日数据」 | 已由启动补拉兜底；接受漏天（spec §9 明确接受），不做开机自启 |
 
-**明确的「不做」清单（防止实现时膨胀）**：不做用户体系、不做点赞/踩、不做 AI 自动发现源、不做浏览器渲染抓取、不做标题相似度去重、不做调仓/交易建议、不做插件式数据源抽象、不做自动数据清理。
+**明确的「不做」清单（防止实现时膨胀）**：不做用户体系、不做点赞/踩、不做 AI 自动发现源、不做标题相似度去重、不做调仓/交易建议、不做插件式数据源抽象、不做自动数据清理、不做验证码自动破解。
+
+> **2026-10-09 修订**：原清单里的「不做浏览器渲染抓取」**只对知识聚合成立**。铜币拍卖的目标站（麦稀奇）是 JS 单页应用 + 阿里云滑块验证，直连拿不到数据（spec §14.3 / plan §18.3），故该模块允许浏览器渲染与会话复用；**自动破解验证码仍然不做**（会话失效交人工过一次）。清单其余各项对两个模块都成立。
 
 ---
 
@@ -655,3 +665,272 @@ LIMIT :limit
 3. **服务端口**：默认 `8765`（避开 8000/3000 常见占用）。若与本机其他服务冲突请指定。
 
 其余参数均已按 spec §11 的你的设定落进 `config/config.yaml`（08:00 出报、全量保留 + 手动 purge、`deepseek-v4-flash`）。
+
+---
+
+## 18. 铜币拍卖实现方案（对应 spec §14，v1.1 增补）
+
+> 本章是 spec §14 的落地。与 §1~§17 的知识聚合是**两套系统**：不共用源、管道、表、页面。
+> **共用的只有四样**：同一个 FastAPI 进程、同一个 SQLite 文件、同一个 APScheduler、同一套分层铁律（§3.2）与文档纪律。
+
+### 18.1 关键决策
+
+| 决策点 | 选择 | 理由 | 被否决 |
+|---|---|---|---|
+| 抓取方式 | Playwright **持久化上下文**（`user_data_dir`）+ 人工过一次滑块 | 实测全站直连只返回约 1.3KB 滑块页（`captchaV2.js`），httpx 不可用；人工过验证成本最低、最稳，且不碰「自动破解验证码」这条高维护红线 | 自动破解验证码；纯 httpx（拿不到内容） |
+| 站点耦合 | 站点结构解析**集中**在 `app/coins/mxiqi.py` 一处 | 站改版时只改一处，不污染管道与页面 | 解析散落到 pipeline / router |
+| 画像抽取 | LLM 抽字段 + 落库可编辑 | spec §14.2；理由可校准（同 §8 精神） | 纯正则（年号/面值形态太杂，维护不住） |
+| 表设计 | 独立 `coin_*` 表，不塞进 `items`/`sources` | 数据形态完全不同（专场/拍品 vs RSS 条目），硬塞会让两边都变脏 | 复用 `items` + `module='coins'` |
+| 推荐价 | 中位数 + P25–P75 + 样本数；样本 < 3 只给区间 | spec §14.6 红线：宁可空着，不给不可验证的数字 | 点估计（不可证伪） |
+| 依赖 | 新增 `playwright`、`openpyxl`、`python-multipart` | 浏览器渲染 + 读单个 xlsx + 画像页表单 | `pandas`（只读一个表，过重）；用查询串传表单值（丑，且与 sources 的写法不一致） |
+
+### 18.2 目录与模块（增量）
+
+```
+app/
+├── coins/
+│   ├── __init__.py
+│   ├── profile.py      # orders.xlsx 解析 + LLM 抽字段 + 画像聚合（纯业务，不依赖 FastAPI）
+│   ├── mxiqi.py        # 站点采集：Playwright 会话 + 页面/接口解析（唯一耦合站点处）
+│   ├── matcher.py      # 画像匹配：拍品名 → 命中标签 + 匹配分
+│   ├── pricing.py      # 站内历史成交查询 + 推荐价统计
+│   └── pipeline.py     # 采集 → 匹配 → 定价 编排（调度器与 CLI 共用）
+├── routers/coins.py    # /coins、/coins/session/{id}、/coins/profile、/coins/refresh
+└── templates/coins/    # sessions.html、session.html、profile.html
+config/config.yaml      # 新增 coins: 段（见 §18.10）
+data/
+├── orders.xlsx               # 画像输入（已存在）
+└── mxiqi-profile/            # Playwright 持久化会话 → 加入 .gitignore
+```
+
+**分层不变**：SQL 仍只出现在 `app/repository.py`（新增 `coin_*` 读写函数）；`app/coins/*` 不依赖 FastAPI、不依赖 request，因此 `python -m app.cli coins-pipeline` 能跑同一条管道。
+
+### 18.3 反爬会话（**最大不确定性，先单独验证**）
+
+- 用 Playwright 的 `launch_persistent_context(user_data_dir="data/mxiqi-profile")` 启动；会话（cookie / localStorage）写盘持久化。
+- **首次**用 `--headful` 跑一次，人工过滑块；之后 headless 复用同一 profile。
+- **拦截判定**：响应体 ≈1.3KB 或含 `captchaV2` / `custom-slider` → 判为「会话被拦」。
+- **不静默失败**：命中拦截 → 写 `coin_fetch_runs.status='blocked'`，`/coins` 顶部提示「会话已失效，请重新过一次验证」，并标注「数据停在 X 时间」（spec §14.3）。
+- **限速**：串行 + 每次请求间隔（`request_interval_seconds`）+ 单轮专场数上限（`max_sessions_per_run`）。
+- **降级方案**（若 Playwright 也频繁被拦）：改为「人工导出页面 HTML 到 `data/mxiqi-inbox/`，程序只解析本地文件」。届时**只改 `mxiqi.py` 的取数入口**，管道与页面不动 —— 这是把不确定性收在一处的收益。
+
+### 18.4 画像管道（`app/coins/profile.py`）
+
+1. `openpyxl` 只读模式读 `data/orders.xlsx` → 1567 行（列：订单号 / 店铺名称 / 宝贝名称 / 宝贝价格）
+2. 每行「宝贝名称」按 `batch_size` 分批送 LLM，抽 `{country, era, denomination, category, condition}`（复用 `app/llm.py`，新 prompt `prompt_version = coins-v1`，FakeClient 可注入）
+3. 写 `coin_orders`（幂等键 `(order_no, item_name)`）
+4. 按维度聚合频次 → `coin_profile_tags`（`weight = 频次`，可后续人工调）
+5. **首次需人工校对一遍再启用**（spec §14.9）：`/coins/profile` 可启停 / 改权重 / 增删
+6. 画像改动次日生效，不追溯改历史推荐（每天管道现取 `enabled=1` 的标签）
+
+### 18.5 采集管道（`app/coins/mxiqi.py` + `pipeline.py`）
+
+- 专场列表（`/auction`，`status ∈ {预展, 进行中}`）→ 逐专场详情（`/auction.info.entry/{id}`）→ 拍品
+- 以麦稀奇 `mxiqi_id` 幂等 upsert（专场、拍品各一个唯一键）
+- 解析顺序：**页面内嵌 JSON / 接口优先，DOM 选择器兜底**（站是 SPA，通常有数据接口）
+- 单场超时隔离 + 写 `coin_fetch_runs`；单场失败不影响其余专场
+
+### 18.6 匹配与定价（`matcher.py` / `pricing.py`）
+
+- **匹配**：拍品名做标签命中（国家 / 年代 / 面值 / 品类，先做修饰词归一，如去掉「包老保真」「美品」「极美品」）；`match_score = Σ 命中标签的 weight`；`>= coins.match_threshold` 才置 `is_recommended=1`。
+- **定价**：
+  1. 关键词 = 命中标签里最强的「国家 + 年代 + 面值/品类」组合（spec §14.6）
+  2. 请求 `/auction/item?keyword=<关键词>&status=成交`（走同一 Playwright 会话）
+  3. 解析成交量与价格 → `median` / `p25` / `p75` / `sample_count`，写 `coin_price_refs`
+  4. 样本 < `min_samples` → 只给区间 + 标注「样本不足」；0 样本 → 标注「无成交样本」，不写价格点估计
+  5. **同一关键词当日缓存**，避免重复请求（限速 + 省会话）
+- **报价前的两道闸（2026-10-12 实测加的）**：
+  1. **必须有「面值/品类」命中**（`matcher.SPECIFIC_DIMENSIONS`）：只有国家/年代的命中拼出来的关键词太泛
+     —— 实测「巴拿马 1967」把当前价 ¥330 的精制银套币报成 ¥2，「1961」抓到一堆不相干年份币。
+     没有具体维度就**主动不报价**（`lots_pricing_too_generic`）。
+  2. **数字边界**：面值/年代这类以数字开头或结尾的值不许咬进更长的数字（「5分」≠「25分」），
+     否则关键词会整个错位（实测「美国 1962 年 25 分」曾被按「5分」查价）。
+- **查价限速（拿本人账号在查，宁慢勿封）**：`price.query_interval_seconds`（默认 15，带 ±40% 抖动，
+  避免固定节奏）+ `price.max_queries_per_run`（默认 20，超出的推迟到下一轮）。
+  实现细节：**价格只读渲染后的 DOM**（`.sold-price[item_id]`）—— 实测自己发那个 POST 会被
+  阿里云 WAF 拦（HTTP 200 但返回 WAF 页面），页面自己发的才通。
+- **专场全量入库，列表页过滤**：`coin_sessions` / `coin_lots` 把抓到的都落库（未命中的也落），
+  `list_coin_session_cards()` 只返回「命中 ≥1 条推荐拍品」的场（spec §14.7「没有就不展示」）。
+  这样画像改动能立刻重算出新的推荐，**不必重抓**；反过来若只落命中场，画像一改就得重抓整个站点。
+
+### 18.7 数据层（DDL，`app/models.py` 增量；`schema_version` 1 → 2）
+
+```sql
+CREATE TABLE IF NOT EXISTS coin_orders (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  order_no TEXT NOT NULL, shop_name TEXT, item_name TEXT NOT NULL, price REAL,
+  country TEXT, era TEXT, denomination TEXT, category TEXT, condition TEXT,
+  parsed_at TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uidx_coin_orders ON coin_orders(order_no, item_name);
+
+CREATE TABLE IF NOT EXISTS coin_profile_tags (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  dimension TEXT NOT NULL CHECK (dimension IN
+    ('country','era','denomination','category','condition','shop','price_band')),
+  value TEXT NOT NULL,
+  weight REAL NOT NULL DEFAULT 1,
+  hit_count INTEGER NOT NULL DEFAULT 0,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  note TEXT,
+  created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uidx_coin_tags ON coin_profile_tags(dimension, value);
+
+CREATE TABLE IF NOT EXISTS coin_shops (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  mxiqi_uid TEXT NOT NULL UNIQUE, name TEXT, avatar_url TEXT,
+  badges TEXT,            -- JSON 数组：[{"kind":"certified"},{"kind":"years","n":2},{"kind":"deposit"}]
+  fetched_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS coin_sessions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  mxiqi_id TEXT NOT NULL UNIQUE,
+  shop_id INTEGER REFERENCES coin_shops(id) ON DELETE SET NULL,
+  title TEXT NOT NULL,
+  status TEXT,            -- preview | running | closed
+  auction_at TEXT,        -- UTC ISO8601
+  auction_at_raw TEXT,    -- 站点原始文案（如「10月8日 星期四 15:25」）
+  deposit REAL, lot_total INTEGER, view_count INTEGER,
+  cover_urls TEXT,        -- JSON 数组（列表页 4 图）
+  fetched_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS coin_lots (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id INTEGER NOT NULL REFERENCES coin_sessions(id) ON DELETE CASCADE,
+  mxiqi_id TEXT NOT NULL UNIQUE,
+  lot_no TEXT, title TEXT NOT NULL,
+  start_price REAL, current_price REAL,
+  image_urls TEXT,        -- JSON 数组（页面展示 ≤3）
+  tags TEXT,              -- JSON：{"发行年份":"1808","国家地区":"印度"}
+  match_score REAL NOT NULL DEFAULT 0,
+  is_recommended INTEGER NOT NULL DEFAULT 0,
+  fetched_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_coin_lots_rec ON coin_lots(session_id, is_recommended, match_score DESC);
+
+CREATE TABLE IF NOT EXISTS coin_price_refs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  lot_id INTEGER NOT NULL REFERENCES coin_lots(id) ON DELETE CASCADE,
+  keyword TEXT NOT NULL, sample_count INTEGER NOT NULL,
+  p25 REAL, median REAL, p75 REAL,
+  raw TEXT,               -- JSON：命中的成交（标题 + 价格）
+  queried_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_coin_refs_lot ON coin_price_refs(lot_id);
+
+CREATE TABLE IF NOT EXISTS coin_fetch_runs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  kind TEXT NOT NULL,     -- sessions | session_detail | price_search
+  target TEXT,            -- 专场 id / 关键词
+  started_at TEXT NOT NULL, finished_at TEXT,
+  status TEXT NOT NULL,   -- ok | blocked | http_error | parse_error | timeout
+  http_status INTEGER, items_new INTEGER DEFAULT 0, error TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_coin_runs ON coin_fetch_runs(kind, started_at DESC);
+```
+
+**新增 `status='blocked'`**：区分「被反爬拦下」与普通错误（spec §14.3 要求会话失效显著标记）。
+
+**repository 增量函数**（`app/repository.py`）：
+`upsert_coin_order` / `count_coin_orders` / `list_coin_orders`、
+`list_coin_profile_tags(only_enabled)` / `upsert_coin_tag(dimension, value, weight, hit_count)` /
+`add_coin_tag` / `set_coin_tag_enabled` / `set_coin_tag_weight` / `delete_coin_tag` / `get_coin_tag`、
+`upsert_coin_shop` / `upsert_coin_session` / `upsert_coin_lot` / `update_coin_lot_match` /
+`list_coin_lots_for_matching`、
+`upsert_coin_price_ref` / `get_coin_price_ref`、
+`record_coin_fetch_run` / `latest_coin_fetch_runs` / `coin_fetch_summary`、
+`list_coin_session_cards` / `get_coin_session_card` / `get_coin_session_detail` /
+`count_coin_sessions` / `count_coin_lots` / `count_recommended_lots`。
+
+### 18.8 路由与页面
+
+| 路由 | 方法 | 职责 | 模板 |
+|---|---|---|---|
+| `/coins` | GET | 专场列表（**仅**含推荐拍品的专场；空态提示） | `coins/sessions.html` |
+| `/coins/session/{id}` | GET | 单专场：店铺头 + 推荐拍品列表（id 不存在返回 404） | `coins/session.html` |
+| `/coins/profile` | GET | 画像标签列表（按维度分组） | `coins/profile.html` |
+| `/coins/profile/{id}/toggle` | POST | 启停标签 | — |
+| `/coins/profile/{id}/weight` | POST | 改权重 | — |
+| `/coins/profile/{id}/delete` | POST | 删标签 | — |
+| `/coins/profile/add` | POST | 手工增标签（维度非法 → 400） | — |
+| `/coins/refresh` | POST | 手工触发一轮采集 + 查价（后台任务，302 回 `/coins`） | — |
+
+**模板约定**
+- 视觉参考 `data/shop.png`（专场卡：拍卖时间 / 专场名 / 店铺头像 / 4 图 / 拍品数 / 围观数）与 `data/item.png`（店铺头：头像 / 名称 / 认证标识 / 拍卖时间 / 专场名 / 押金 / 拍品总数 / 推荐拍品数 + 拍品卡：名称 / 起拍价 / 当前价 / 推荐价 / ≤3 图）。
+- 「推荐价」区块必须同时显示**区间 + 样本数 + 关键词**，可点开看命中的成交明细（`coin_price_refs.raw`），对应 spec §14.6「可追溯」。
+- 沿用 §10 前端约定：Jinja2 + 少量原生 JS、无构建链、无 CDN。
+- 导航栏「铜币」由 `placeholder.html` 改为正式入口（`base.html`）；`/funds` 仍为占位。
+
+### 18.9 调度与 CLI
+
+| job | 触发 | 说明 |
+|---|---|---|
+| `startup_coins` | 启动后立即（一次性） | 补拉；失败就地兜异常（同 §12 第 15 条的取舍） |
+| `daily_coins` | 每天 `08:00` Asia/Shanghai | 与 `daily_pipeline` 同批但**独立任务**；`coalesce=True`、`misfire_grace_time=3600`、`max_instances=1` |
+
+- 两个 `daily_*` 任务**互不传播失败**（spec §14.9）：铜币采集挂掉不影响知识日报，反之亦然。
+
+| CLI 命令 | 用途 | 里程碑 |
+|---|---|---|
+| `coins-parse-orders` | 解析 `orders.xlsx` → 画像入库（调 LLM） | M7 |
+| `coins-rebuild-profile` | 只用已入库的 `coin_orders` 重算画像（不调 LLM） | M7 |
+| `coins-tags` | 打印画像标签表格（同 `cli sources` 风格） | M7 |
+| `coins-fetch [--limit N] [--headful]` | 只采集专场 + 拍品（`--headful` 用于人工过验证） | M8 |
+| `coins-price [--headful]` | 只对已入库的推荐拍品查价 | M9 |
+| `coins-pipeline [--limit N] [--headful]` | 采集 → 匹配 → 定价 全流程 | M9 |
+| `coins-dump [--path /auction] [--target NAME]` | 把渲染后的 HTML 存进 `data/mxiqi-inbox/`（校正解析器用） | M8 |
+
+### 18.10 配置（`config/config.yaml` 增量）
+
+```yaml
+coins:
+  enabled: true
+  orders_xlsx: data/orders.xlsx
+  base_url: https://www.mxiqi.com
+  profile_dir: data/mxiqi-profile      # Playwright 持久化会话（.gitignore）
+  browser: chromium
+  headless: true                        # 首次过验证用 CLI --headful
+  request_interval_seconds: 3           # 限速
+  max_sessions_per_run: 20              # 单轮采集上限（防触发风控）
+  session_timeout_seconds: 30
+  match_threshold: 1.5                  # 匹配分阈值（spec §14.11 待跑通后校准）
+  price:
+    status: 成交                        # 只用成交样本
+    window_days: 180
+    min_samples: 3                      # 少于 3 条不给单一价
+    statistic: median                   # median | mean
+    query_interval_seconds: 15          # 查价间隔（拿本人账号在查，带 ±40% 抖动）
+    max_queries_per_run: 20             # 单轮查价上限，超出的推迟到下一轮
+  profile_llm:
+    prompt_version: coins-v1
+    batch_size: 20                      # 每批送模型的订单数
+    concurrency: 6                      # 抽取批次并发（实现在 M7）
+```
+
+**另外新增 `llm.timeout_seconds`（全局段）**：M7 实测 30s 会把大多数抽取请求打成
+`ReadTimeout`（每批 20 条、输出较长），故把 LLM 单次请求超时做成配置，默认 120s。
+`get_client()` 统一从这里取，打分与画像共用。
+
+`.gitignore` 追加 `data/mxiqi-profile/`（浏览器会话含登录态，绝不入库）。
+
+### 18.11 测试策略（增量，沿用 §13.1「测试不发真实网络请求」）
+
+| 用例 | 断言 |
+|---|---|
+| 解析 `orders.xlsx`（离线 fixture） | 用一份小 xlsx（含中/英/年号混合名）断言逐行读出与字段抽取形状；LLM 走 FakeClient |
+| 画像聚合 | 频次 → `weight` 正确；`(dimension, value)` 唯一；重复导入不增行 |
+| 站点解析（离线 HTML fixture） | 用 `tests/fixtures/mxiqi-*.html` 驱动 `mxiqi.py` 的解析函数，断言专场、拍品、成交字段。**⚠️ 这三个 fixture 目前是按站内可见文案手工构造的，不是真实 DOM 样本**（详情页直连被滑块拦下）；首次 `--headful` 后用 `cli coins-dump` 存真实样本再校正 |
+| 反爬拦截判定 | 给 1.3KB / 含 `captchaV2` 的响应体 → 判为 `blocked`；正常页 → `ok` |
+| 匹配 | 修饰词归一（「极美品 X」命中 X）、无命中不推荐、多命中按权重累加 |
+| 定价统计 | 样本 5 条 → 中位数/分位正确；样本 2 条 → 只给区间且标「样本不足」；0 条 → 不写点估计 |
+| 页面 | `TestClient` 渲染 `/coins`（空态 + 有数据两态）、`/coins/session/{id}`（店铺头字段齐全）、`/coins/profile` 增删改 |
+
+> 画像的 LLM、麦稀奇的网络都不进测试；两者都用 fixture / FakeClient 挡在最外层。
+
+### 18.12 里程碑
+
+见 §14 的 M7~M10 行；任务级拆解与验证证据落在 `tasks.md`。
+

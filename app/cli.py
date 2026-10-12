@@ -12,10 +12,15 @@ import logging
 import sys
 import unicodedata
 from collections.abc import Sequence
+from dataclasses import replace
 from datetime import date
 
-from app import config, db, fetcher, llm, logging_setup, pipeline, repository, scorer
+from app import config, db, fetcher, llm, logging_setup, models, pipeline, repository, scorer
+from app.coins import pipeline as coins_pipeline
+from app.coins import profile as coins_profile
+from app.coins.mxiqi import MxiqiClient, MxiqiError
 from app.fetcher import FetchOutcome
+from app.models import CoinFetchStatus
 
 PREVIEW_LIMIT = 5
 
@@ -198,6 +203,120 @@ def cmd_purge(args: argparse.Namespace) -> int:
     return 0
 
 
+# ---------------------------------------------------------------- 铜币拍卖
+
+
+def cmd_coins_parse_orders(args: argparse.Namespace) -> int:
+    """解析 `orders.xlsx` → 画像标签（spec §14.2）。"""
+    cfg = _bootstrap()
+    result = asyncio.run(coins_profile.run(cfg))
+    print(
+        f"读入 {result.orders_read} 条订单：解析成功 {result.orders_parsed} 条，"
+        f"失败 {result.orders_failed} 条\n"
+        f"写入画像标签 {result.tags_written} 个；"
+        f"token(prompt={result.prompt_tokens} completion={result.completion_tokens} "
+        f"total={result.total_tokens})"
+    )
+    print(f"coin_orders 现有 {repository.count_coin_orders()} 行")
+    return 0
+
+
+def cmd_coins_rebuild_profile(_: argparse.Namespace) -> int:
+    """不重新调 LLM，只用已入库的 `coin_orders` 重算画像标签。"""
+    _bootstrap()
+    written = coins_profile.rebuild_profile()
+    print(f"已用 coin_orders（{repository.count_coin_orders()} 行）重算画像标签 {written} 个")
+    return 0
+
+
+def cmd_coins_tags(_: argparse.Namespace) -> int:
+    """打印画像标签表格（按维度分组）。"""
+    _bootstrap()
+    tags = repository.list_coin_profile_tags()
+    if not tags:
+        print("画像为空，先跑 `python -m app.cli coins-parse-orders`")
+        return 0
+    labels = models.COIN_DIMENSION_LABELS
+    rows = [
+        (
+            labels.get(tag.dimension, tag.dimension),
+            tag.value,
+            f"{tag.weight:g}",
+            str(tag.hit_count),
+            "开" if tag.enabled else "关",
+        )
+        for tag in tags
+    ]
+    _print_table(("维度", "值", "权重", "次数", "启停"), rows)
+    print(f"\n共 {len(tags)} 个标签，覆盖 {repository.count_coin_orders()} 条订单")
+    return 0
+
+
+def _coins_config(cfg: config.Config, *, headful: bool, limit: int | None) -> config.Config:
+    """按 CLI 参数覆盖铜币配置（Config 是 frozen，用 replace 造副本）。"""
+    coins = cfg.coins
+    if headful:
+        coins = replace(coins, headless=False)
+    if limit is not None:
+        coins = replace(coins, max_sessions_per_run=limit)
+    return replace(cfg, coins=coins) if coins is not cfg.coins else cfg
+
+
+def _print_coins_result(result: coins_pipeline.CoinsRunResult) -> None:
+    print(
+        f"状态：{result.status}\n"
+        f"专场：看到 {result.sessions_seen}，入库 {result.sessions_stored}\n"
+        f"拍品：入库 {result.lots_stored}，命中推荐 {result.lots_recommended}\n"
+        f"查价：成功 {result.lots_priced}，当日跳过 {result.lots_pricing_skipped}，"
+        f"本轮上限推迟 {result.lots_pricing_deferred}，"
+        f"关键词太泛不报价 {result.lots_pricing_too_generic}，错误 {result.errors}"
+    )
+    if result.status == CoinFetchStatus.BLOCKED:
+        print(
+            "\n被麦稀奇反爬拦下：请跑 `python -m app.cli coins-fetch --headful`，"
+            "在弹出的浏览器里人工过一次滑块，会话会存到 data/mxiqi-profile/ 供后续复用。",
+            file=sys.stderr,
+        )
+
+
+def cmd_coins_fetch(args: argparse.Namespace) -> int:
+    """只采集专场 + 拍品（不查价）。`--headful` / `--cdp` 用来人工过一次滑块。"""
+    cfg = _coins_config(_bootstrap(), headful=args.headful, limit=args.limit)
+    result = asyncio.run(coins_pipeline.run(cfg, collect_only=True, cdp_url=args.cdp))
+    _print_coins_result(result)
+    return 0 if result.status == CoinFetchStatus.OK else 1
+
+
+def cmd_coins_price(args: argparse.Namespace) -> int:
+    """只对已入库的推荐拍品查推荐价（不采集）。"""
+    cfg = _coins_config(_bootstrap(), headful=args.headful, limit=None)
+    result = asyncio.run(coins_pipeline.run(cfg, price_only=True, cdp_url=args.cdp))
+    _print_coins_result(result)
+    return 0 if result.status == CoinFetchStatus.OK else 1
+
+
+def cmd_coins_pipeline(args: argparse.Namespace) -> int:
+    """采集 → 匹配 → 定价，一整轮。"""
+    cfg = _coins_config(_bootstrap(), headful=args.headful, limit=args.limit)
+    result = asyncio.run(coins_pipeline.run(cfg, cdp_url=args.cdp))
+    _print_coins_result(result)
+    return 0 if result.status == CoinFetchStatus.OK else 1
+
+
+def cmd_coins_dump(args: argparse.Namespace) -> int:
+    """把渲染后的页面 HTML 存进 data/mxiqi-inbox/（站点改版时用它校正解析器）。"""
+    cfg = _coins_config(_bootstrap(), headful=args.headful, limit=None)
+
+    async def _dump() -> str:
+        async with MxiqiClient(cfg, cdp_url=args.cdp) as client:
+            url = f"{cfg.coins.base_url.rstrip('/')}{args.path}"
+            return str(await client.dump(url, args.target))
+
+    path = asyncio.run(_dump())
+    print(f"已保存：{path}")
+    return 0
+
+
 # ---------------------------------------------------------------- 入口
 
 
@@ -236,6 +355,50 @@ def _build_parser() -> argparse.ArgumentParser:
     purge.add_argument("--yes", action="store_true", help="确认执行删除；不带则只打印将删除的条数")
     purge.set_defaults(func=cmd_purge)
 
+    coins_parse = subparsers.add_parser(
+        "coins-parse-orders", help="解析 data/orders.xlsx 生成铜币画像（调 LLM）"
+    )
+    coins_parse.set_defaults(func=cmd_coins_parse_orders)
+
+    coins_rebuild = subparsers.add_parser(
+        "coins-rebuild-profile", help="用已入库订单重算画像标签（不调 LLM）"
+    )
+    coins_rebuild.set_defaults(func=cmd_coins_rebuild_profile)
+
+    coins_tags = subparsers.add_parser("coins-tags", help="打印铜币画像标签表格")
+    coins_tags.set_defaults(func=cmd_coins_tags)
+
+    def _add_browser_flags(parser: argparse.ArgumentParser) -> None:
+        parser.add_argument(
+            "--headful", action="store_true", help="用有头浏览器跑（人工过一次滑块）"
+        )
+        parser.add_argument(
+            "--cdp",
+            default=None,
+            metavar="URL",
+            help="连本机已打开的 Chrome（如 http://127.0.0.1:9222），人工过滑块最稳",
+        )
+
+    coins_fetch = subparsers.add_parser("coins-fetch", help="采集麦稀奇专场与拍品（不查价）")
+    _add_browser_flags(coins_fetch)
+    coins_fetch.add_argument("--limit", type=int, default=None, help="本轮最多抓几个专场")
+    coins_fetch.set_defaults(func=cmd_coins_fetch)
+
+    coins_price = subparsers.add_parser("coins-price", help="对已入库的推荐拍品查推荐价")
+    _add_browser_flags(coins_price)
+    coins_price.set_defaults(func=cmd_coins_price)
+
+    coins_pipeline = subparsers.add_parser("coins-pipeline", help="采集 → 匹配 → 定价（一整轮）")
+    _add_browser_flags(coins_pipeline)
+    coins_pipeline.add_argument("--limit", type=int, default=None, help="本轮最多抓几个专场")
+    coins_pipeline.set_defaults(func=cmd_coins_pipeline)
+
+    coins_dump = subparsers.add_parser("coins-dump", help="把渲染后的页面存进 data/mxiqi-inbox/")
+    _add_browser_flags(coins_dump)
+    coins_dump.add_argument("--path", default="/auction", help="站点路径，如 /auction")
+    coins_dump.add_argument("--target", default="sessions", help="保存文件名（不含 .html）")
+    coins_dump.set_defaults(func=cmd_coins_dump)
+
     return parser
 
 
@@ -243,7 +406,7 @@ def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     try:
         return args.func(args)
-    except (config.ConfigError, llm.LLMError, ValueError) as exc:
+    except (config.ConfigError, llm.LLMError, MxiqiError, ValueError) as exc:
         print(f"错误：{exc}", file=sys.stderr)
         return 1
 

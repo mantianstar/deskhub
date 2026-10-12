@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}铜币拍卖 · deskhub{% endblock %}
+
+{% block content %}
+<section class="digest-head">
+  <h1>铜币拍卖</h1>
+  <p class="digest-meta">
+    共 {{ cards|length }} 个命中专场
+    {%- if summary.last_ok_at %} · 数据更新至 {{ summary.last_ok_at | local_time }}{% endif %}
+    · <a href="/coins/profile">画像</a>
+  </p>
+  <form method="post" action="/coins/refresh">
+    <button class="btn" type="submit">刷新采集</button>
+  </form>
+</section>
+
+{% if summary.blocked %}
+<p class="notice notice-danger">
+  麦稀奇会话可能已失效（最近一次采集被反爬拦下{% if summary.last_error %}：{{ summary.last_error }}{% endif %}）。
+  在本机跑一次 <code>python -m app.cli coins-fetch --headful</code> 人工过一次验证即可恢复。
+</p>
+{% endif %}
+
+{% if summary.needs_login %}
+<p class="notice notice-danger">
+  麦稀奇的<strong>成交价要登录才能看</strong>{% if summary.login_error %}（{{ summary.login_error }}）{% endif %}。
+  请在你自己的 Chrome 里登录一次麦稀奇（会话会持久化，<strong>别把密码交给程序</strong>），
+  再跑 <code>coins-pipeline --cdp http://127.0.0.1:9222</code> 即可带上推荐价。
+</p>
+{% endif %}
+
+{% if cards %}
+  {% for card in cards %}
+  <a class="coin-session-card" href="/coins/session/{{ card.session_id }}">
+    <div class="coin-session-top">
+      <span class="coin-status coin-status-{{ card.status or 'unknown' }}">
+        {{ coin_session_status_labels.get(card.status, card.status or '未知') }}
+      </span>
+      <span class="coin-time">{{ card.auction_at_raw or (card.auction_at | local_time) }}</span>
+      {% if card.shop_avatar %}
+      <img class="coin-avatar" src="{{ card.shop_avatar }}" alt="{{ card.shop_name or '' }}" loading="lazy">
+      {% endif %}
+    </div>
+
+    <h2 class="coin-session-title">{{ card.title }}</h2>
+
+    {% if card.cover_urls %}
+    <div class="coin-thumbs">
+      {% for url in card.cover_urls[:4] %}
+      <img class="coin-thumb" src="{{ url }}" alt="" loading="lazy">
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    <div class="coin-session-foot">
+      <span>实时拍卖</span>
+      <span>共 {{ card.lot_total if card.lot_total is not none else '—' }} 件拍品</span>
+      <span>{{ card.view_count or 0 }} 人次围观</span>
+      <span class="coin-hit">命中 {{ card.recommended_count }} 件</span>
+    </div>
+  </a>
+  {% endfor %}
+{% else %}
+<div class="empty">
+  今天没有与你画像匹配的专场。<br>
+  先跑一次采集：<code>python -m app.cli coins-fetch</code>；
+  画像可用 <code>python -m app.cli coins-parse-orders</code> 生成。
+</div>
+{% endif %}
+{% endblock %}

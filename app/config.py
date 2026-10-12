@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -74,6 +74,8 @@ class LLMConfig:
     model: str
     api_key_env: str
     api_key: str
+    # 单次请求超时（秒）。批量抽取画像要久，30s 不够；默认给宽一点
+    timeout_seconds: int = 120
 
 
 @dataclass(frozen=True)
@@ -81,6 +83,77 @@ class ModuleConfig:
     key: str
     label: str
     focus: str
+
+
+@dataclass(frozen=True)
+class CoinPriceConfig:
+    """推荐价的取数口径（spec §14.6）。"""
+
+    status: str
+    window_days: int
+    min_samples: int
+    statistic: str
+    # 成交价接口要**登录**才能用 —— 也就是拿我自己的账号在查，所以宁可慢：
+    # 每次查价之间停这么久（带 ±40% 抖动，避免固定节奏），单轮最多查这么多条。
+    # 剩下的留到下一轮/第二天（用户 2026-10-12 明确要求：不要求效率，别被封号）。
+    query_interval_seconds: int = 10
+    max_queries_per_run: int = 30
+
+
+@dataclass(frozen=True)
+class CoinProfileLLMConfig:
+    prompt_version: str
+    batch_size: int
+    concurrency: int = 4
+
+
+@dataclass(frozen=True)
+class CoinsConfig:
+    """铜币拍卖（spec §14 / plan §18.10）。"""
+
+    enabled: bool
+    orders_xlsx: Path
+    base_url: str
+    profile_dir: Path
+    browser: str
+    headless: bool
+    request_interval_seconds: int
+    max_sessions_per_run: int
+    session_timeout_seconds: int
+    match_threshold: float
+    price: CoinPriceConfig
+    profile_llm: CoinProfileLLMConfig
+    # Playwright 的浏览器渠道：空 = 用自带的 chromium；填 "chrome" = 用本机真实 Chrome
+    # （反爬更难过自动化检测时切它，见 plan §18.3）
+    browser_channel: str = ""
+    # 连本机已打开的 Chrome（CDP）：填 http://127.0.0.1:9222 就走这条。
+    # 走它时验证在**真实浏览器**里做，不关闭用户的浏览器（plan §18.3 的会话复用）。
+    cdp_url: str = ""
+
+
+def _default_coins_config() -> CoinsConfig:
+    """`Config` 手工构造时的兜底值（测试用）。
+
+    生产走 `config.load()`，一定会由 `_parse_coins` 显式构造；这里只是让
+    fetcher / scorer / scheduler 的测试不必为无关的铜币模块写样板。
+    """
+    return CoinsConfig(
+        enabled=False,
+        orders_xlsx=PROJECT_ROOT / "data" / "orders.xlsx",
+        base_url="https://www.mxiqi.com",
+        profile_dir=PROJECT_ROOT / "data" / "mxiqi-profile",
+        browser="chromium",
+        headless=True,
+        request_interval_seconds=0,
+        max_sessions_per_run=5,
+        session_timeout_seconds=5,
+        match_threshold=1.5,
+        price=CoinPriceConfig(status="成交", window_days=180, min_samples=3, statistic="median",
+                              query_interval_seconds=0, max_queries_per_run=5),
+        profile_llm=CoinProfileLLMConfig(prompt_version="coins-v1", batch_size=2, concurrency=1),
+        browser_channel="",
+        cdp_url="",
+    )
 
 
 @dataclass(frozen=True)
@@ -109,6 +182,9 @@ class Config:
     llm: LLMConfig
     modules: dict[str, ModuleConfig]
     sources: tuple[SourceConfig, ...]
+    # 铜币配置只对铜币模块有意义；给个兜底，让「手工构造 Config」的测试（fetcher/scorer/
+    # scheduler）不必为无关模块写样板。生产一律走 config.load()，会显式传入。
+    coins: CoinsConfig = field(default_factory=lambda: _default_coins_config())
 
     def module(self, key: str) -> ModuleConfig:
         try:
@@ -166,6 +242,13 @@ def _require_float(section: dict[str, Any], key: str, where: str) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ConfigError(f"{where}.{key}：必须是数字")
     return float(value)
+
+
+def _opt_bool(section: dict[str, Any], key: str, default: bool, where: str) -> bool:
+    value = section.get(key, default)
+    if not isinstance(value, bool):
+        raise ConfigError(f"{where}.{key}：必须是 true/false")
+    return value
 
 
 # ---------------------------------------------------------------- 各段解析
@@ -238,6 +321,7 @@ def _parse_llm(raw: dict[str, Any]) -> LLMConfig:
         model=os.environ.get(ENV_LLM_MODEL) or _req_str(section, "model", where),
         api_key_env=api_key_env,
         api_key=os.environ.get(api_key_env, ""),
+        timeout_seconds=_req_int(section, "timeout_seconds", where),
     )
 
 
@@ -260,6 +344,54 @@ def _parse_modules(raw: dict[str, Any]) -> dict[str, ModuleConfig]:
     if missing:
         raise ConfigError(f"config.yaml.modules：缺少 {' / '.join(missing)} 的定义")
     return modules
+
+
+def _parse_coins(raw: dict[str, Any]) -> CoinsConfig:
+    section = _section(raw, "coins", "config.yaml")
+    where = "config.yaml.coins"
+    price = _section(section, "price", where)
+    profile_llm = _section(section, "profile_llm", where)
+
+    statistic = _opt_str(price, "statistic", "median", f"{where}.price")
+    if statistic not in ("median", "mean"):
+        raise ConfigError(f"{where}.price.statistic：只支持 median / mean，当前 {statistic!r}")
+
+    channel = section.get("browser_channel", "")
+    if not isinstance(channel, str):
+        raise ConfigError(f"{where}.browser_channel：必须是字符串（空串表示用自带 chromium）")
+    cdp_url = section.get("cdp_url", "")
+    if not isinstance(cdp_url, str):
+        raise ConfigError(f"{where}.cdp_url：必须是字符串（空串表示自己启动浏览器）")
+
+    return CoinsConfig(
+        enabled=_opt_bool(section, "enabled", True, where),
+        orders_xlsx=_resolve_path(_req_str(section, "orders_xlsx", where)),
+        base_url=_req_str(section, "base_url", where),
+        profile_dir=_resolve_path(_req_str(section, "profile_dir", where)),
+        browser=_opt_str(section, "browser", "chromium", where),
+        headless=_opt_bool(section, "headless", True, where),
+        request_interval_seconds=_req_int(section, "request_interval_seconds", where, minimum=0),
+        max_sessions_per_run=_req_int(section, "max_sessions_per_run", where),
+        session_timeout_seconds=_req_int(section, "session_timeout_seconds", where),
+        match_threshold=_require_float(section, "match_threshold", where),
+        price=CoinPriceConfig(
+            status=_opt_str(price, "status", "成交", f"{where}.price"),
+            window_days=_req_int(price, "window_days", f"{where}.price"),
+            min_samples=_req_int(price, "min_samples", f"{where}.price", minimum=1),
+            statistic=statistic,
+            query_interval_seconds=_req_int(
+                price, "query_interval_seconds", f"{where}.price", minimum=0
+            ),
+            max_queries_per_run=_req_int(price, "max_queries_per_run", f"{where}.price"),
+        ),
+        profile_llm=CoinProfileLLMConfig(
+            prompt_version=_opt_str(profile_llm, "prompt_version", "coins-v1", f"{where}.profile_llm"),
+            batch_size=_req_int(profile_llm, "batch_size", f"{where}.profile_llm"),
+            concurrency=_req_int(profile_llm, "concurrency", f"{where}.profile_llm"),
+        ),
+        browser_channel=channel.strip(),
+        cdp_url=cdp_url.strip(),
+    )
 
 
 def _parse_sources(raw: dict[str, Any], modules: dict[str, ModuleConfig]) -> tuple[SourceConfig, ...]:
@@ -357,6 +489,7 @@ def load(
         llm=_parse_llm(raw),
         modules=modules,
         sources=sources,
+        coins=_parse_coins(raw),
     )
 
     global _config
