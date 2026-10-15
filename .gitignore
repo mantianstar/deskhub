@@ -4,14 +4,12 @@ data/deskhub.db-wal
 data/deskhub.db-shm
 data/logs/
 
+# Numista 图片本地缓存（coins-images 下载的系列正/反图，可再生，不进仓库）
+data/coin_images/
+
 # 个人数据：麦稀奇历史成交导出（个人购买记录，绝不进仓库）。
 # 画像结果已落库（coin_orders / coin_profile_tags），重算时把文件放回 data/ 即可。
 data/orders.xlsx
-
-# 铜币拍卖：Playwright 持久化会话（含登录态/cookie，绝不入库）
-data/mxiqi-profile/
-# 铜币拍卖：人工导出的页面兜底目录（可选）
-data/mxiqi-inbox/
 
 # 密钥
 .env

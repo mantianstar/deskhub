@@ -108,27 +108,52 @@ class CoinProfileLLMConfig:
 
 
 @dataclass(frozen=True)
+class CoinNumistaConfig:
+    """Numista 目录接口（铜币参考库，spec §14.13 / plan §18.13）。
+
+    风控（2026-10-14 用户明确）：免费额度每月 2000 次，**响应不带限流头**，只能自管：
+    `request_interval_seconds` 拉大间隔、`max_requests_per_run` 限单轮、`monthly_limit` 限月度总额。
+    """
+
+    base_url: str
+    api_key_env: str
+    api_key: str
+    # 请求间隔（秒）：免费额度有限，对接口客气点
+    request_interval_seconds: int = 2
+    # 单次搜索最多取几个系列的详情（Numista 每个搜索有「Type Detail 请求」上限，取个保守值）
+    max_series: int = 10
+    timeout_seconds: int = 20
+    # 每月请求上限（免费额度 2000，留 25% 余量）
+    monthly_limit: int = 1500
+    # 单轮请求上限（一次 CLI 调用最多打几次接口）
+    max_requests_per_run: int = 40
+    # 取类型页（估值 + Frequency）时挂载的 CDP 浏览器地址：Numista 上有 Cloudflare 校验，
+    # 普通 HTTP 客户端过不去，只能挂到你自己用 --remote-debugging-port 开的 Chrome 上
+    cdp_url: str = "http://127.0.0.1:9222"
+
+
+@dataclass(frozen=True)
 class CoinsConfig:
     """铜币拍卖（spec §14 / plan §18.10）。"""
 
     enabled: bool
     orders_xlsx: Path
-    base_url: str
-    profile_dir: Path
-    browser: str
-    headless: bool
     request_interval_seconds: int
     max_sessions_per_run: int
-    session_timeout_seconds: int
     match_threshold: float
     price: CoinPriceConfig
     profile_llm: CoinProfileLLMConfig
-    # Playwright 的浏览器渠道：空 = 用自带的 chromium；填 "chrome" = 用本机真实 Chrome
-    # （反爬更难过自动化检测时切它，见 plan §18.3）
-    browser_channel: str = ""
-    # 连本机已打开的 Chrome（CDP）：填 http://127.0.0.1:9222 就走这条。
-    # 走它时验证在**真实浏览器**里做，不关闭用户的浏览器（plan §18.3 的会话复用）。
-    cdp_url: str = ""
+    # 小程序网关：采集（专场 + 拍品）与查价（站内历史成交）的**唯一**来源
+    # （免登录、免签名、免浏览器，见 app/coins/gapi.py）
+    gapi_base_url: str = "https://gapi.mxiqi.com"
+    # Numista 目录接口（参考库，见 app/coins/numista.py）
+    numista: CoinNumistaConfig = field(
+        default_factory=lambda: CoinNumistaConfig(
+            base_url="https://api.numista.com/v3",
+            api_key_env="DESKHUB_NUMISTA_API_KEY",
+            api_key="",
+        )
+    )
 
 
 def _default_coins_config() -> CoinsConfig:
@@ -140,19 +165,12 @@ def _default_coins_config() -> CoinsConfig:
     return CoinsConfig(
         enabled=False,
         orders_xlsx=PROJECT_ROOT / "data" / "orders.xlsx",
-        base_url="https://www.mxiqi.com",
-        profile_dir=PROJECT_ROOT / "data" / "mxiqi-profile",
-        browser="chromium",
-        headless=True,
         request_interval_seconds=0,
         max_sessions_per_run=5,
-        session_timeout_seconds=5,
         match_threshold=1.5,
         price=CoinPriceConfig(status="成交", window_days=180, min_samples=3, statistic="median",
                               query_interval_seconds=0, max_queries_per_run=5),
         profile_llm=CoinProfileLLMConfig(prompt_version="coins-v1", batch_size=2, concurrency=1),
-        browser_channel="",
-        cdp_url="",
     )
 
 
@@ -351,29 +369,21 @@ def _parse_coins(raw: dict[str, Any]) -> CoinsConfig:
     where = "config.yaml.coins"
     price = _section(section, "price", where)
     profile_llm = _section(section, "profile_llm", where)
+    numista = _section(section, "numista", where)
 
     statistic = _opt_str(price, "statistic", "median", f"{where}.price")
     if statistic not in ("median", "mean"):
         raise ConfigError(f"{where}.price.statistic：只支持 median / mean，当前 {statistic!r}")
 
-    channel = section.get("browser_channel", "")
-    if not isinstance(channel, str):
-        raise ConfigError(f"{where}.browser_channel：必须是字符串（空串表示用自带 chromium）")
-    cdp_url = section.get("cdp_url", "")
-    if not isinstance(cdp_url, str):
-        raise ConfigError(f"{where}.cdp_url：必须是字符串（空串表示自己启动浏览器）")
+    numista_key_env = _opt_str(numista, "api_key_env", "DESKHUB_NUMISTA_API_KEY", f"{where}.numista")
 
     return CoinsConfig(
         enabled=_opt_bool(section, "enabled", True, where),
         orders_xlsx=_resolve_path(_req_str(section, "orders_xlsx", where)),
-        base_url=_req_str(section, "base_url", where),
-        profile_dir=_resolve_path(_req_str(section, "profile_dir", where)),
-        browser=_opt_str(section, "browser", "chromium", where),
-        headless=_opt_bool(section, "headless", True, where),
         request_interval_seconds=_req_int(section, "request_interval_seconds", where, minimum=0),
         max_sessions_per_run=_req_int(section, "max_sessions_per_run", where),
-        session_timeout_seconds=_req_int(section, "session_timeout_seconds", where),
         match_threshold=_require_float(section, "match_threshold", where),
+        gapi_base_url=_opt_str(section, "gapi_base_url", "https://gapi.mxiqi.com", where),
         price=CoinPriceConfig(
             status=_opt_str(price, "status", "成交", f"{where}.price"),
             window_days=_req_int(price, "window_days", f"{where}.price"),
@@ -389,8 +399,23 @@ def _parse_coins(raw: dict[str, Any]) -> CoinsConfig:
             batch_size=_req_int(profile_llm, "batch_size", f"{where}.profile_llm"),
             concurrency=_req_int(profile_llm, "concurrency", f"{where}.profile_llm"),
         ),
-        browser_channel=channel.strip(),
-        cdp_url=cdp_url.strip(),
+        numista=CoinNumistaConfig(
+            base_url=_opt_str(numista, "base_url", "https://api.numista.com/v3", f"{where}.numista"),
+            api_key_env=numista_key_env,
+            api_key=os.environ.get(numista_key_env, ""),
+            request_interval_seconds=_req_int(
+                numista, "request_interval_seconds", f"{where}.numista", minimum=0
+            ),
+            max_series=_req_int(numista, "max_series", f"{where}.numista", minimum=1),
+            timeout_seconds=_req_int(numista, "timeout_seconds", f"{where}.numista", minimum=1),
+            monthly_limit=_req_int(numista, "monthly_limit", f"{where}.numista", minimum=1),
+            max_requests_per_run=_req_int(
+                numista, "max_requests_per_run", f"{where}.numista", minimum=1
+            ),
+            cdp_url=_opt_str(
+                numista, "cdp_url", "http://127.0.0.1:9222", f"{where}.numista"
+            ),
+        ),
     )
 
 
@@ -517,5 +542,10 @@ def warnings_for(config: Config) -> list[str]:
         messages.append(
             f"未设置环境变量 {config.llm.api_key_env}，LLM 打分将不可用；"
             "抓取仍可正常运行（便于调试）"
+        )
+    if not config.coins.numista.api_key:
+        messages.append(
+            f"未设置环境变量 {config.coins.numista.api_key_env}，Numista 铜币参考库将不可用"
+            "（其余功能不受影响）"
         )
     return messages

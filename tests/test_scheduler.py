@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from app import scheduler
+from app import db, scheduler, switches
 from app.config import (
     AppConfig,
     Config,
@@ -127,30 +127,82 @@ async def test_run_missed_beyond_grace_is_dropped(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_startup_fetch_swallows_errors(tmp_path, monkeypatch):
-    """启动补拉跑在 `create_task` 里，异常必须就地兜住，服务不能因一轮抓取退出。"""
+async def test_daily_pipeline_respects_switches(tmp_path, monkeypatch):
+    """每天 08:00 那一轮按开关走：关掉抓取就只打分，两个都关就什么都不做（plan §19）。"""
+    cfg = _config(tmp_path)
+    db.init_db(cfg.app.db_path)
 
-    async def failing_run(config) -> None:
+    called: list[str] = []
+
+    async def fake_fetch(config) -> str:
+        called.append("fetch")
+        return "抓取完成"
+
+    async def fake_score(config) -> str:
+        called.append("score")
+        return "打分完成"
+
+    monkeypatch.setattr(scheduler.tasks, "run_knowledge_fetch", fake_fetch)
+    monkeypatch.setattr(scheduler.tasks, "run_knowledge_score", fake_score)
+
+    await scheduler.daily_pipeline(cfg)
+    assert called == ["fetch", "score"]
+
+    switches.toggle(switches.KNOWLEDGE_FETCH)  # 关掉抓取
+    called.clear()
+    await scheduler.daily_pipeline(cfg)
+    assert called == ["score"]
+
+    switches.toggle(switches.KNOWLEDGE_SCORE)  # 再关掉打分 → 整轮无事可做
+    called.clear()
+    await scheduler.daily_pipeline(cfg)
+    assert called == []
+
+
+@pytest.mark.asyncio
+async def test_daily_pipeline_swallows_nothing(tmp_path, monkeypatch):
+    """抓取失败要向上抛给 APScheduler（job 不会被摘掉），与改造前一致。"""
+
+    async def failing_fetch(config) -> str:
         raise RuntimeError("抓取炸了")
 
-    monkeypatch.setattr(scheduler.pipeline, "run", failing_run)
+    cfg = _config(tmp_path)
+    db.init_db(cfg.app.db_path)
+    monkeypatch.setattr(scheduler.tasks, "run_knowledge_fetch", failing_fetch)
 
-    assert await scheduler.startup_fetch(_config(tmp_path)) is None
+    with pytest.raises(RuntimeError):
+        await scheduler.daily_pipeline(cfg)
 
 
 @pytest.mark.asyncio
 async def test_daily_coins_swallows_errors(tmp_path, monkeypatch):
-    """铜币定时任务也要就地兜异常：配了 cdp_url 后「那个 Chrome 没开着」是常态，
+    """铜币定时任务也要就地兜异常：网关不可用是常态，
     不该把堆栈丢给 APScheduler，更不能影响知识日报（spec §14.9）。"""
     from dataclasses import replace
 
-    async def failing_run(config) -> None:
-        raise RuntimeError("连不上本机 Chrome（http://127.0.0.1:9222）")
+    async def failing_run(config, **kwargs) -> None:
+        raise RuntimeError("网关调用失败：502")
 
     monkeypatch.setattr(scheduler.coins_pipeline, "run", failing_run)
 
     cfg = _config(tmp_path)
+    # daily_coins 要先读功能开关（默认全开），所以库得建好
+    db.init_db(cfg.app.db_path)
     enabled = replace(cfg, coins=replace(cfg.coins, enabled=True))
     assert await scheduler.daily_coins(enabled) is None
     # 未启用时直接返回，连任务日志都不打
     assert await scheduler.daily_coins(cfg) is None
+
+
+@pytest.mark.asyncio
+async def test_daily_coins_skips_when_both_switches_off(tmp_path):
+    """采集与查价都关掉时，铜币那一轮直接跳过，不碰网关（plan §19）。"""
+    from dataclasses import replace
+
+    cfg = _config(tmp_path)
+    db.init_db(cfg.app.db_path)
+    switches.toggle(switches.COINS_COLLECT)
+    switches.toggle(switches.COINS_PRICE)
+
+    enabled = replace(cfg, coins=replace(cfg.coins, enabled=True))
+    assert await scheduler.daily_coins(enabled) is None

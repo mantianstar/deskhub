@@ -1,0 +1,149 @@
+{% extends "base.html" %}
+{% block title %}{{ page_title }} · deskhub{% endblock %}
+
+{% block content %}
+<section class="digest-head">
+  <h1>铜币采集管理</h1>
+  <p class="digest-meta">
+    调 Numista 接口采集，先入库再展示
+    · <a href="/coins">拍卖</a> · <a href="/coins/info">信息</a>
+  </p>
+</section>
+
+<form class="search-form" method="post" action="/coins/manage/fetch-series">
+  <div class="search-row search-row-labeled">
+    <label class="field">国家
+      <input class="search-input" type="text" name="country" value="{{ country }}" required
+             list="coin-country-options" placeholder="可输入，如 英国" autocomplete="off">
+      <datalist id="coin-country-options">
+        {% for name in countries %}<option value="{{ name }}"></option>{% endfor %}
+      </datalist>
+    </label>
+    <label class="field">年份
+      <input class="search-input" type="text" name="year" value="{{ year }}" placeholder="如 1808">
+    </label>
+    <label class="field">面值
+      <input class="search-input" type="text" name="denomination" value="{{ denomination }}"
+             list="coin-denomination-options" placeholder="可输入，如 1便士" autocomplete="off">
+      <datalist id="coin-denomination-options">
+        {% for name in denominations %}<option value="{{ name }}"></option>{% endfor %}
+      </datalist>
+    </label>
+    <label class="field">材质
+      <input class="search-input" type="text" name="composition" value="{{ composition }}"
+             list="coin-composition-options" placeholder="可输入，如 青铜" autocomplete="off">
+      <datalist id="coin-composition-options">
+        {% for name in compositions %}<option value="{{ name }}"></option>{% endfor %}
+      </datalist>
+    </label>
+    <button class="btn btn-primary" type="submit">① 获取系列</button>
+  </div>
+  <p class="form-hint">
+    按钮 1：按「国家 + 年份 + 面值」从 Numista 取系列并入库（同步等待，约 10~30 秒）。
+    国家只能选<strong>已收录</strong>的（见 <code>ISSUER_CODES</code>）。
+    Numista 只做模糊匹配，故取到详情后按<strong>面值 / 材质</strong>再精确过滤，
+    <strong>不匹配的系列不会入库</strong>。<br>
+    结果行三个按钮（都同步等待）：<strong>② 获取年份信息</strong> 走 Numista 接口；
+    <strong>③ 获取年份估值</strong> / <strong>④ 下载图片</strong> 走类型页，
+    需本机开着带调试端口的 Chrome（与 CLI <code>coins-values</code> / <code>coins-images</code> 同一链路）。<br>
+    <strong>重复操作是「覆盖更新」</strong>：②③④ 都按 Numista 编号 upsert，
+    同一编号只保留最新一份，<strong>不会重复、不会累加</strong>（可放心重跑补最新价）；
+    但 Numista 已不再返回的旧行会留在本地、<strong>不会自动删除</strong>。
+  </p>
+</form>
+
+{% if error %}<p class="form-error">{{ error }}</p>{% endif %}
+
+<h2 class="coin-section-title">结果 <span class="coin-section-count">{{ series_list|length }} 个系列</span></h2>
+{% if series_list %}
+<div class="table-wrap">
+  <table class="sources-table coin-manage-table">
+    <thead>
+      <tr>
+        <th>系列</th>
+        <th class="nowrap">国家 / 面值</th>
+        <th class="nowrap">年份</th>
+        <th class="nowrap">已采集状态</th>
+        <th class="nowrap">操作</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for item in series_list %}
+      {% set stats = issue_stats.get(item.numista_id) %}
+      <tr>
+        <td>
+          {% set imgs = series_images.get(item.numista_id, {}) %}
+          <div class="coin-manage-imgs">
+            {% for side, label in [('obverse', '正面'), ('reverse', '背面')] %}
+              {% if imgs.get(side) %}
+              <img class="coin-manage-img" src="/coins/series/{{ item.numista_id }}/image/{{ side }}"
+                   alt="{{ label }}" loading="lazy">
+              {% else %}
+              <span class="coin-manage-img coin-manage-img-empty"
+                    title="{{ label }}图未缓存到本地（点「④ 下载图片」）">{{ label }}<br>未缓存</span>
+              {% endif %}
+            {% endfor %}
+          </div>
+          <a href="/coins/series/{{ item.numista_id }}">{{ item.title or item.numista_id }}</a>
+          {% if item.catalog_no %}<span class="source-url">{{ item.catalog_no }}</span>{% endif %}
+        </td>
+        <td class="nowrap">{{ item.issuer or '—' }} · {{ item.denomination or '—' }}</td>
+        <td class="nowrap">{{ item.min_year or '?' }}–{{ item.max_year or '?' }}</td>
+        <td class="coin-manage-state">
+          {% if stats and stats.issue_count %}
+          <span class="coin-state coin-state-on" title="年份信息已采集">年份 {{ stats.year_count }} 个 · {{ stats.issue_count }} 版</span>
+          {% else %}
+          <span class="coin-state coin-state-off" title="年份信息未采集">年份 未采</span>
+          {% endif %}
+          {% set vn = value_counts.get(item.numista_id, 0) %}
+          {% if vn %}
+          <span class="coin-state coin-state-on" title="各年份估值已采集">估值 {{ vn }} 条</span>
+          {% else %}
+          <span class="coin-state coin-state-off" title="各年份估值未采集">估值 未采</span>
+          {% endif %}
+          {% set imgs = series_images.get(item.numista_id, {}) %}
+          {% set img_n = (1 if imgs.get('obverse') else 0) + (1 if imgs.get('reverse') else 0) %}
+          {% if img_n %}
+          <span class="coin-state coin-state-on" title="正 / 反图已缓存到本地">图片 {{ img_n }}/2</span>
+          {% else %}
+          <span class="coin-state coin-state-off" title="正 / 反图未缓存">图片 未采</span>
+          {% endif %}
+        </td>
+        <td class="row-actions">
+          <form method="post" action="/coins/manage/fetch-issues">
+            <input type="hidden" name="series_id" value="{{ item.numista_id }}">
+            <input type="hidden" name="country" value="{{ country }}">
+            <input type="hidden" name="year" value="{{ year }}">
+            <input type="hidden" name="denomination" value="{{ denomination }}">
+            <input type="hidden" name="composition" value="{{ composition }}">
+            <button class="btn" type="submit">② 获取年份信息</button>
+          </form>
+          <form method="post" action="/coins/manage/fetch-values">
+            <input type="hidden" name="series_id" value="{{ item.numista_id }}">
+            <input type="hidden" name="country" value="{{ country }}">
+            <input type="hidden" name="year" value="{{ year }}">
+            <input type="hidden" name="denomination" value="{{ denomination }}">
+            <input type="hidden" name="composition" value="{{ composition }}">
+            <button class="btn" type="submit">③ 获取年份估值</button>
+          </form>
+          <form method="post" action="/coins/manage/download-images">
+            <input type="hidden" name="series_id" value="{{ item.numista_id }}">
+            <input type="hidden" name="country" value="{{ country }}">
+            <input type="hidden" name="year" value="{{ year }}">
+            <input type="hidden" name="denomination" value="{{ denomination }}">
+            <input type="hidden" name="composition" value="{{ composition }}">
+            <button class="btn" type="submit">④ 下载图片</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<div class="empty">
+  还没有命中的系列。用上面的按钮 1 采集，或跑
+  <code>python -m app.cli coins-series --country 英国 --year 1808 --denomination 1便士</code>。
+</div>
+{% endif %}
+{% endblock %}

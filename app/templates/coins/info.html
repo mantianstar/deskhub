@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% block title %}{{ page_title }} · deskhub{% endblock %}
+
+{% block content %}
+<section class="digest-head">
+  <h1>铜币信息</h1>
+  <p class="digest-meta">
+    本地已采集 {{ total_series }} 个系列 · 本次命中 {{ series_list|length }} 个
+    · <a href="/coins">拍卖</a> · <a href="/coins/manage">采集管理</a>
+  </p>
+</section>
+
+<p class="notice">
+  按「国家 / 年份 / 面值 / 材质」查<strong>本地已采集</strong>的系列，<strong>不调 Numista 接口</strong>。
+  国家、面值、材质都可直接输入（也能从下拉里挑已收录的值）。要采集新系列请去
+  <a href="/coins/manage">采集管理</a>。
+</p>
+
+<form class="search-form" method="get" action="/coins/info">
+  <div class="search-row search-row-labeled">
+    <label class="field">国家
+      <input class="search-input" type="text" name="country" value="{{ country }}"
+             list="coin-country-options" placeholder="可输入，如 英国" autocomplete="off">
+      <datalist id="coin-country-options">
+        {% for name in countries %}<option value="{{ name }}"></option>{% endfor %}
+      </datalist>
+    </label>
+    <label class="field">年份
+      <input class="search-input" type="text" name="year" value="{{ year }}" placeholder="如 1808（可空）">
+    </label>
+    <label class="field">面值
+      <input class="search-input" type="text" name="denomination" value="{{ denomination }}"
+             list="coin-denomination-options" placeholder="可输入，如 1便士" autocomplete="off">
+      <datalist id="coin-denomination-options">
+        {% for name in denominations %}<option value="{{ name }}"></option>{% endfor %}
+      </datalist>
+    </label>
+    <label class="field">材质
+      <input class="search-input" type="text" name="composition" value="{{ composition }}"
+             list="coin-composition-options" placeholder="可输入，如 青铜" autocomplete="off">
+      <datalist id="coin-composition-options">
+        {% for name in compositions %}<option value="{{ name }}"></option>{% endfor %}
+      </datalist>
+    </label>
+    <button class="btn btn-primary" type="submit">查询</button>
+  </div>
+  {% if year_error %}<p class="form-error">{{ year_error }}</p>{% endif %}
+</form>
+
+{% if series_list %}
+  {% for item in series_list %}
+  <a class="coin-series-card" href="/coins/series/{{ item.numista_id }}">
+    {% set imgs = series_images.get(item.numista_id, {}) %}
+    <div class="coin-series-imgs">
+      {% for side, label, url in [('obverse', '正面', item.obverse_picture), ('reverse', '背面', item.reverse_picture)] %}
+        {% if imgs.get(side) %}
+        <img class="coin-series-img" src="/coins/series/{{ item.numista_id }}/image/{{ side }}" alt="{{ label }}" loading="lazy">
+        {% else %}
+        <span class="coin-series-img coin-series-img-empty" title="{{ label }}{{ '图未缓存到本地' if url else '图缺失' }}">{{ label }}<br>{{ '未缓存' if url else '无图' }}</span>
+        {% endif %}
+      {% endfor %}
+    </div>
+    <div class="coin-series-meta">
+      <h2 class="coin-series-title">
+        {{ item.issuer or '—' }} · {{ item.denomination or '—' }}
+        · {{ item.min_year or '?' }}–{{ item.max_year or '?' }}
+      </h2>
+      <p class="coin-series-line">执政者：{{ item.ruler or '—' }} · 目录号：{{ item.catalog_no or '—' }}</p>
+      <p class="coin-series-line">
+        {{ item.composition or '—' }} · {{ item.shape or '—' }}
+        {%- if item.size_mm %} · 直径 {{ item.size_mm }}mm{% endif %}
+        {%- if item.weight_g %} · {{ item.weight_g }}g{% endif %}
+      </p>
+      <p class="coin-series-line">
+        {% set stats = issue_stats.get(item.numista_id) %}
+        {% if stats and stats.issue_count %}
+        <span class="coin-series-tag">已采 {{ stats.year_count }} 个年份 · {{ stats.issue_count }} 个版别</span>
+        {% else %}
+        <span class="coin-series-tag coin-series-tag-off">年份未采集</span>
+        {% endif %}
+      </p>
+    </div>
+  </a>
+  {% endfor %}
+{% else %}
+<div class="empty">
+  本地没有符合条件的系列。<br>
+  用 <a href="/coins/manage">采集管理</a> 调 Numista 采集，或跑
+  <code>python -m app.cli coins-series --country 英国 --year 1808 --denomination 1便士</code>。
+</div>
+{% endif %}
+{% endblock %}

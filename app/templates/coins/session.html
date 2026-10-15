@@ -8,12 +8,6 @@
 </div>
 {% else %}
 
-{% if summary.blocked %}
-<p class="notice notice-danger">
-  麦稀奇会话可能已失效（最近一次采集被反爬拦下）。本页数据可能不是最新的。
-</p>
-{% endif %}
-
 <p class="crumb"><a href="/coins">← 铜币专场</a></p>
 
 <section class="coin-shop-head">
@@ -36,7 +30,7 @@
   <span class="coin-status coin-status-{{ detail.status or 'unknown' }}">
     {{ coin_session_status_labels.get(detail.status, detail.status or '未知') }}
   </span>
-  <span class="coin-time">{{ detail.auction_at_raw or (detail.auction_at | local_time) }}</span>
+  <span class="coin-time">截拍 {{ detail.auction_at_raw or (detail.auction_at | local_time) }}</span>
 </div>
 
 <h1 class="coin-session-title-lg">{{ detail.title }}</h1>

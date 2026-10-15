@@ -10,7 +10,10 @@ python-multipart   # 铜币画像页的表单（画像标签启停 / 改权重 /
 
 # 铜币拍卖（spec §14 / plan §18.1）
 openpyxl        # 读 data/orders.xlsx
-playwright      # 麦稀奇是 JS SPA + 滑块验证，需要浏览器渲染
+
+# 铜币参考库的网页表格（各品相估值 + Frequency，plan §18.13.2）：
+# 只用来 connect_over_cdp 挂到**你自己开的 Chrome** 上，不需要 `playwright install`
+playwright
 
 # dev
 pytest

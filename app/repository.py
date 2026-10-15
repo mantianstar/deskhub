@@ -12,15 +12,19 @@ from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from app import db, models
+from app import db, models, textmatch
 from app.config import SourceConfig
 from app.models import (
     CoinFetchRun,
+    CoinIssue,
+    CoinIssueValues,
     CoinLot,
     CoinLotCard,
     CoinOrder,
     CoinPriceRef,
     CoinProfileTag,
+    CoinSeries,
+    CoinSeriesIssueStats,
     CoinSession,
     CoinSessionCard,
     CoinSessionDetail,
@@ -160,6 +164,29 @@ def toggle_source_enabled(source_id: int) -> bool | None:
         new_value = not bool(row["enabled"])
         conn.execute("UPDATE sources SET enabled = ? WHERE id = ?", (int(new_value), source_id))
         return new_value
+
+
+# ---------------------------------------------------------------- 功能开关（管理页 /control）
+
+
+def feature_switch_states() -> dict[str, bool]:
+    """已显式改过的功能开关；没有记录的功能由 `app/switches.py` 用默认值兜底。"""
+    with db.connect() as conn:
+        rows = conn.execute("SELECT key, enabled FROM feature_switches").fetchall()
+    return {row["key"]: bool(row["enabled"]) for row in rows}
+
+
+def set_feature_switch(key: str, enabled: bool) -> None:
+    """写入一个功能开关（不存在则插入）。"""
+    with db.connect() as conn, conn:
+        conn.execute(
+            """
+            INSERT INTO feature_switches (key, enabled, updated_at) VALUES (?, ?, ?)
+            ON CONFLICT(key) DO UPDATE SET enabled = excluded.enabled,
+                                           updated_at = excluded.updated_at
+            """,
+            (key, int(enabled), utcnow()),
+        )
 
 
 def count_sources() -> int:
@@ -427,6 +454,12 @@ def lookback_bounds(hours: int, *, now: datetime | None = None) -> tuple[str, st
     """当日无候选时的回退窗口：最近 `hours` 小时（页面需标注「非今日数据」）。"""
     moment = now or datetime.now(timezone.utc)
     return to_utc_str(moment - timedelta(hours=hours)), to_utc_str(moment)
+
+
+def local_month_start_utc(tz: ZoneInfo, *, now: datetime | None = None) -> str:
+    """业务时区「本月 1 日 00:00」折算成 UTC 存储格式（Numista 月度额度按此切月）。"""
+    moment = (now or datetime.now(timezone.utc)).astimezone(tz)
+    return to_utc_str(datetime(moment.year, moment.month, 1, tzinfo=tz))
 
 
 _DIGEST_COLUMNS = """i.id AS item_id, i.module, i.title, i.url, i.published_at, i.fetched_at,
@@ -1016,29 +1049,19 @@ def latest_coin_fetch_runs(limit: int = 20) -> list[CoinFetchRun]:
 
 
 def coin_fetch_summary() -> dict[str, object]:
-    """给页面顶部用的汇总：最近一次成功时间、最近一次是否被反爬拦下。
+    """给页面顶部用的汇总：最近一次成功时间 + 最近一条日志的状态。
 
-    `blocked` 取「最近一条日志」的状态：反爬是全局的，最新一轮被拦就该提示
-    （spec §14.3 要求会话失效显著提示，不静默）。
+    2026-10-12 起采集/查价都走免登录的小程序网关，不再有「反爬拦下 / 需要登录」两种状态。
     """
     with db.connect() as conn:
         last_ok = conn.execute(
             "SELECT MAX(finished_at) AS ts FROM coin_fetch_runs WHERE status = 'ok'"
         ).fetchone()["ts"]
         last = conn.execute("SELECT * FROM coin_fetch_runs ORDER BY id DESC LIMIT 1").fetchone()
-        # 只看**最近一次查价**：登录成功后再跑，历史那条「要登录」的报错就不该继续提示
-        price_row = conn.execute(
-            "SELECT error FROM coin_fetch_runs WHERE kind = 'price_search' ORDER BY id DESC LIMIT 1"
-        ).fetchone()
-    last_error = last["error"] if last else None
     return {
         "last_ok_at": last_ok,
         "last_status": last["status"] if last else None,
-        "last_error": last_error,
-        "blocked": bool(last) and last["status"] == "blocked",
-        # 站内成交价要登录；用文本判定是为了不动 status 取值（页面据此提示去登录）
-        "needs_login": bool(price_row) and "登录" in (price_row["error"] or ""),
-        "login_error": price_row["error"] if price_row else None,
+        "last_error": last["error"] if last else None,
     }
 
 
@@ -1205,4 +1228,418 @@ def count_recommended_lots() -> int:
             "SELECT COUNT(*) AS n FROM coin_lots WHERE is_recommended = 1"
         ).fetchone()
         return int(row["n"])
+
+
+# ---------------------------------------------------------------- Numista 参考库（系列 / 单版）
+#
+# 英文表与中文表（*_cn）列结构**完全一致**，只有可翻译字段的内容不同 —— 故共用同一段 upsert。
+
+_ALLOWED_TABLES = frozenset(
+    ("coin_series", "coin_series_cn", "coin_issues", "coin_issues_cn", "coin_issue_values")
+)
+
+_SERIES_COLUMNS = (
+    "numista_id", "title", "url", "object_type", "issuer", "min_year", "max_year", "ruler",
+    "denomination", "size_mm", "weight_g", "thickness_mm", "shape", "composition", "edge",
+    "obverse_desc", "obverse_lettering", "obverse_picture",
+    "reverse_desc", "reverse_lettering", "reverse_picture", "catalog_no", "comments", "mints",
+    "fetched_at",
+)
+_ISSUE_COLUMNS = (
+    "numista_id", "series_id", "year", "mint", "mint_mark", "variety", "comment", "mintage",
+    "size_mm", "weight_g", "thickness_mm", "edge", "is_proof", "is_essai", "picture",
+    "catalog_no", "fetched_at",
+)
+# 估值表不与 coin_issues 共主键：它按**单版编号**对齐（页面可能与接口不同批采到）
+_VALUES_COLUMNS = (
+    "numista_id", "series_numista_id", "currency",
+    "value_g", "value_vg", "value_f", "value_vf", "value_xf", "value_au", "value_unc",
+    "frequency", "fetched_at",
+)
+
+
+def _upsert_numista_row(table: str, columns: tuple[str, ...], values: tuple) -> int:
+    """按 `numista_id` upsert（`values[0]` 即 numista_id），返回内部主键 id。"""
+    if table not in _ALLOWED_TABLES:  # pragma: no cover - 只有误用才走到
+        raise ValueError(f"未知表 {table!r}")
+    placeholders = ", ".join("?" * len(columns))
+    updates = ", ".join(f"{col} = excluded.{col}" for col in columns if col != "numista_id")
+    with db.connect() as conn, conn:
+        conn.execute(
+            f"INSERT INTO {table} ({', '.join(columns)}) VALUES ({placeholders}) "
+            f"ON CONFLICT(numista_id) DO UPDATE SET {updates}",
+            values,
+        )
+        row = conn.execute(f"SELECT id FROM {table} WHERE numista_id = ?", (values[0],)).fetchone()
+        return int(row["id"])
+
+
+def _series_values(series: CoinSeries) -> tuple:
+    return (
+        series.numista_id,
+        series.title,
+        series.url,
+        series.object_type,
+        series.issuer,
+        series.min_year,
+        series.max_year,
+        series.ruler,
+        series.denomination,
+        series.size_mm,
+        series.weight_g,
+        series.thickness_mm,
+        series.shape,
+        series.composition,
+        series.edge,
+        series.obverse_desc,
+        series.obverse_lettering,
+        series.obverse_picture,
+        series.reverse_desc,
+        series.reverse_lettering,
+        series.reverse_picture,
+        series.catalog_no,
+        series.comments,
+        _dump(series.mints),
+        series.fetched_at,
+    )
+
+
+def _issue_values(issue: CoinIssue) -> tuple:
+    return (
+        issue.numista_id,
+        issue.series_id,
+        issue.year,
+        issue.mint,
+        issue.mint_mark,
+        issue.variety,
+        issue.comment,
+        issue.mintage,
+        issue.size_mm,
+        issue.weight_g,
+        issue.thickness_mm,
+        issue.edge,
+        None if issue.is_proof is None else int(issue.is_proof),
+        None if issue.is_essai is None else int(issue.is_essai),
+        issue.picture,
+        issue.catalog_no,
+        issue.fetched_at,
+    )
+
+
+def upsert_coin_series(series: CoinSeries) -> int:
+    """按 `numista_id` upsert（英文表 `coin_series`），返回内部 id。"""
+    return _upsert_numista_row("coin_series", _SERIES_COLUMNS, _series_values(series))
+
+
+def upsert_coin_series_cn(series: CoinSeries) -> int:
+    """按 `numista_id` upsert（中文表 `coin_series_cn`）。字段一致，内容已翻译。"""
+    return _upsert_numista_row("coin_series_cn", _SERIES_COLUMNS, _series_values(series))
+
+
+def upsert_coin_issue(issue: CoinIssue) -> int:
+    """按 `numista_id` upsert（英文表 `coin_issues`），返回内部 id。"""
+    return _upsert_numista_row("coin_issues", _ISSUE_COLUMNS, _issue_values(issue))
+
+
+def upsert_coin_issue_cn(issue: CoinIssue) -> int:
+    """按 `numista_id` upsert（中文表 `coin_issues_cn`）。字段一致，内容已翻译。"""
+    return _upsert_numista_row("coin_issues_cn", _ISSUE_COLUMNS, _issue_values(issue))
+
+
+def _row_to_coin_series(row: sqlite3.Row) -> CoinSeries:
+    return CoinSeries(
+        id=row["id"],
+        numista_id=row["numista_id"],
+        title=row["title"],
+        url=row["url"],
+        object_type=row["object_type"],
+        issuer=row["issuer"],
+        min_year=row["min_year"],
+        max_year=row["max_year"],
+        ruler=row["ruler"],
+        denomination=row["denomination"],
+        size_mm=row["size_mm"],
+        weight_g=row["weight_g"],
+        thickness_mm=row["thickness_mm"],
+        shape=row["shape"],
+        composition=row["composition"],
+        edge=row["edge"],
+        obverse_desc=row["obverse_desc"],
+        obverse_lettering=row["obverse_lettering"],
+        obverse_picture=row["obverse_picture"],
+        reverse_desc=row["reverse_desc"],
+        reverse_lettering=row["reverse_lettering"],
+        reverse_picture=row["reverse_picture"],
+        catalog_no=row["catalog_no"],
+        comments=row["comments"],
+        mints=_json_list(row["mints"]),
+        fetched_at=row["fetched_at"],
+    )
+
+
+def _row_to_coin_issue(row: sqlite3.Row) -> CoinIssue:
+    is_proof = row["is_proof"]
+    is_essai = row["is_essai"]
+    return CoinIssue(
+        id=row["id"],
+        numista_id=row["numista_id"],
+        series_id=row["series_id"],
+        year=row["year"],
+        mint=row["mint"],
+        mint_mark=row["mint_mark"],
+        variety=row["variety"],
+        comment=row["comment"],
+        mintage=row["mintage"],
+        size_mm=row["size_mm"],
+        weight_g=row["weight_g"],
+        thickness_mm=row["thickness_mm"],
+        edge=row["edge"],
+        is_proof=None if is_proof is None else bool(is_proof),
+        is_essai=None if is_essai is None else bool(is_essai),
+        picture=row["picture"],
+        catalog_no=row["catalog_no"],
+        fetched_at=row["fetched_at"],
+    )
+
+
+def get_coin_series(numista_id: int, *, cn: bool = False) -> CoinSeries | None:
+    table = "coin_series_cn" if cn else "coin_series"
+    with db.connect() as conn:
+        row = conn.execute(f"SELECT * FROM {table} WHERE numista_id = ?", (numista_id,)).fetchone()
+    return _row_to_coin_series(row) if row else None
+
+
+def list_coin_series(*, cn: bool = False) -> list[CoinSeries]:
+    table = "coin_series_cn" if cn else "coin_series"
+    with db.connect() as conn:
+        rows = conn.execute(f"SELECT * FROM {table} ORDER BY numista_id").fetchall()
+    return [_row_to_coin_series(row) for row in rows]
+
+
+def list_coin_issues(series_id: int, *, cn: bool = False) -> list[CoinIssue]:
+    """某系列的全部单版（按年份、编号排序）。`series_id` 是**对应表**的内部主键（`coin_series(.cn).id`）。"""
+    table = "coin_issues_cn" if cn else "coin_issues"
+    with db.connect() as conn:
+        rows = conn.execute(
+            f"SELECT * FROM {table} WHERE series_id = ? ORDER BY year, id", (series_id,)
+        ).fetchall()
+    return [_row_to_coin_issue(row) for row in rows]
+
+
+def count_coin_series(*, cn: bool = False) -> int:
+    table = "coin_series_cn" if cn else "coin_series"
+    with db.connect() as conn:
+        return int(conn.execute(f"SELECT COUNT(*) AS n FROM {table}").fetchone()["n"])
+
+
+def count_coin_issues(*, cn: bool = False) -> int:
+    table = "coin_issues_cn" if cn else "coin_issues"
+    with db.connect() as conn:
+        return int(conn.execute(f"SELECT COUNT(*) AS n FROM {table}").fetchone()["n"])
+
+
+def delete_coin_series(numista_id: int) -> bool:
+    """按 Numista 系列号删除系列及其单版 / 估值（中英两张表）。
+
+    `coin_issues[_cn]` 靠外键 `ON DELETE CASCADE` 连带删除（连接已开 `PRAGMA foreign_keys=ON`）；
+    `coin_issue_values` 不设外键（按 numista_id 对齐），显式删。返回是否命中过该系列。
+    """
+    with db.connect() as conn:
+        with conn:
+            conn.execute(
+                "DELETE FROM coin_issue_values WHERE series_numista_id = ?", (numista_id,)
+            )
+            deleted = conn.execute(
+                "DELETE FROM coin_series WHERE numista_id = ?", (numista_id,)
+            ).rowcount
+            conn.execute("DELETE FROM coin_series_cn WHERE numista_id = ?", (numista_id,))
+    return deleted > 0
+
+
+def list_coin_series_countries(*, cn: bool = False) -> list[str]:
+    """已采集系列的国家（`issuer`）去重清单，供查询页的国家下拉。"""
+    table = "coin_series_cn" if cn else "coin_series"
+    with db.connect() as conn:
+        rows = conn.execute(
+            f"SELECT DISTINCT issuer FROM {table} "
+            "WHERE issuer IS NOT NULL AND issuer <> '' ORDER BY issuer"
+        ).fetchall()
+    return [row["issuer"] for row in rows]
+
+
+def list_coin_series_denominations(*, cn: bool = False) -> list[str]:
+    """已采集系列的面值去重清单，供查询页的面值下拉（可输入）。"""
+    table = "coin_series_cn" if cn else "coin_series"
+    with db.connect() as conn:
+        rows = conn.execute(
+            f"SELECT DISTINCT denomination FROM {table} "
+            "WHERE denomination IS NOT NULL AND denomination <> '' ORDER BY denomination"
+        ).fetchall()
+    return [row["denomination"] for row in rows]
+
+
+def list_coin_series_compositions(*, cn: bool = False) -> list[str]:
+    """已采集系列的材质去重清单，供查询页的材质下拉（可输入）。"""
+    table = "coin_series_cn" if cn else "coin_series"
+    with db.connect() as conn:
+        rows = conn.execute(
+            f"SELECT DISTINCT composition FROM {table} "
+            "WHERE composition IS NOT NULL AND composition <> '' ORDER BY composition"
+        ).fetchall()
+    return [row["composition"] for row in rows]
+
+
+def search_coin_series(
+    *,
+    issuer: str | None = None,
+    year: int | None = None,
+    denomination: str | None = None,
+    composition: str | None = None,
+    cn: bool = False,
+) -> list[CoinSeries]:
+    """按国家 / 年份 / 面值 / 材质查已采集的系列（年份落在 `[min_year, max_year]` 即命中）。
+
+    四个条件均可选：全空时返回全部系列。国家 / 年份走参数化 SQL（`issuer` 精确匹配）；
+    面值 / 材质在取回后做归一化宽松匹配（要处理库值里的空格与数字边界，见 `_text_hit`）。
+    """
+    table = "coin_series_cn" if cn else "coin_series"
+    clauses: list[str] = []
+    params: list[object] = []
+    if issuer:
+        clauses.append("issuer = ?")
+        params.append(issuer)
+    if year is not None:
+        clauses.append("(min_year IS NULL OR min_year <= ?) AND (max_year IS NULL OR max_year >= ?)")
+        params.extend([year, year])
+    where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+    with db.connect() as conn:
+        rows = conn.execute(
+            f"SELECT * FROM {table}{where} ORDER BY issuer, min_year, numista_id", params
+        ).fetchall()
+    series_list = [_row_to_coin_series(row) for row in rows]
+    if denomination:
+        series_list = [s for s in series_list if textmatch.contains(s.denomination, denomination)]
+    if composition:
+        series_list = [s for s in series_list if textmatch.contains(s.composition, composition)]
+    return series_list
+
+
+def coin_series_issue_stats(*, cn: bool = False) -> dict[int, CoinSeriesIssueStats]:
+    """`{系列 numista_id: (不同年份数, 版别数)}`，供列表显示「N 个年份 · M 个版别」。
+
+    年份数用 `COUNT(DISTINCT i.year)`（一个年份可能对应多个版别），版别数即单版条数；
+    无单版的系列两块都是 0。一次查询，不逐系列再查。
+    """
+    series_table = "coin_series_cn" if cn else "coin_series"
+    issue_table = "coin_issues_cn" if cn else "coin_issues"
+    with db.connect() as conn:
+        rows = conn.execute(
+            f"SELECT s.numista_id AS numista_id, "
+            "COUNT(DISTINCT i.year) AS years, COUNT(i.id) AS n "
+            f"FROM {series_table} s LEFT JOIN {issue_table} i ON i.series_id = s.id "
+            "GROUP BY s.numista_id"
+        ).fetchall()
+    return {
+        int(row["numista_id"]): CoinSeriesIssueStats(
+            year_count=int(row["years"]), issue_count=int(row["n"])
+        )
+        for row in rows
+    }
+
+
+def _values_values(values: CoinIssueValues) -> tuple:
+    return (
+        values.numista_id,
+        values.series_numista_id,
+        values.currency,
+        values.value_g,
+        values.value_vg,
+        values.value_f,
+        values.value_vf,
+        values.value_xf,
+        values.value_au,
+        values.value_unc,
+        values.frequency,
+        values.fetched_at,
+    )
+
+
+def upsert_coin_issue_values(values: CoinIssueValues) -> int:
+    """按 `numista_id`（单版编号）upsert 估值 + Frequency，返回内部 id。"""
+    return _upsert_numista_row("coin_issue_values", _VALUES_COLUMNS, _values_values(values))
+
+
+def _row_to_coin_issue_values(row: sqlite3.Row) -> CoinIssueValues:
+    return CoinIssueValues(
+        id=row["id"],
+        numista_id=row["numista_id"],
+        series_numista_id=row["series_numista_id"],
+        currency=row["currency"],
+        value_g=row["value_g"],
+        value_vg=row["value_vg"],
+        value_f=row["value_f"],
+        value_vf=row["value_vf"],
+        value_xf=row["value_xf"],
+        value_au=row["value_au"],
+        value_unc=row["value_unc"],
+        frequency=row["frequency"],
+        fetched_at=row["fetched_at"],
+    )
+
+
+def get_coin_issue_values(numista_id: int) -> CoinIssueValues | None:
+    with db.connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM coin_issue_values WHERE numista_id = ?", (numista_id,)
+        ).fetchone()
+    return _row_to_coin_issue_values(row) if row else None
+
+
+def list_coin_issue_values(series_numista_id: int) -> list[CoinIssueValues]:
+    """某系列号下的全部单版估值（按单版编号排序）。"""
+    with db.connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM coin_issue_values WHERE series_numista_id = ? ORDER BY numista_id",
+            (series_numista_id,),
+        ).fetchall()
+    return [_row_to_coin_issue_values(row) for row in rows]
+
+
+def count_coin_issue_values() -> int:
+    with db.connect() as conn:
+        return int(conn.execute("SELECT COUNT(*) AS n FROM coin_issue_values").fetchone()["n"])
+
+
+def coin_series_value_counts() -> dict[int, int]:
+    """`{系列 numista_id: 已采集估值条数}`，供管理页显示该系列「估值 已采 / 未采」。
+
+    按 `series_numista_id` 聚合，一次查询（不逐系列再查）。
+    """
+    with db.connect() as conn:
+        rows = conn.execute(
+            "SELECT series_numista_id AS sid, COUNT(*) AS n "
+            "FROM coin_issue_values GROUP BY series_numista_id"
+        ).fetchall()
+    return {int(row["sid"]): int(row["n"]) for row in rows}
+
+
+# ---------------------------------------------------------------- Numista 调用计数（风控）
+
+
+def record_api_call(provider: str) -> None:
+    """记一次外部接口调用（用于月度额度自管）。"""
+    with db.connect() as conn, conn:
+        conn.execute(
+            "INSERT INTO coin_api_usage (provider, called_at) VALUES (?, ?)",
+            (provider, utcnow()),
+        )
+
+
+def count_api_calls_since(provider: str, since_utc: str) -> int:
+    with db.connect() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) AS n FROM coin_api_usage WHERE provider = ? AND called_at >= ?",
+            (provider, since_utc),
+        ).fetchone()
+    return int(row["n"])
 

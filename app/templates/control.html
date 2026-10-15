@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}运行控制 · deskhub{% endblock %}
+
+{% block content %}
+<section class="control">
+  <div class="digest-head">
+    <h1>运行控制</h1>
+    <p class="digest-meta">共 {{ rows|length }} 个功能{% if running_count %}，其中 {{ running_count }} 个正在运行{% endif %}</p>
+  </div>
+
+  <p class="notice">
+    重启服务不会再自动抓取 / 打分 / 采集：这里的开关只管<b>每天 08:00 的定时任务</b>，改完存库、重启后仍然保留。
+    「立即运行」是手动跑一次、<b>忽略开关</b>，跑在后台，稍等再刷新本页看结果。
+    注意：关掉「打分」期间新条目会一直堆在待打分池里，重新打开后会在下一轮一起打分，那一次会集中花掉一笔 token。
+  </p>
+
+  <div class="table-wrap">
+    <table class="sources-table">
+      <thead>
+        <tr>
+          <th>分组</th>
+          <th>功能</th>
+          <th>定时执行</th>
+          <th>运行状态</th>
+          <th>最近一次</th>
+          <th>操作</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+        <tr class="{% if not row.enabled %}row-off{% endif %}">
+          <td class="nowrap">{{ row.group }}</td>
+          <td>
+            <span class="source-name">{{ row.label }}</span>
+            <span class="source-url">{{ row.detail }}</span>
+          </td>
+          <td>
+            {% if row.enabled %}<span class="state state-on">启用</span>{% else %}<span class="state state-off">停用</span>{% endif %}
+          </td>
+          <td>
+            {% if row.running %}<span class="state state-on">运行中</span>{% else %}<span class="state state-off">空闲</span>{% endif %}
+          </td>
+          <td>
+            {% if row.last %}
+            <span class="nowrap">{{ row.last.finished_at|local_time }}</span>
+            {% if row.last.status == "error" %}失败{% else %}完成{% endif %}：{{ row.last.message }}
+            {% else %}
+            还没手动跑过
+            {% endif %}
+          </td>
+          <td class="row-actions">
+            <form method="post" action="/control/{{ row.key }}/toggle">
+              <button class="btn btn-ghost" type="submit">{% if row.enabled %}停用{% else %}启用{% endif %}</button>
+            </form>
+            <form method="post" action="/control/{{ row.key }}/run">
+              <button class="btn btn-ghost" type="submit">立即运行</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}

@@ -136,6 +136,25 @@ body {
 
 .search-row { display: flex; gap: 8px; }
 
+/* 带标签字段的行：控件与按钮底对齐、同高。否则按钮被 flex 的 stretch 拉成高块；
+   输入框带 .search-input（flex:1）在纵向 flex 的 .field 里会忽略 height → 这里统一复位。
+   条件变多（国家 / 年份 / 面值 / 材质 + 按钮）后允许换行，窄屏也不挤成一坨。 */
+.search-row-labeled { align-items: flex-end; flex-wrap: wrap; }
+
+.search-row-labeled .field input,
+.search-row-labeled .field select {
+  flex: 0 0 auto;
+  height: 32px;
+  min-width: 140px;
+}
+
+.search-row-labeled .btn {
+  display: inline-flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 18px;
+}
+
 .search-input {
   flex: 1;
   min-width: 0;
@@ -630,4 +649,175 @@ body {
   color: var(--text-muted);
   font-size: 12.5px;
 }
+
+/* ---------------------------------------------------------------- 铜币参考库（信息 / 详情 / 采集管理） */
+
+.coin-fact b { color: var(--text); font-weight: 600; }
+
+.coin-series-card {
+  display: flex;
+  gap: 14px;
+  padding: 12px 14px;
+  margin-bottom: 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text);
+  text-decoration: none;
+}
+
+.coin-series-card:hover { border-color: var(--accent); }
+
+.coin-series-imgs { display: flex; flex: 0 0 auto; gap: 8px; }
+
+.coin-series-img {
+  width: 72px;
+  height: 72px;
+  object-fit: contain;
+  background: var(--bg);
+  border-radius: 8px;
+}
+
+/* 未缓存 / 缺图的占位块：与图片同尺寸，保持卡片对齐 */
+.coin-series-img-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  border: 1px dashed var(--border);
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.3;
+  text-align: center;
+}
+
+.coin-series-meta { min-width: 0; }
+
+.coin-series-title {
+  margin: 0 0 4px;
+  font-size: 15px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.coin-series-line { margin: 0 0 3px; color: var(--text-muted); font-size: 12.5px; }
+
+.coin-series-tag {
+  display: inline-block;
+  padding: 1px 8px;
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  color: var(--accent);
+  font-size: 12px;
+}
+
+.coin-series-tag-off { border-color: var(--border); color: var(--text-muted); }
+
+.coin-series-imgs-lg { display: flex; gap: 12px; margin-bottom: 14px; }
+
+.coin-series-fig { margin: 0; text-align: center; }
+
+.coin-series-fig img {
+  width: 140px;
+  height: 140px;
+  object-fit: contain;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+/* 可点击放大：光标提示 + 悬停高亮 */
+.coin-series-fig img.coin-zoom { cursor: zoom-in; }
+.coin-series-fig img.coin-zoom:hover { border-color: var(--accent); }
+
+/* 图片灯箱：点图放大，点遮罩 / 再点图 / Esc 关闭（无框架、无 CDN） */
+.coin-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4vh 4vw;
+  background: rgba(0, 0, 0, .72);
+  cursor: zoom-out;
+}
+
+.coin-lightbox[hidden] { display: none; }
+
+.coin-lightbox img {
+  max-width: 92vw;
+  max-height: 92vh;
+  object-fit: contain;
+  background: #fff;
+  border-radius: 10px;
+}
+
+/* 管理页结果表：操作列有 3 个按钮，给「系列」列留底宽，避免系列名被逐字竖排 */
+.coin-manage-table td:first-child { min-width: 220px; }
+
+/* 管理页结果首列的正 / 反图缩略图（同 spec §14.15：只渲染本地缓存的图，未缓存给同尺寸占位）。
+   图放在系列名上方、不单开一列——多一列会把表撑过内容区 738px，横向滚动藏住操作按钮 */
+.coin-manage-imgs { display: flex; gap: 6px; margin-bottom: 6px; }
+
+.coin-manage-img {
+  width: 56px;
+  height: 56px;
+  object-fit: contain;
+  background: var(--bg);
+  border-radius: 6px;
+}
+
+.coin-manage-img-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  border: 1px dashed var(--border);
+  color: var(--text-muted);
+  font-size: 10px;
+  line-height: 1.2;
+  text-align: center;
+}
+
+/* 操作列按钮竖排：内容区 780px 下横排会把表撑宽、横向滚动藏住按钮 */
+.coin-manage-table .row-actions form { display: block; margin: 0 0 4px; }
+.coin-manage-table .row-actions form:last-child { margin-bottom: 0; }
+
+/* 管理页「已采集状态」列：三个小标记（年份 / 估值 / 图片），圆点区分已采 / 未采 */
+.coin-manage-state { white-space: normal; }
+.coin-state {
+  display: inline-block;
+  margin: 0 8px 2px 0;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.coin-state-on { color: var(--score-high-fg); }
+.coin-state-off { color: var(--text-muted); }
+.coin-state-on::before { content: "● "; }
+.coin-state-off::before { content: "○ "; }
+
+/* 详情页「各年份信息」有 13 列：默认 10/12px 内边距把 min-content 撑到 ~773px > 内容区 738px
+   （容器横向滚动、最右「稀有度」被裁）→ 本表收窄内边距；备注列限宽换行，避免长英文撑开 */
+.coin-series-table th,
+.coin-series-table td { padding: 6px 8px; }
+.coin-series-table .coin-issue-comment { max-width: 200px; overflow-wrap: anywhere; }
+
+.coin-series-fig figcaption { margin-top: 4px; color: var(--text-muted); font-size: 12px; }
+
+.coin-series-text { margin-top: 12px; color: var(--text-muted); font-size: 13px; }
+
+.coin-series-text p { margin: 0 0 4px; }
+
+.coin-text-label {
+  display: inline-block;
+  min-width: 64px;
+  margin-right: 6px;
+  color: var(--text);
+  font-weight: 600;
+}
+
+.form-error { margin: 10px 0 0; color: var(--danger-fg); font-size: 13px; }
+
+.form-hint { margin: 10px 0 0; color: var(--text-muted); font-size: 12px; }
 

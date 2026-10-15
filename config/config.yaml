@@ -46,27 +46,35 @@ modules:
 coins:
   enabled: true
   orders_xlsx: data/orders.xlsx          # 画像输入（麦稀奇历史成交导出）
-  base_url: https://www.mxiqi.com
-  profile_dir: data/mxiqi-profile        # Playwright 持久化会话；含登录态，绝不入库
-  browser: chromium
-  headless: true                         # 首次过滑块用 CLI --headful
-  browser_channel: ""                    # 空 = 用自带 chromium；填 chrome = 用本机真实 Chrome
-  cdp_url: "http://127.0.0.1:9222"       # 连本机已开的 Chrome（人机验证/登录态都在它里面）
-                                          # 前提：那个 Chrome 得用 --remote-debugging-port=9222 启动并保持常开；
-                                          # 没开时定时任务会记一条明确的错误（不会静默、也不影响知识模块）
-  request_interval_seconds: 3            # 限速：每次请求间隔
-  max_sessions_per_run: 20               # 单轮采集专场上限（防触发风控）
-  session_timeout_seconds: 30
+  # 小程序网关：采集（专场 + 拍品）与查价（站内历史成交）的**唯一**来源
+  # （免登录、免签名、免浏览器，见 app/coins/gapi.py）
+  gapi_base_url: https://gapi.mxiqi.com
+  request_interval_seconds: 3            # 限速：每次请求间隔（对网关客气点）
+  # 单轮采集专场上限。gapi 一次给全部当前专场（实测 实时 18 + 限时 25 ≈ 43），
+  # 上限给足即可，别把排在后面的场截掉。
+  max_sessions_per_run: 80
   match_threshold: 1.5                   # 匹配分阈值（spec §14.11，跑通后按真实数据校准）
   price:
     status: 成交                          # 只用成交样本，不拿挂牌/流拍
     window_days: 180                      # 历史成交回溯窗口
     min_samples: 3                        # 少于 3 条只给区间，不给单一价
     statistic: median                     # median | mean
-    # 成交价要登录才能查 —— 等于拿我自己的账号在查，所以**宁可慢也别被封**：
     query_interval_seconds: 15            # 每次查价之间停 15 秒（实际带 ±40% 抖动 → 9~21 秒）
     max_queries_per_run: 20               # 单轮最多查 20 条；剩下的留到下一轮/第二天
   profile_llm:
     prompt_version: coins-v1
     batch_size: 20                        # 每次送模型抽取的订单条数
     concurrency: 6                        # 抽取批次的并发数（一次性批量任务，可比打分高）
+  # Numista 目录接口（铜币参考库：按国家/年份/面值查系列，按系列号查全部单版）
+  # API Key 只写环境变量名，真实值放 .env（见 .env.example）
+  numista:
+    base_url: https://api.numista.com/v3
+    api_key_env: DESKHUB_NUMISTA_API_KEY
+    request_interval_seconds: 2           # 请求间隔（免费额度有限，客气点）
+    max_series: 10                        # 单次搜索最多取几个系列的详情（Type Detail 有配额）
+    timeout_seconds: 20
+    monthly_limit: 1500                   # 每月请求上限（免费额度 2000，留 25% 余量）
+    max_requests_per_run: 40              # 单轮请求上限（一次 CLI 最多打几次接口）
+    # 取类型页（各品相估值 + Frequency）走网页表格：numista.com 有 Cloudflare 校验，
+    # 普通 HTTP 客户端一律 403，只能挂到你**自己用调试端口开的 Chrome** 上（见 README）
+    cdp_url: http://127.0.0.1:9222

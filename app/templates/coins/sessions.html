@@ -8,26 +8,13 @@
     共 {{ cards|length }} 个命中专场
     {%- if summary.last_ok_at %} · 数据更新至 {{ summary.last_ok_at | local_time }}{% endif %}
     · <a href="/coins/profile">画像</a>
+    · <a href="/coins/info">信息</a>
+    · <a href="/coins/manage">采集管理</a>
   </p>
   <form method="post" action="/coins/refresh">
     <button class="btn" type="submit">刷新采集</button>
   </form>
 </section>
-
-{% if summary.blocked %}
-<p class="notice notice-danger">
-  麦稀奇会话可能已失效（最近一次采集被反爬拦下{% if summary.last_error %}：{{ summary.last_error }}{% endif %}）。
-  在本机跑一次 <code>python -m app.cli coins-fetch --headful</code> 人工过一次验证即可恢复。
-</p>
-{% endif %}
-
-{% if summary.needs_login %}
-<p class="notice notice-danger">
-  麦稀奇的<strong>成交价要登录才能看</strong>{% if summary.login_error %}（{{ summary.login_error }}）{% endif %}。
-  请在你自己的 Chrome 里登录一次麦稀奇（会话会持久化，<strong>别把密码交给程序</strong>），
-  再跑 <code>coins-pipeline --cdp http://127.0.0.1:9222</code> 即可带上推荐价。
-</p>
-{% endif %}
 
 {% if cards %}
   {% for card in cards %}
@@ -36,7 +23,7 @@
       <span class="coin-status coin-status-{{ card.status or 'unknown' }}">
         {{ coin_session_status_labels.get(card.status, card.status or '未知') }}
       </span>
-      <span class="coin-time">{{ card.auction_at_raw or (card.auction_at | local_time) }}</span>
+      <span class="coin-time">截拍 {{ card.auction_at_raw or (card.auction_at | local_time) }}</span>
       {% if card.shop_avatar %}
       <img class="coin-avatar" src="{{ card.shop_avatar }}" alt="{{ card.shop_name or '' }}" loading="lazy">
       {% endif %}

@@ -16,9 +16,12 @@ from dataclasses import replace
 from datetime import date
 
 from app import config, db, fetcher, llm, logging_setup, models, pipeline, repository, scorer
+from app.coins import numista as coins_numista
+from app.coins import numista_web as coins_numista_web
 from app.coins import pipeline as coins_pipeline
 from app.coins import profile as coins_profile
-from app.coins.mxiqi import MxiqiClient, MxiqiError
+from app.coins import translate_llm as coins_translate_llm
+from app.coins.gapi import GapiError
 from app.fetcher import FetchOutcome
 from app.models import CoinFetchStatus
 
@@ -252,14 +255,11 @@ def cmd_coins_tags(_: argparse.Namespace) -> int:
     return 0
 
 
-def _coins_config(cfg: config.Config, *, headful: bool, limit: int | None) -> config.Config:
+def _coins_config(cfg: config.Config, *, limit: int | None) -> config.Config:
     """按 CLI 参数覆盖铜币配置（Config 是 frozen，用 replace 造副本）。"""
-    coins = cfg.coins
-    if headful:
-        coins = replace(coins, headless=False)
-    if limit is not None:
-        coins = replace(coins, max_sessions_per_run=limit)
-    return replace(cfg, coins=coins) if coins is not cfg.coins else cfg
+    if limit is None:
+        return cfg
+    return replace(cfg, coins=replace(cfg.coins, max_sessions_per_run=limit))
 
 
 def _print_coins_result(result: coins_pipeline.CoinsRunResult) -> None:
@@ -271,50 +271,209 @@ def _print_coins_result(result: coins_pipeline.CoinsRunResult) -> None:
         f"本轮上限推迟 {result.lots_pricing_deferred}，"
         f"关键词太泛不报价 {result.lots_pricing_too_generic}，错误 {result.errors}"
     )
-    if result.status == CoinFetchStatus.BLOCKED:
-        print(
-            "\n被麦稀奇反爬拦下：请跑 `python -m app.cli coins-fetch --headful`，"
-            "在弹出的浏览器里人工过一次滑块，会话会存到 data/mxiqi-profile/ 供后续复用。",
-            file=sys.stderr,
-        )
 
 
 def cmd_coins_fetch(args: argparse.Namespace) -> int:
-    """只采集专场 + 拍品（不查价）。`--headful` / `--cdp` 用来人工过一次滑块。"""
-    cfg = _coins_config(_bootstrap(), headful=args.headful, limit=args.limit)
-    result = asyncio.run(coins_pipeline.run(cfg, collect_only=True, cdp_url=args.cdp))
+    """只采集专场 + 拍品（不查价）。走 gapi，不需要浏览器。"""
+    cfg = _coins_config(_bootstrap(), limit=args.limit)
+    result = asyncio.run(coins_pipeline.run(cfg, collect_only=True))
     _print_coins_result(result)
     return 0 if result.status == CoinFetchStatus.OK else 1
 
 
 def cmd_coins_price(args: argparse.Namespace) -> int:
     """只对已入库的推荐拍品查推荐价（不采集）。"""
-    cfg = _coins_config(_bootstrap(), headful=args.headful, limit=None)
-    result = asyncio.run(coins_pipeline.run(cfg, price_only=True, cdp_url=args.cdp))
+    cfg = _coins_config(_bootstrap(), limit=None)
+    result = asyncio.run(coins_pipeline.run(cfg, price_only=True))
     _print_coins_result(result)
     return 0 if result.status == CoinFetchStatus.OK else 1
 
 
 def cmd_coins_pipeline(args: argparse.Namespace) -> int:
     """采集 → 匹配 → 定价，一整轮。"""
-    cfg = _coins_config(_bootstrap(), headful=args.headful, limit=args.limit)
-    result = asyncio.run(coins_pipeline.run(cfg, cdp_url=args.cdp))
+    cfg = _coins_config(_bootstrap(), limit=args.limit)
+    result = asyncio.run(coins_pipeline.run(cfg))
     _print_coins_result(result)
     return 0 if result.status == CoinFetchStatus.OK else 1
 
 
-def cmd_coins_dump(args: argparse.Namespace) -> int:
-    """把渲染后的页面 HTML 存进 data/mxiqi-inbox/（站点改版时用它校正解析器）。"""
-    cfg = _coins_config(_bootstrap(), headful=args.headful, limit=None)
+# ---------------------------------------------------------------- Numista 参考库
 
-    async def _dump() -> str:
-        async with MxiqiClient(cfg, cdp_url=args.cdp) as client:
-            url = f"{cfg.coins.base_url.rstrip('/')}{args.path}"
-            return str(await client.dump(url, args.target))
 
-    path = asyncio.run(_dump())
-    print(f"已保存：{path}")
+def cmd_coins_series(args: argparse.Namespace) -> int:
+    """按「国家 + 年份 + 面值」从 Numista 查系列并落库（输入是中文，自动转英文）。"""
+    cfg = _bootstrap()
+    series_list = asyncio.run(
+        coins_numista.collect_series(
+            cfg,
+            country=args.country,
+            year=args.year,
+            denomination=args.denomination,
+            composition=args.composition,
+            limit=args.limit,
+        )
+    )
+    if not series_list:
+        print("没有匹配到系列（换个年份/面值，或检查国家映射）")
+        return 0
+    rows = [
+        (
+            str(s.numista_id),
+            s.title or "",
+            s.issuer or "",
+            _year_range(s.min_year, s.max_year),
+            s.denomination or "",
+            s.composition or "",
+            s.catalog_no or "",
+        )
+        for s in series_list
+    ]
+    _print_table(("系列号", "名称", "国家", "起止", "面值", "材质", "目录号"), rows)
+    print(
+        f"\n共入库 {len(series_list)} 个系列；"
+        f"coin_series 现有 {repository.count_coin_series()} 行"
+    )
+    _print_numista_quota(cfg)
     return 0
+
+
+def cmd_coins_issues(args: argparse.Namespace) -> int:
+    """按系列号从 Numista 取该系列全部年份单版并落库。"""
+    cfg = _bootstrap()
+    series, issues = asyncio.run(
+        coins_numista.collect_issues(cfg, series_id=args.series_id)
+    )
+    stored = repository.get_coin_series(series.numista_id)
+    rows = [
+        (
+            str(i.numista_id),
+            str(i.year or ""),
+            i.mint_mark or "",
+            i.catalog_no or "",
+            str(i.mintage or ""),
+            _flags(i.is_proof, i.is_essai),
+            (i.comment or "")[:20],
+        )
+        for i in issues
+    ]
+    _print_table(("单版编号", "年份", "厂标", "目录号", "发行量", "精制/样币", "备注"), rows)
+    print(f"\n系列 {series.numista_id}（{series.title}）入库单版 {len(issues)} 条")
+    if stored is not None:
+        print(f"该系列 coin_issues 现有 {len(repository.list_coin_issues(stored.id))} 行")
+    _print_numista_quota(cfg)
+    return 0
+
+
+def cmd_coins_values(args: argparse.Namespace) -> int:
+    """按系列号取 Numista 类型页的各品相估值 + Frequency 并落库（走网页表格）。
+
+    页面挡着 Cloudflare，只能挂到你自己用调试端口开的 Chrome 上（见 README / plan §18.13.2）。
+    """
+    cfg = _bootstrap()
+    info = asyncio.run(
+        coins_numista_web.collect_issue_values(
+            cfg, series_id=args.series_id, cdp_url=args.cdp
+        )
+    )
+    rows = [
+        (
+            str(row.numista_issue_id),
+            str(row.year or ""),
+            _money(row.value_g),
+            _money(row.value_vg),
+            _money(row.value_f),
+            _money(row.value_vf),
+            _money(row.value_xf),
+            _money(row.value_au),
+            _money(row.value_unc),
+            "—" if row.frequency is None else f"{row.frequency:g}%",
+        )
+        for row in info.rows
+    ]
+    currency = info.currency or "未知"
+    print(f"估值币种：{currency}（页面按访客币种渲染）")
+    _print_table(
+        ("单版编号", "年份", "G", "VG", "F", "VF", "XF", "AU", "UNC", "Frequency"),
+        rows,
+    )
+    print(
+        f"\n系列 {args.series_id} 入库估值/频率 {len(info.rows)} 条；"
+        f"coin_issue_values 现有 {repository.count_coin_issue_values()} 行"
+    )
+    print("这一列数据走的是网页表格（不占 Numista 接口额度）")
+    return 0
+
+
+def cmd_coins_images(args: argparse.Namespace) -> int:
+    """按系列号把正 / 反图缓存到本地（走 CDP，需要本机开着调试端口的 Chrome）。
+
+    Numista 图片带 `cross-origin-resource-policy: same-origin`，页面里嵌不了、裸 HTTP 又吃 403，
+    所以借你自己的 Chrome 下载到 `data/coin_images/`，页面再从本地读。
+    """
+    cfg = _bootstrap()
+    saved = asyncio.run(
+        coins_numista_web.download_series_images(
+            cfg, numista_id=args.series_id, cdp_url=args.cdp
+        )
+    )
+    for side, path in saved.items():
+        label = "正面" if side == "obverse" else "背面"
+        print(f"{label}：{path.name}（{path.stat().st_size} 字节）")
+    print(f"\n系列 {args.series_id} 已缓存 {len(saved)} 张 → {coins_numista_web.IMAGE_DIR}")
+    return 0
+
+
+def cmd_coins_translate(args: argparse.Namespace) -> int:
+    """用大模型重翻已入库系列的描述 / 备注 / 名称（读英文表 → 覆盖中文表）。
+
+    不重采 Numista、不耗接口额度；每系列的长文本一次请求、其全部单版备注一次请求。
+    枚举类字段（大类 / 形状 / 材质 / 币边 / 国家 / 执政者 / 面值）仍走内置词表。
+    """
+    cfg = _bootstrap()
+    result = asyncio.run(
+        coins_translate_llm.retranslate(cfg, series_id=args.series_id)
+    )
+    scope = f"系列 {args.series_id}" if args.series_id else "全部系列"
+    print(
+        f"{scope}：重翻 {result.series_total} 个系列"
+        f"（描述/备注/名称 {result.text_fields} 段）、"
+        f"单版 {result.issues_total} 条（备注 {result.comments} 条）"
+    )
+    if result.series_total == 0:
+        print("本地没有可重翻的系列（先采回来再翻）")
+    return 0
+
+
+def _money(value: float | None) -> str:
+    """估值显示：整数不带小数点，其余最多两位。"""
+    if value is None:
+        return "—"
+    return f"{value:g}" if value == int(value) else f"{value:.2f}"
+
+
+def _print_numista_quota(cfg: config.Config) -> None:
+    """打印 Numista 本月额度用量（风控可见，别把免费额度刷完）。"""
+    used = repository.count_api_calls_since(
+        coins_numista.PROVIDER, repository.local_month_start_utc(cfg.app.tz)
+    )
+    print(f"Numista 本月已用 {used}/{cfg.coins.numista.monthly_limit} 次")
+
+
+def _year_range(min_year: int | None, max_year: int | None) -> str:
+    if min_year is None and max_year is None:
+        return ""
+    if min_year == max_year:
+        return str(min_year)
+    return f"{min_year or '?'}-{max_year or '?'}"
+
+
+def _flags(is_proof: bool | None, is_essai: bool | None) -> str:
+    """精制/样币只在「是」时显示；接口没给（None）或否 → 「—」。"""
+    parts = []
+    for label, value in (("精制", is_proof), ("样币", is_essai)):
+        if value is True:
+            parts.append(label)
+    return "、".join(parts) if parts else "—"
 
 
 # ---------------------------------------------------------------- 入口
@@ -368,36 +527,61 @@ def _build_parser() -> argparse.ArgumentParser:
     coins_tags = subparsers.add_parser("coins-tags", help="打印铜币画像标签表格")
     coins_tags.set_defaults(func=cmd_coins_tags)
 
-    def _add_browser_flags(parser: argparse.ArgumentParser) -> None:
-        parser.add_argument(
-            "--headful", action="store_true", help="用有头浏览器跑（人工过一次滑块）"
-        )
-        parser.add_argument(
-            "--cdp",
-            default=None,
-            metavar="URL",
-            help="连本机已打开的 Chrome（如 http://127.0.0.1:9222），人工过滑块最稳",
-        )
-
     coins_fetch = subparsers.add_parser("coins-fetch", help="采集麦稀奇专场与拍品（不查价）")
-    _add_browser_flags(coins_fetch)
     coins_fetch.add_argument("--limit", type=int, default=None, help="本轮最多抓几个专场")
     coins_fetch.set_defaults(func=cmd_coins_fetch)
 
     coins_price = subparsers.add_parser("coins-price", help="对已入库的推荐拍品查推荐价")
-    _add_browser_flags(coins_price)
     coins_price.set_defaults(func=cmd_coins_price)
 
     coins_pipeline = subparsers.add_parser("coins-pipeline", help="采集 → 匹配 → 定价（一整轮）")
-    _add_browser_flags(coins_pipeline)
     coins_pipeline.add_argument("--limit", type=int, default=None, help="本轮最多抓几个专场")
     coins_pipeline.set_defaults(func=cmd_coins_pipeline)
 
-    coins_dump = subparsers.add_parser("coins-dump", help="把渲染后的页面存进 data/mxiqi-inbox/")
-    _add_browser_flags(coins_dump)
-    coins_dump.add_argument("--path", default="/auction", help="站点路径，如 /auction")
-    coins_dump.add_argument("--target", default="sessions", help="保存文件名（不含 .html）")
-    coins_dump.set_defaults(func=cmd_coins_dump)
+    coins_series = subparsers.add_parser(
+        "coins-series", help="按国家/年份/面值从 Numista 查系列并落库（中文输入自动转英文）"
+    )
+    coins_series.add_argument("--country", required=True, help="国家（中文，如 英国）")
+    coins_series.add_argument("--year", type=int, required=True, help="年份，如 1900")
+    coins_series.add_argument("--denomination", required=True, help="面值（中文，如 1便士）")
+    coins_series.add_argument(
+        "--composition", default="", help="材质（中文，如 青铜；留空=不限）——取详情后精确过滤"
+    )
+    coins_series.add_argument("--limit", type=int, default=None, help="最多取几个系列的详情")
+    coins_series.set_defaults(func=cmd_coins_series)
+
+    coins_issues = subparsers.add_parser(
+        "coins-issues", help="按系列号从 Numista 取全部年份单版并落库"
+    )
+    coins_issues.add_argument("--series-id", type=int, required=True, help="系列号（Numista type id）")
+    coins_issues.set_defaults(func=cmd_coins_issues)
+
+    coins_values = subparsers.add_parser(
+        "coins-values", help="按系列号取类型页的各品相估值 + Frequency 并落库（网页表格）"
+    )
+    coins_values.add_argument("--series-id", type=int, required=True, help="系列号（Numista type id）")
+    coins_values.add_argument(
+        "--cdp", default=None, help="CDP 地址，默认取 config 的 coins.numista.cdp_url"
+    )
+    coins_values.set_defaults(func=cmd_coins_values)
+
+    coins_images = subparsers.add_parser(
+        "coins-images", help="按系列号缓存正/反图到本地（走 CDP，需要开着调试端口的 Chrome）"
+    )
+    coins_images.add_argument("--series-id", type=int, required=True, help="系列号（Numista type id）")
+    coins_images.add_argument(
+        "--cdp", default=None, help="CDP 地址，默认取 config 的 coins.numista.cdp_url"
+    )
+    coins_images.set_defaults(func=cmd_coins_images)
+
+    coins_translate = subparsers.add_parser(
+        "coins-translate",
+        help="用大模型重翻已入库系列的描述/备注/名称（不重采 Numista，需 DESKHUB_LLM_API_KEY）",
+    )
+    coins_translate.add_argument(
+        "--series-id", type=int, default=None, help="只重翻该系列号；不传则重翻全部"
+    )
+    coins_translate.set_defaults(func=cmd_coins_translate)
 
     return parser
 
@@ -406,7 +590,14 @@ def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     try:
         return args.func(args)
-    except (config.ConfigError, llm.LLMError, MxiqiError, ValueError) as exc:
+    except (
+        config.ConfigError,
+        llm.LLMError,
+        GapiError,
+        coins_numista.NumistaError,
+        coins_numista_web.NumistaPageError,
+        ValueError,
+    ) as exc:
         print(f"错误：{exc}", file=sys.stderr)
         return 1
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-SCHEMA_VERSION = "2"
+SCHEMA_VERSION = "6"
 
 # 所有时间列存 UTC ISO8601 字符串（SQLite 无原生时间类型）
 DDL = """
@@ -112,8 +112,8 @@ CREATE TABLE IF NOT EXISTS coin_sessions (
   shop_id        INTEGER REFERENCES coin_shops(id) ON DELETE SET NULL,
   title          TEXT    NOT NULL,
   status         TEXT,      -- preview | running | closed
-  auction_at     TEXT,      -- UTC ISO8601
-  auction_at_raw TEXT,      -- 站点原始文案
+  auction_at     TEXT,      -- 拍卖时间（站内口径 = 截拍 end_time）的 UTC ISO8601
+  auction_at_raw TEXT,      -- 截拍时间的站点文案，如「10月12日 星期一 19:30」
   deposit        REAL,
   lot_total      INTEGER,
   view_count     INTEGER,
@@ -160,12 +160,160 @@ CREATE TABLE IF NOT EXISTS coin_fetch_runs (
   target      TEXT,
   started_at  TEXT    NOT NULL,
   finished_at TEXT,
-  status      TEXT    NOT NULL,   -- ok | blocked | http_error | parse_error | timeout
+  status      TEXT    NOT NULL,   -- ok | http_error | parse_error | timeout
   http_status INTEGER,
   items_new   INTEGER DEFAULT 0,
   error       TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_coin_runs ON coin_fetch_runs(kind, started_at DESC);
+
+-- ============ 铜币参考库（Numista，v1.2 增补）============
+-- 与「拍卖」那批表无外键关联：这是**硬币本身**的目录信息（系列/单版），来源是 numista.com，
+-- 用于给拍品提供权威的币种背景（材质、尺寸、发行量、目录号…），不是麦稀奇的拍品。
+
+-- 系列（Numista type）：一个币种（国家 + 面值 + 执政者/版式），跨多个年份
+CREATE TABLE IF NOT EXISTS coin_series (
+  id                INTEGER PRIMARY KEY AUTOINCREMENT,
+  numista_id        INTEGER NOT NULL UNIQUE,   -- 系列号（Numista type id）
+  title             TEXT,                      -- 系列名称
+  url               TEXT,                      -- 网页链接
+  object_type       TEXT,                      -- 大类（流通币/纪念币/代币…）
+  issuer            TEXT,                      -- 国家/发行方
+  min_year          INTEGER,                   -- 系列起始年份
+  max_year          INTEGER,                   -- 系列结束年份
+  ruler             TEXT,                      -- 执政者
+  denomination      TEXT,                      -- 面值文本
+  size_mm           REAL,                      -- 尺寸（直径 mm）
+  weight_g          REAL,                      -- 重量（g）—— 单版继承用，附录产出不列
+  thickness_mm      REAL,                      -- 厚度（mm）
+  shape             TEXT,                      -- 形状
+  composition       TEXT,                      -- 材质
+  edge              TEXT,                      -- 币边描述 —— 单版继承用
+  obverse_desc      TEXT,                      -- 正面描述
+  obverse_lettering TEXT,                      -- 正面铭文
+  obverse_picture   TEXT,                      -- 正面图片
+  reverse_desc      TEXT,                      -- 背面描述
+  reverse_lettering TEXT,                      -- 背面铭文
+  reverse_picture   TEXT,                      -- 背面图片
+  catalog_no        TEXT,                      -- 目录号（全部引用，如 KM#790,Sp#3961）
+  comments          TEXT,                      -- 系列备注（Numista type 的 comments）
+  mints             TEXT,                      -- 造币厂（JSON 数组，如 ["Royal Mint (Tower Hill)"]）
+  fetched_at        TEXT    NOT NULL
+);
+
+-- 系列中文版：字段个数与 coin_series **完全一致**，可翻译字段存中文，其余原样复制
+CREATE TABLE IF NOT EXISTS coin_series_cn (
+  id                INTEGER PRIMARY KEY AUTOINCREMENT,
+  numista_id        INTEGER NOT NULL UNIQUE,
+  title             TEXT,
+  url               TEXT,
+  object_type       TEXT,
+  issuer            TEXT,
+  min_year          INTEGER,
+  max_year          INTEGER,
+  ruler             TEXT,
+  denomination      TEXT,
+  size_mm           REAL,
+  weight_g          REAL,
+  thickness_mm      REAL,
+  shape             TEXT,
+  composition       TEXT,
+  edge              TEXT,
+  obverse_desc      TEXT,
+  obverse_lettering TEXT,
+  obverse_picture   TEXT,
+  reverse_desc      TEXT,
+  reverse_lettering TEXT,
+  reverse_picture   TEXT,
+  catalog_no        TEXT,
+  comments          TEXT,
+  mints             TEXT,
+  fetched_at        TEXT    NOT NULL
+);
+
+-- 单版（Numista issue）：某系列下的一个年份/厂别条目
+CREATE TABLE IF NOT EXISTS coin_issues (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  numista_id   INTEGER NOT NULL UNIQUE,   -- 单版编号（Numista issue id）
+  series_id    INTEGER NOT NULL REFERENCES coin_series(id) ON DELETE CASCADE,
+  year         INTEGER,                   -- 年份
+  mint         TEXT,                      -- 造币厂
+  mint_mark    TEXT,                      -- 厂标
+  variety      TEXT,                      -- 版别备注
+  comment      TEXT,                      -- 补充备注
+  mintage      INTEGER,                   -- 发行量
+  size_mm      REAL,                      -- 尺寸（直径 mm，继承系列）
+  weight_g     REAL,                      -- 重量（g，继承系列）
+  thickness_mm REAL,                      -- 厚度（mm，继承系列）
+  edge         TEXT,                      -- 币边（继承系列）
+  is_proof     INTEGER,                   -- 是否精制（1/0/NULL=未知）
+  is_essai     INTEGER,                   -- 是否样币（1/0/NULL=未知）
+  picture      TEXT,                      -- 图片
+  catalog_no   TEXT,                      -- 目录号（该单版的 references，如 Sp#3961）
+  fetched_at   TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_coin_issues_series ON coin_issues(series_id, year);
+
+-- 单版中文版：字段个数与 coin_issues **完全一致**，mint/comment/edge 存中文
+CREATE TABLE IF NOT EXISTS coin_issues_cn (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  numista_id   INTEGER NOT NULL UNIQUE,
+  series_id    INTEGER NOT NULL REFERENCES coin_series_cn(id) ON DELETE CASCADE,
+  year         INTEGER,
+  mint         TEXT,
+  mint_mark    TEXT,
+  variety      TEXT,
+  comment      TEXT,
+  mintage      INTEGER,
+  size_mm      REAL,
+  weight_g     REAL,
+  thickness_mm REAL,
+  edge         TEXT,
+  is_proof     INTEGER,
+  is_essai     INTEGER,
+  picture      TEXT,
+  catalog_no   TEXT,
+  fetched_at   TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_coin_issues_cn_series ON coin_issues_cn(series_id, year);
+
+-- 单版的**估值**与 **Frequency**（v1.4 增补）—— 来源是 Numista 类型页的表格，
+-- 不是接口：`/types/{id}/issues` 里这两项都没有（见 plan §18.13.2）。
+-- 与 coin_issues 用 `numista_id` 对齐（不设外键：页面先于/独立于接口采到也不丢数据）。
+CREATE TABLE IF NOT EXISTS coin_issue_values (
+  id                INTEGER PRIMARY KEY AUTOINCREMENT,
+  numista_id        INTEGER NOT NULL UNIQUE,   -- 单版编号（Numista issue id，对应 coin_issues.numista_id）
+  series_numista_id INTEGER NOT NULL,          -- 所属系列号（Numista type id）
+  currency          TEXT,                      -- 估值币种（页面标注，实测本机是 CNY）
+  value_g           REAL,                      -- 各品相估值（页面口径；缺该品相留空）
+  value_vg          REAL,
+  value_f           REAL,
+  value_vf          REAL,
+  value_xf          REAL,
+  value_au          REAL,
+  value_unc         REAL,
+  frequency         REAL,                      -- Frequency：拥有该年份/品种的用户占比（百分数，0.16 = 0.16%）
+  fetched_at        TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_coin_issue_values_series ON coin_issue_values(series_numista_id);
+
+-- Numista 调用计数（免费额度每月 2000 次，需自管风控；Numista 响应不带限流头）
+CREATE TABLE IF NOT EXISTS coin_api_usage (
+  id        INTEGER PRIMARY KEY AUTOINCREMENT,
+  provider  TEXT    NOT NULL,   -- 目前只有 numista
+  called_at TEXT    NOT NULL    -- UTC ISO8601
+);
+CREATE INDEX IF NOT EXISTS idx_coin_api_usage ON coin_api_usage(provider, called_at);
+
+-- ============ 功能开关（管理页 /control）============
+-- 控制「各类任务是否自动执行」：关掉后每天 08:00 的定时任务不再跑它。
+-- 页面上的「立即运行」是手动触发，忽略这张表（见 app/switches.py）。
+-- 启动补拉已取消：重启本身不执行任何任务，会读这张表的只有定时任务。
+CREATE TABLE IF NOT EXISTS feature_switches (
+  key        TEXT PRIMARY KEY,   -- knowledge_fetch / knowledge_score / coins_collect / coins_price
+  enabled    INTEGER NOT NULL,
+  updated_at TEXT    NOT NULL    -- UTC ISO8601
+);
 """
 
 
@@ -261,14 +409,9 @@ class FetchRun:
 
 
 class CoinFetchStatus:
-    """`coin_fetch_runs.status` 取值；比 `FetchStatus` 多一个 `blocked`。
-
-    `blocked` 专指「被麦稀奇反爬拦下（滑块会话失效）」—— 它要显著提示而不是当普通错误，
-    所以单列一个状态（spec §14.3）。
-    """
+    """`coin_fetch_runs.status` 取值（与 `FetchStatus` 同义，单独列出便于铜币模块内引用）。"""
 
     OK = "ok"
-    BLOCKED = "blocked"
     HTTP_ERROR = "http_error"
     PARSE_ERROR = "parse_error"
     TIMEOUT = "timeout"
@@ -397,6 +540,93 @@ class CoinFetchRun:
     http_status: int | None
     items_new: int
     error: str | None = None
+
+
+@dataclass
+class CoinSeries:
+    """Numista 系列（一个币种）。字段口径见 spec §14.13 / plan §18.13。"""
+
+    id: int | None
+    numista_id: int
+    title: str | None
+    url: str | None
+    object_type: str | None
+    issuer: str | None
+    min_year: int | None
+    max_year: int | None
+    ruler: str | None
+    denomination: str | None
+    size_mm: float | None
+    weight_g: float | None
+    thickness_mm: float | None
+    shape: str | None
+    composition: str | None
+    edge: str | None
+    obverse_desc: str | None
+    obverse_lettering: str | None
+    obverse_picture: str | None
+    reverse_desc: str | None
+    reverse_lettering: str | None
+    reverse_picture: str | None
+    catalog_no: str | None
+    comments: str | None
+    mints: list[str]
+    fetched_at: str
+
+
+@dataclass
+class CoinIssue:
+    """Numista 单版（系列下的一个年份/厂别条目）。"""
+
+    id: int | None
+    numista_id: int
+    series_id: int
+    year: int | None
+    mint: str | None
+    mint_mark: str | None
+    variety: str | None
+    comment: str | None
+    mintage: int | None
+    size_mm: float | None
+    weight_g: float | None
+    thickness_mm: float | None
+    edge: str | None
+    is_proof: bool | None
+    is_essai: bool | None
+    picture: str | None
+    catalog_no: str | None
+    fetched_at: str
+
+
+@dataclass
+class CoinIssueValues:
+    """单版的估值（各品相）+ Frequency。来源是 Numista 类型页表格，见 plan §18.13.2。"""
+
+    id: int | None
+    numista_id: int
+    series_numista_id: int
+    currency: str | None
+    value_g: float | None
+    value_vg: float | None
+    value_f: float | None
+    value_vf: float | None
+    value_xf: float | None
+    value_au: float | None
+    value_unc: float | None
+    frequency: float | None
+    fetched_at: str
+
+
+@dataclass(frozen=True)
+class CoinSeriesIssueStats:
+    """某系列已采集单版的统计：**不同年份数** + **版别（单版）数**。
+
+    两者不可混为一谈：一个年份可能有多个版别（厂标 / 变体 / 精制），
+    故「1895–1901 应该有 7 个年份、15 个版别」，不能把单版条数当成年份数。
+    """
+
+    year_count: int
+    issue_count: int
 
 
 @dataclass

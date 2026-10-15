@@ -1,0 +1,173 @@
+{% extends "base.html" %}
+{% block title %}{{ page_title }} · deskhub{% endblock %}
+
+{% block content %}
+{% if not series %}
+<div class="empty">
+  这个系列不在本地库里（可能还没采集）。<a href="/coins/info">返回铜币信息</a>
+</div>
+{% else %}
+
+<p class="crumb"><a href="/coins/info">← 返回信息</a></p>
+
+<section class="digest-head">
+  <h1>{{ series.title or series.numista_id }}</h1>
+  <p class="digest-meta">
+    {{ series.issuer or '—' }} · {{ series.denomination or '—' }}
+    {%- if series.min_year or series.max_year %} · {{ series.min_year or '?' }}–{{ series.max_year or '?' }}{% endif %}
+    · Numista #{{ series.numista_id }}
+    {%- if series.catalog_no %} · {{ series.catalog_no }}{% endif %}
+    {%- if series.url %} · <a href="{{ series.url }}" target="_blank" rel="noreferrer">Numista 页面</a>{% endif %}
+  </p>
+</section>
+
+<h2 class="coin-section-title">系列信息</h2>
+
+{% if has_obverse_image or has_reverse_image %}
+<div class="coin-series-imgs-lg">
+  {% if has_obverse_image %}
+  <figure class="coin-series-fig">
+    <img class="coin-zoom" src="/coins/series/{{ series.numista_id }}/image/obverse" alt="正面" loading="lazy">
+    <figcaption>正面（点击放大）</figcaption>
+  </figure>
+  {% endif %}
+  {% if has_reverse_image %}
+  <figure class="coin-series-fig">
+    <img class="coin-zoom" src="/coins/series/{{ series.numista_id }}/image/reverse" alt="背面" loading="lazy">
+    <figcaption>背面（点击放大）</figcaption>
+  </figure>
+  {% endif %}
+</div>
+{% endif %}
+
+{% if (series.obverse_picture or series.reverse_picture) and not (has_obverse_image and has_reverse_image) %}
+<p class="form-hint">
+  Numista 图片不允许跨站引用，未缓存的部分不在页面内显示。跑
+  <code>python -m app.cli coins-images --series-id {{ series.numista_id }}</code> 缓存到本地
+  {%- if series.obverse_picture %} · <a href="{{ series.obverse_picture }}" target="_blank" rel="noreferrer">正面原图</a>{% endif %}
+  {%- if series.reverse_picture %} · <a href="{{ series.reverse_picture }}" target="_blank" rel="noreferrer">背面原图</a>{% endif %}
+</p>
+{% endif %}
+
+<div class="coin-facts">
+  <span class="coin-fact">大类 <b>{{ series.object_type or '—' }}</b></span>
+  <span class="coin-fact">国家 <b>{{ series.issuer or '—' }}</b></span>
+  <span class="coin-fact">面值 <b>{{ series.denomination or '—' }}</b></span>
+  <span class="coin-fact">年份 <b>{{ series.min_year or '?' }}–{{ series.max_year or '?' }}</b></span>
+  <span class="coin-fact">执政者 <b>{{ series.ruler or '—' }}</b></span>
+  <span class="coin-fact">材质 <b>{{ series.composition or '—' }}</b></span>
+  <span class="coin-fact">形状 <b>{{ series.shape or '—' }}</b></span>
+  <span class="coin-fact">尺寸 <b>{{ (series.size_mm ~ ' mm') if series.size_mm else '—' }}</b></span>
+  <span class="coin-fact">重量 <b>{{ (series.weight_g ~ ' g') if series.weight_g else '—' }}</b></span>
+  <span class="coin-fact">厚度 <b>{{ (series.thickness_mm ~ ' mm') if series.thickness_mm else '—' }}</b></span>
+  <span class="coin-fact">币边 <b>{{ series.edge or '—' }}</b></span>
+  <span class="coin-fact">造币厂 <b>{{ (series.mints | join('、')) if series.mints else '—' }}</b></span>
+</div>
+
+{% if series.obverse_desc or series.obverse_lettering or series.reverse_desc or series.reverse_lettering or series.comments %}
+<div class="coin-series-text">
+  {% if series.obverse_desc %}<p><span class="coin-text-label">正面描述</span>{{ series.obverse_desc }}</p>{% endif %}
+  {% if series.obverse_lettering %}<p><span class="coin-text-label">正面铭文</span>{{ series.obverse_lettering }}</p>{% endif %}
+  {% if series.reverse_desc %}<p><span class="coin-text-label">背面描述</span>{{ series.reverse_desc }}</p>{% endif %}
+  {% if series.reverse_lettering %}<p><span class="coin-text-label">背面铭文</span>{{ series.reverse_lettering }}</p>{% endif %}
+  {% if series.comments %}<p><span class="coin-text-label">备注</span>{{ series.comments }}</p>{% endif %}
+</div>
+{% endif %}
+
+<h2 class="coin-section-title">
+  各年份信息
+  <span class="coin-section-count">
+    {{ year_total }} 个年份 · {{ issue_total }} 个版别{% if currency %} · 估值币种 {{ currency }}{% endif %}
+  </span>
+</h2>
+{% if issue_total %}
+<div class="table-wrap">
+  <table class="sources-table coin-series-table">
+    <thead>
+      <tr>
+        <th class="nowrap">年份</th>
+        <th>厂标</th>
+        <th class="nowrap">发行量</th>
+        <th>G</th>
+        <th>VG</th>
+        <th>F</th>
+        <th>VF</th>
+        <th>XF</th>
+        <th>AU</th>
+        <th>UNC</th>
+        <th>目录号</th>
+        <th>备注</th>
+        <th class="nowrap">稀有度</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for issue, value in rows %}
+      <tr>
+        <td class="nowrap">{{ issue.year if issue.year is not none else '—' }}</td>
+        <td>{{ issue.mint_mark or '—' }}</td>
+        <td class="nowrap">{{ issue.mintage if issue.mintage is not none else '—' }}</td>
+        <td class="nowrap">{{ (value.value_g | price) if value else '—' }}</td>
+        <td class="nowrap">{{ (value.value_vg | price) if value else '—' }}</td>
+        <td class="nowrap">{{ (value.value_f | price) if value else '—' }}</td>
+        <td class="nowrap">{{ (value.value_vf | price) if value else '—' }}</td>
+        <td class="nowrap">{{ (value.value_xf | price) if value else '—' }}</td>
+        <td class="nowrap">{{ (value.value_au | price) if value else '—' }}</td>
+        <td class="nowrap">{{ (value.value_unc | price) if value else '—' }}</td>
+        <td>{{ issue.catalog_no or '—' }}</td>
+        <td class="coin-issue-comment">{{ issue.comment or '—' }}</td>
+        <td class="nowrap">
+          {{ ('%.2f%%' | format(value.frequency)) if value and value.frequency is not none else '—' }}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% if value_total %}
+<p class="form-hint">
+  估值来自 Numista 类型页（按访客币种渲染）；稀有度 = Frequency，即拥有该年份 / 品种的用户占比。
+  未采到的估值列留空，可按 <a href="/coins/manage">采集管理</a> 的「③ 获取年份估值」补齐
+  （需本机开着带调试端口的 Chrome）。
+</p>
+{% else %}
+<p class="form-hint">
+  估值未采集（上表估值列与稀有度留空）。按 <a href="/coins/manage">采集管理</a> 的「③ 获取年份估值」，
+  或跑 CLI <code>python -m app.cli coins-values --series-id {{ series.numista_id }}</code>
+  （需本机开着带调试端口的 Chrome）。
+</p>
+{% endif %}
+{% else %}
+<div class="empty">
+  单版信息未采集。去 <a href="/coins/manage">采集管理</a> 对该系列点「② 获取年份信息」。
+</div>
+{% endif %}
+
+<div class="coin-lightbox" id="coin-lightbox" hidden>
+  <img alt="放大查看">
+</div>
+
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+  // 详情页图片点击放大（原生、无框架、无 CDN）：点图开灯箱，点遮罩 / 再点图关闭；Esc 也关
+  (function () {
+    var box = document.getElementById("coin-lightbox");
+    if (!box) { return; }
+    var big = box.querySelector("img");
+
+    function close() { box.hidden = true; big.removeAttribute("src"); }
+
+    document.addEventListener("click", function (event) {
+      var img = event.target.closest("img.coin-zoom");
+      if (img) { big.src = img.src; box.hidden = false; return; }
+      if (event.target === box || event.target === big) { close(); }
+    });
+
+    document.addEventListener("keydown", function (event) {
+      if (event.key === "Escape" && !box.hidden) { close(); }
+    });
+  })();
+</script>
+{% endblock %}

@@ -11,7 +11,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-from app import models
+from app import migrations, models
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +20,7 @@ BUSY_TIMEOUT_MS = 5000
 # 允许「向前直接抬版本号」的升级：这些升级只**新增表/索引**，DDL 里是 `CREATE ... IF NOT EXISTS`，
 # `executescript(models.DDL)` 已经把它们建好了，所以不需要额外迁移，只把版本号抬上去即可。
 # 加列 / 改列 / 改约束**不在其列** —— 那种必须写 app/migrations/vN.py 手工执行（plan §6.2）。
-FORWARD_ADDITIVE_UPGRADES = {("1", "2")}
+FORWARD_ADDITIVE_UPGRADES = {("1", "2"), ("2", "3"), ("4", "5"), ("5", "6")}
 
 _db_path: Path | None = None
 
@@ -79,6 +79,23 @@ def _check_schema_version(conn: sqlite3.Connection) -> None:
                 (models.SCHEMA_VERSION,),
             )
         logger.info("schema 版本向前升级：%s → %s（仅新增表，DDL 已建）", current, models.SCHEMA_VERSION)
+        return
+
+    # 需要「给老表加列」的升级：DDL 建不了老表的列，走登记好的幂等 ALTER（app/migrations/）
+    columns = migrations.COLUMN_MIGRATIONS.get((current, models.SCHEMA_VERSION))
+    if columns is not None:
+        with conn:
+            applied = migrations.apply_columns(conn, columns)
+            conn.execute(
+                "UPDATE schema_meta SET value = ? WHERE key = 'schema_version'",
+                (models.SCHEMA_VERSION,),
+            )
+        logger.info(
+            "schema 版本向前升级：%s → %s（加列：%s）",
+            current,
+            models.SCHEMA_VERSION,
+            "、".join(applied) or "无（列已存在）",
+        )
         return
 
     raise SchemaVersionError(

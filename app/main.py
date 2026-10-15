@@ -1,14 +1,13 @@
 """FastAPI 入口：只做 app 装配、lifespan、路由注册、异常处理器。
 
 启动顺序（plan §11.1）：
-    日志就位 → 配置加载校验 → 建库 → 同步源清单 → 调度器 → 启动补拉
-第 6 步用 `create_task` 不 await：首轮抓取跑多久都不能挡住首页。
+    日志就位 → 配置加载校验 → 建库 → 同步源清单 → 调度器
+**没有「启动补拉」这一步**（2026-10-15 取消）：重启不抓取、不打分、不采集，
+要立刻跑就去 `/control` 点「立即运行」，或手工跑 CLI（plan §19）。
 """
 
 from __future__ import annotations
 
-import asyncio
-import contextlib
 import logging
 from contextlib import asynccontextmanager
 
@@ -17,7 +16,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app import config, db, logging_setup, repository, scheduler
-from app.routers import STATIC_DIR, coins, digest, placeholders, search, sources
+from app.routers import STATIC_DIR, coins, control, digest, placeholders, search, sources
 
 logger = logging.getLogger(__name__)
 
@@ -57,19 +56,12 @@ def _bootstrap() -> config.Config:
 async def lifespan(_: FastAPI):
     cfg = _bootstrap()
 
+    # 只注册每日任务，启动时不跑任何抓取 / 打分 / 采集（plan §19）
     active_scheduler = scheduler.start(cfg)
-    # 启动补拉是后台任务：源多时首轮可能几十秒，首页不等它（plan §11.1 第 6 步）
-    startup_task = asyncio.create_task(scheduler.startup_fetch(cfg))
-    # 铜币补拉同样后台跑：要开浏览器、可能要人工过验证，绝不能挡住服务可用（plan §18.9）
-    coins_task = asyncio.create_task(scheduler.startup_coins(cfg))
 
     try:
         yield
     finally:
-        for task in (startup_task, coins_task):
-            task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await task
         active_scheduler.shutdown(wait=False)
         logger.info("deskhub 已停止")
 
@@ -80,6 +72,7 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 app.include_router(digest.router)
 app.include_router(search.router)
 app.include_router(sources.router)
+app.include_router(control.router)
 app.include_router(coins.router)
 app.include_router(placeholders.router)
 

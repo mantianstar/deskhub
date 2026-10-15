@@ -1,12 +1,15 @@
 """铜币管道：采集 → 匹配 → 定价（spec §14.4 / plan §18.5-18.6）。
 
-不依赖 FastAPI、不感知请求上下文：调度器（`startup_coins` / `daily_coins`）与
+不依赖 FastAPI、不感知请求上下文：定时任务（`daily_coins`）、管理页手动触发（`app/tasks.py`）与
 CLI（`cli coins-pipeline` / `coins-fetch` / `coins-price`）复用同一段逻辑。
 
+**数据源只有一个小程序网关**（`app/coins/gapi.py`，免登录、免浏览器）：
+采集（专场 + 拍品）与查价（站内历史成交）都走它 —— 2026-10-12 起不再需要 Playwright。
+
 失败隔离（spec §14.9）：
-- 会话被反爬拦下 → 整轮记 `blocked` 并立即返回（不做无意义的继续请求）。
+- 专场列表拉取失败 → 记日志 + 一条 `http_error`，本轮不采新场（库里已有的照常匹配）。
 - 单个专场抓失败 → 只记日志，继续下一个专场。
-- 定价失败 → 只记日志，该条拍品留「未查价」，不影响其他拍品。
+- 查价失败 → 只记日志，该条拍品留「未查价」，不影响其他拍品。
 """
 
 from __future__ import annotations
@@ -18,7 +21,7 @@ from dataclasses import dataclass
 
 from app import repository
 from app.coins import matcher, pricing
-from app.coins.mxiqi import BlockedError, MxiqiClient, MxiqiError
+from app.coins.gapi import GapiError, MxiqiGapi
 from app.config import Config
 from app.models import CoinFetchRun, CoinFetchStatus, CoinLot, CoinSession, CoinShop
 
@@ -27,6 +30,9 @@ logger = logging.getLogger(__name__)
 RUN_KIND_SESSIONS = "sessions"
 RUN_KIND_DETAIL = "session_detail"
 RUN_KIND_PRICE = "price_search"
+
+# 采集日志里的 target：采集走 gapi，写清用的哪个接口
+TARGET_LIST = "gapi:" + "miniprogram.auction.ListAuction"
 
 
 @dataclass(frozen=True)
@@ -75,8 +81,7 @@ def _record(
 async def run(
     config: Config,
     *,
-    client: MxiqiClient | None = None,
-    cdp_url: str | None = None,
+    gapi: MxiqiGapi | None = None,
     collect_only: bool = False,
     price_only: bool = False,
 ) -> CoinsRunResult:
@@ -85,22 +90,19 @@ async def run(
     - 默认：采集 → 匹配 → 定价
     - `collect_only=True`：只采集 + 匹配（不查价）
     - `price_only=True`：只对已入库的推荐拍品查价（不采集）
-    - `cdp_url`：走 CDP 连本机已打开的 Chrome（人工过滑块最稳）；传了 `client` 时忽略
+    - `gapi`：注入替身（测试用）；不传就自己开一个（整个模块唯一的站点客户端）
     """
-    owned = client is None
-    active = client or MxiqiClient(config, cdp_url=cdp_url)
     started = repository.utcnow()
     errors = 0
     sessions_seen = sessions_stored = lots_stored = 0
 
+    owned = gapi is None
+    api = gapi or MxiqiGapi(config)
+    if owned:
+        await api.__aenter__()
     try:
-        if owned:
-            await active.__aenter__()
-
         if not price_only:
-            sessions_seen, sessions_stored, lots_stored, blocked = await _collect(config, active, started)
-            if blocked is not None:
-                return blocked
+            sessions_seen, sessions_stored, lots_stored = await _collect(config, api, started)
 
         match_result = matcher.rematch_all(config)
         logger.info(
@@ -111,9 +113,6 @@ async def run(
         )
 
         if collect_only:
-            _record(
-                RUN_KIND_SESSIONS, "/auction", started, CoinFetchStatus.OK, items_new=sessions_stored
-            )
             return CoinsRunResult(
                 CoinFetchStatus.OK,
                 sessions_seen,
@@ -125,52 +124,46 @@ async def run(
                 errors,
             )
 
-        priced, skipped, deferred, generic, price_errors = await _price_recommended(config, active)
+        priced, skipped, deferred, generic, price_errors = await _price_recommended(config, api)
         errors += price_errors
-
-        _record(RUN_KIND_SESSIONS, "/auction", started, CoinFetchStatus.OK, items_new=sessions_stored)
-        logger.info(
-            "铜币管道结束：专场 %d（入库 %d）拍品 %d 条，推荐 %d 条，"
-            "已查价 %d 条，跳过 %d 条，推迟 %d 条，关键词太泛不报价 %d 条",
-            sessions_seen,
-            sessions_stored,
-            lots_stored,
-            match_result.lots_recommended,
-            priced,
-            skipped,
-            deferred,
-            generic,
-        )
-        return CoinsRunResult(
-            status=CoinFetchStatus.OK,
-            sessions_seen=sessions_seen,
-            sessions_stored=sessions_stored,
-            lots_stored=lots_stored,
-            lots_recommended=match_result.lots_recommended,
-            lots_priced=priced,
-            lots_pricing_skipped=skipped,
-            errors=errors,
-            lots_pricing_deferred=deferred,
-            lots_pricing_too_generic=generic,
-        )
     finally:
         if owned:
-            await active.__aexit__(None, None, None)
+            await api.__aexit__(None, None, None)
+
+    logger.info(
+        "铜币管道结束：专场 %d（入库 %d）拍品 %d 条，推荐 %d 条，"
+        "已查价 %d 条，跳过 %d 条，推迟 %d 条，关键词太泛不报价 %d 条",
+        sessions_seen,
+        sessions_stored,
+        lots_stored,
+        match_result.lots_recommended,
+        priced,
+        skipped,
+        deferred,
+        generic,
+    )
+    return CoinsRunResult(
+        status=CoinFetchStatus.OK,
+        sessions_seen=sessions_seen,
+        sessions_stored=sessions_stored,
+        lots_stored=lots_stored,
+        lots_recommended=match_result.lots_recommended,
+        lots_priced=priced,
+        lots_pricing_skipped=skipped,
+        errors=errors,
+        lots_pricing_deferred=deferred,
+        lots_pricing_too_generic=generic,
+    )
 
 
-async def _collect(
-    config: Config, client: MxiqiClient, started: str
-) -> tuple[int, int, int, CoinsRunResult | None]:
-    """采集专场与拍品。返回（看到专场数, 入库专场数, 入库拍品数, 需要提前返回的 blocked 结果）。"""
+async def _collect(config: Config, api: MxiqiGapi, started: str) -> tuple[int, int, int]:
+    """采集专场与拍品。返回（看到专场数, 入库专场数, 入库拍品数）。"""
     try:
-        cards = await client.list_sessions()
-    except BlockedError as exc:
-        logger.warning("铜币采集被反爬拦下：%s", exc)
-        _record(RUN_KIND_SESSIONS, "/auction", started, CoinFetchStatus.BLOCKED, error=str(exc))
-        return 0, 0, 0, CoinsRunResult(CoinFetchStatus.BLOCKED, 0, 0, 0, 0, 0, 0, 1)
-    except MxiqiError as exc:
-        _record(RUN_KIND_SESSIONS, "/auction", started, CoinFetchStatus.PARSE_ERROR, error=str(exc))
-        return 0, 0, 0, CoinsRunResult(CoinFetchStatus.PARSE_ERROR, 0, 0, 0, 0, 0, 0, 1)
+        cards = await api.list_sessions()
+    except GapiError as exc:
+        logger.warning("铜币专场列表拉取失败：%s", exc)
+        _record(RUN_KIND_SESSIONS, TARGET_LIST, started, CoinFetchStatus.HTTP_ERROR, error=str(exc))
+        return 0, 0, 0
 
     limit = config.coins.max_sessions_per_run
     cards = cards[:limit]
@@ -181,17 +174,9 @@ async def _collect(
     for card in cards:
         detail_started = repository.utcnow()
         try:
-            # 详情页拿不到围观数/封面图，用列表页那张卡兜底（mxiqi.parse_session_detail）
-            detail = await client.session_detail(card.mxiqi_id, fallback=card)
-        except BlockedError as exc:
-            logger.warning("专场详情被反爬拦下，整轮中止：%s", exc)
-            _record(
-                RUN_KIND_DETAIL, card.mxiqi_id, detail_started, CoinFetchStatus.BLOCKED, error=str(exc)
-            )
-            return len(cards), sessions_stored, lots_stored, CoinsRunResult(
-                CoinFetchStatus.BLOCKED, len(cards), sessions_stored, lots_stored, 0, 0, 0, 1
-            )
-        except MxiqiError as exc:
+            # 详情页拿不到的字段用列表页那张卡兜底（gapi.detail_from_payload）
+            detail = await api.session_detail(card.mxiqi_id, fallback=card)
+        except GapiError as exc:
             logger.warning("专场 %s 抓取失败，跳过：%s", card.mxiqi_id, exc)
             _record(
                 RUN_KIND_DETAIL, card.mxiqi_id, detail_started, CoinFetchStatus.PARSE_ERROR, error=str(exc)
@@ -219,7 +204,8 @@ async def _collect(
                 shop_id=shop_id,
                 title=detail.card.title,
                 status=detail.card.status,
-                auction_at=None,  # 站内只给「M月D日 星期X HH:MM」文案，原样存 raw
+                # 「拍卖时间」按站内口径 = **截拍时间**（end_time）；同时存 UTC ISO 与原始文案
+                auction_at=detail.end_at,
                 auction_at_raw=detail.card.auction_at_raw,
                 deposit=detail.deposit,
                 lot_total=detail.card.lot_total,
@@ -236,7 +222,7 @@ async def _collect(
                 CoinLot(
                     id=None,
                     session_id=session_id,
-                    # 站内没暴露拍品 id，用「专场 id + 站内拍品 id」拼一个稳定去重键
+                    # 站内拍品 id 单独用不唯一，用「专场 id + 站内拍品 id」拼稳定去重键
                     mxiqi_id=f"{detail.card.mxiqi_id}:{lot.mxiqi_id}",
                     lot_no=lot.lot_no,
                     title=lot.title,
@@ -254,19 +240,21 @@ async def _collect(
         _record(
             RUN_KIND_DETAIL, detail.card.mxiqi_id, detail_started, CoinFetchStatus.OK, items_new=new_lots
         )
-    return len(cards), sessions_stored, lots_stored, None
+    # 整轮采集的汇总行：放在采集结束时记，别放到查价之后 ——
+    # 否则会盖住「查价失败」那条，页面/日志就看不到真实状态了。
+    _record(RUN_KIND_SESSIONS, TARGET_LIST, started, CoinFetchStatus.OK, items_new=sessions_stored)
+    return len(cards), sessions_stored, lots_stored
 
 
 async def _price_recommended(
-    config: Config, client: pricing.PriceSource
+    config: Config, client: MxiqiGapi
 ) -> tuple[int, int, int, int, int]:
     """给「推荐且今天还没查过价」的拍品查推荐价。
 
     返回（已查, 当日跳过, 因上限推迟, 关键词太泛不报价, 失败）。
 
-    **限速**（用户 2026-10-12 要求：不要求效率，防封号）：成交价接口要登录，
-    等于拿本人账号在查，所以每次查价之间停 `query_interval_seconds`（带 ±40% 抖动，
-    避免固定节奏），并且单轮最多查 `max_queries_per_run` 条 —— 剩下的留到下一轮。
+    **限速**（用户 2026-10-12 要求：不要求效率）：每次查价之间停 `query_interval_seconds`
+    （带 ±40% 抖动，避免固定节奏），并且单轮最多查 `max_queries_per_run` 条 —— 剩下的留到下一轮。
     """
     day_start = repository.local_day_bounds(config.app.tz)[0]
     tags = repository.list_coin_profile_tags(only_enabled=True)
@@ -325,14 +313,9 @@ async def _price_recommended(
                 min_samples=price_cfg.min_samples,
                 window_days=price_cfg.window_days,
             )
-        except BlockedError as exc:
-            logger.warning("查价被反爬拦下，停止本轮定价：%s", exc)
-            _record(RUN_KIND_PRICE, keyword, started, CoinFetchStatus.BLOCKED, error=str(exc))
-            errors += 1
-            break
-        except MxiqiError as exc:
+        except GapiError as exc:
             logger.warning("查价失败 lot_id=%s：%s", lot.id, exc)
-            _record(RUN_KIND_PRICE, keyword, started, CoinFetchStatus.PARSE_ERROR, error=str(exc))
+            _record(RUN_KIND_PRICE, keyword, started, CoinFetchStatus.HTTP_ERROR, error=str(exc))
             errors += 1
             continue
 
