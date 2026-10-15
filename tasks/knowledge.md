@@ -1,6 +1,6 @@
 # 知识聚合 — tasks
 
-> 模块任务与验证证据（M0–M6，已完成）。目标见 [spec.md](../spec.md)，方案见 [plan.md](../plan.md)。
+> 模块任务与验证证据（M0–M6，已完成）。目标见 [spec/knowledge.md](../spec/knowledge.md)，方案见 [plan/knowledge.md](../plan/knowledge.md)。
 > 通用执行规则见 [tasks.md §0](../tasks.md) 与 [RULES.md](../RULES.md)。
 > 本模块已完成：**完成态文件默认不读**（RULES.md §三.4）；需要查历史证据时按章节引用。
 
@@ -274,7 +274,7 @@ M3 校准记录（M3-3/M3-5 的原始证据）—— 2026-09-23 09:54 打开首�
 
 ## M5 — 外壳（最后做）— 已完成
 
-> 读取软上限 ≤ 12 个文件。「读（必读）」= 不读没法开工；「读（预期波及）」= 不读也能开工，但改到这里必然要看（规则见 [RULES.md](./RULES.md)）。
+> 读取软上限 ≤ 12 个文件。「读（必读）」= 不读没法开工；「读（预期波及）」= 不读也能开工，但改到这里必然要看（规则见 [RULES.md](../RULES.md)）。
 
 | # | 任务 | 读（必读） | 读（预期波及） | 产出文件 | 依赖 | 验证 |
 |---|---|---|---|---|---|---|
@@ -377,7 +377,7 @@ M6 复跑实测补充（plan 未写明，留给后续决策）：
 - **必读 11 个**：`app/main.py`、`app/scheduler.py`、`app/logging_setup.py`、`app/cli.py`、`app/config.py`、`app/repository.py`、`app/models.py`（DDL 与外键级联）、`config/config.yaml`（业务时区 / 端口 / 日志路径）、`plan.md`（§11.1-11.3 / §13.1-13.2）、`spec.md`（§10 六条验收标准原文）、`RULES.md`（读取与轮次边界）
 - **预期波及 3 个**：`app/templates/sources.html`（`row-failing` / `fail-count-red` / tooltip 的落点，§10-5 要靠它数行）、`app/templates/partials/item_card.html`（首页「8 条」这类计数靠它的 class 才数得出来）、`data/logs/deskhub.log`（M6-1 / M6-3 的日志证据来源）
 - **真探索 2 个**：`app/routers/digest.py`（走到 §10-3 / §10-4 才发现得先确认 `/m/{module}` 与 `/go/{id}` 的实际行为）、`.env`（确认 `DESKHUB_LLM_API_KEY` 有配置，只列键名、不看值）
-- 与实现轮的关系：实现轮实测 20 个（必读 14 + 预期波及 4 + 真探索 2，超限说明见 [RULES.md](./RULES.md)）；本轮 16 个，少掉的是「改代码才要看」的那几个（`app/pipeline.py`、`app/fetcher.py`、`app/scorer.py`、`tests/test_repository.py`、`requirements.txt`、`README.md`）—— 复跑不动代码，测试直接跑全量，所以它们没进本轮必读。
+- 与实现轮的关系：实现轮实测 20 个（必读 14 + 预期波及 4 + 真探索 2，超限说明见 [RULES.md](../RULES.md)）；本轮 16 个，少掉的是「改代码才要看」的那几个（`app/pipeline.py`、`app/fetcher.py`、`app/scorer.py`、`tests/test_repository.py`、`requirements.txt`、`README.md`）—— 复跑不动代码，测试直接跑全量，所以它们没进本轮必读。
 
 
 ---
