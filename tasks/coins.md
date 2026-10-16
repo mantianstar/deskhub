@@ -19,6 +19,7 @@
 | 图片本地缓存 + 灯箱 | M15 | ✅ |
 | 采集过滤 + 清理存量 | M18 | ✅ |
 | 描述 / 备注 / 名称走大模型翻译 | M21 | ✅ |
+| 历史购买品相录入 | M23 | ✅ |
 
 ---
 
@@ -107,6 +108,21 @@
 | [x] M21-A | 大模型翻译（一次成文）：新增 `app/coins/translate_llm.py`（纯函数解析 + 批量取数 + `retranslate` 存量重翻）；`numista.py` 的 `_store_series`/`_store_issues` 改异步、经 `_translator` 拿客户端（无 Key 给 None → 词表）、失败逐项回退；`collect_series`/`collect_issues` 加 `llm_client` 注入；CLI `coins-translate [--series-id N]` | `app/coins/translate_llm.py`、`app/coins/numista.py`、`app/coins/translate.py`、`app/cli.py` | 无 Key 时 `coins-translate` 打印提示并 **exit 1** |
 | [x] M21-B | 剥 HTML + 测试 + 文档回写 | `app/coins/translate.py`、`app/coins/numista.py`、`tests/test_coins_translate.py`、`tests/conftest.py` | `pytest`（258 passed）；全量测试不发真实 LLM 请求 |
 
+## 历史购买品相录入 M23（spec/coins.md §14.16）
+
+> 历史订单按「国家 + 年份 + 面值」去重后，人工为每个组合录一档品相。
+> 品相存**独立表**（不覆盖 `coin_orders.condition`、不影响画像与推荐）。只列三者齐全的组合。
+
+| # | 块 | 产出 | 验证 |
+|---|---|---|---|
+| [x] M23-A | 数据 + 页面（一次成文）：`coin_purchase_grades` 表 + `schema_version` 6→7（纯新增表，登记 `FORWARD_ADDITIVE_UPGRADES`）+ repository 读写（去重查询 / upsert / 删除 / 候选）；路由 `GET /coins/grades` + `POST /coins/grades/save`；新建 `coins/grades.html`；`sessions/info/manage.html` 子导航补「品相录入」；`style.css` 追加 `.coin-grade-table` / `.coin-grade-actions` | `app/models.py`、`app/db.py`、`app/repository.py`、`app/routers/coins.py`、`app/templates/coins/{grades,sessions,info,manage}.html`、`app/static/style.css` | 真实库（1567 单 → **953 组合**）：`/coins/grades` 200；筛「东加勒比」2 组合；POST 保存 302、落库 2 行、回显 `selected`；老库启动自动 6→7 |
+| [x] M23-B | 测试 + 文档回写 | `tests/test_coins_pages.py`（去重 / 筛选 / 页面 / 保存 / 清除 / 校验 6 例）、spec/plan/tasks/CHANGELOG | `pytest`（268 → **274 passed**） |
+| [x] M23-C | 年份 / 面值按 Numista 口径统一 + 可手工新增组合：新增 `app/coins/grades.py`（纯函数：`normalize_year` / `normalize_denomination` / `build_combos` / `filter_combos` / 候选）；repository 收敛为纯读写（去重从 SQL 挪到模块）；路由加 `POST /coins/grades/add`、保存前统一；模板加「新增组合」表单 + 统一口径说明 | `app/coins/grades.py`、`app/repository.py`、`app/routers/coins.py`、`app/templates/coins/grades.html` | 真实库：1567 单 → **845 组合**（原始写法去重 953 → 仅统一年份 / 面值 867 → 再加国家前缀 845）；`1910`/`1910年`、`一分`/`1分`、`英属新西兰`/`新西兰` 各并一行；新增「英国 1910年 1便士」→ 落库 `英国 / 1910 / 1 便士` |
+| [x] M23-D | 测试 + 文档回写 | `tests/test_coins_pages.py`（统一 / 合并 / 手工新增 / 筛选等 11 例）、spec/plan/tasks/CHANGELOG | `pytest`（274 → **279 passed**） |
+| [x] M23-E | 国家也统一 + 整行删除（一次成文）：`grades.normalize_country` 去殖民前缀（`英属`/`法属`/`荷属`/`葡属`/`德属`…）；repository 加 `list_coin_order_keys` / `delete_coin_orders`；`grades.order_ids_for_combo` 按统一后的组合反查订单 id；路由加 `POST /coins/grades/delete`；模板加「操作」列 + 页内二次确认 JS + 说明；`style.css` 加 `.btn-danger` | `app/coins/grades.py`、`app/repository.py`、`app/routers/coins.py`、`app/templates/coins/grades.html`、`app/static/style.css` | 真实库：候选国家 **155 → 140**（36 个 `X属` 前缀合并掉 22 组，组合数 867 → **845**）；页面 845 行各带一个「删除」按钮；删整行连带该组合全部订单（含不同写法）|
+| [x] M23-F | 测试 + 文档回写 | `tests/test_coins_pages.py`（国家统一 / 删整行连带订单 / 删手工组合 / 参数校验 4 例）、spec/plan/tasks/CHANGELOG/README | `pytest`（279 → **283 passed**）|
+| [x] M23-G | 品相查询条件：`filter_combos` 加 `grade`（空=不限，其余精确相等）；路由 `GET /coins/grades` 加 `grade` 参数；模板查询表单加品相下拉（全部 / 好 / 普通 / 差） | `app/coins/grades.py`、`app/routers/coins.py`、`app/templates/coins/grades.html`、`tests/test_coins_pages.py` | 真实库（853 组合 / 已录 163）：`grade=好` → 47 组合；空 → 853；`pytest`（283 → **284 passed**）|
+
 ---
 
 ## 未结项（需要时间 / 需要你）
@@ -150,5 +166,19 @@
 | 存量重翻不重采 Numista | M21-A | [x] `coins-translate [--series-id N]` 读英文表 → 覆盖中文表；不重采、不加行 |
 | 信息页面三条流程 + 11 条验收（§14.14） | M14 · M16 · M17 · M19 · M20 · M22 | [x] 三页真实库渲染通过；筛选 / 合并表 / 年份统计 / 宽表 / 缩略图逐条实测 |
 | 图片本地缓存 + 灯箱（§14.15） | M15 | [x] 真实 CDP 下载 2 张；未缓存 404 无破图；灯箱 Playwright 实测通过 |
+
+**历史购买品相录入（spec/coins.md §14.16）**
+
+| 验收项 | 对应块 | 状态 |
+|---|---|---|
+| 去重（只列国家/年份/面值齐全的组合） | M23-A/C | [x] 真实库 1567 单 → 845 组合；去重用例覆盖 |
+| 国家 / 年份 / 面值按 Numista 口径统一 | M23-C/E | [x] `英属新西兰`→`新西兰`、`1910年`→`1910`、`1便士`→`1 便士`、`一分`→`1 分`、`壹圆`→`1 圆`；年号原样 |
+| 同值不同写法合并成一行 | M23-C/E | [x] 953（原始）→ 867（年份/面值）→ **845**（加国家前缀）；用例覆盖 |
+| 按国家 / 年份 / 面值 / 品相查询 | M23-A/C/G | [x] 宽松包含 + 品相精确匹配；输入 `1910年` 命中 `1910` |
+| 可手工新增历史订单缺失的组合 | M23-C | [x] `POST /coins/grades/add` 四项必填；新增后进列表（订单数 0） |
+| **整行删除（历史错误数据）+ 二次确认** | M23-E | [x] 页内二次确认；删掉该组合全部订单（含不同写法）+ 品相记录，其余不动 |
+| 品相下拉（好 / 普通 / 差） | M23-A | [x] 行内下拉 + 「未录入」；已录值回显 |
+| 保存到数据库 | M23-A | [x] POST 保存 302、统一后落库；重存覆盖、选「未录入」清除 |
+| 不动画像 / 推荐 | M23-A | [x] 写独立表 `coin_purchase_grades`，`coin_orders` 一行未改 |
 
 > 当前实现取的是 spec/coins.md §14.11 的建议值（匹配阈值 1.5 / 样本下限 3 / 窗口 180 天 / 单轮上限 20 / 中位数），**匹配阈值待拿到真实推荐结果后校准**。

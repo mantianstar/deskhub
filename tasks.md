@@ -34,7 +34,7 @@
 | 模块 | 里程碑 | 状态 | 任务文件 | 未结项 |
 |---|---|---|---|---|
 | 知识聚合 | M0–M6 | ✅ 已完成 | [tasks/knowledge.md](./tasks/knowledge.md) | spec §10 第 6 条「连续多天主动打开」 |
-| 铜币拍卖 | M7–M22 | ✅ 代码完成 / ⏳ 收尾 | [tasks/coins.md](./tasks/coins.md) | 多日观察、匹配阈值校准 |
+| 铜币拍卖 | M7–M23 | ✅ 代码完成 / ⏳ 收尾 | [tasks/coins.md](./tasks/coins.md) | 多日观察、匹配阈值校准 |
 | 运行控制 | M17 | ✅ 已完成 | [tasks/control.md](./tasks/control.md) | 无 |
 
 > 分区规则：**一个里程碑 = 一个对话**（[RULES.md](./RULES.md) §三）；开发时**只读当前模块的任务文件**，

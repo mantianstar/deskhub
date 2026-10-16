@@ -37,10 +37,11 @@ app/
 │   ├── numista_web.py   # Numista 类型页（CDP）：各品相估值 + Frequency + 图片缓存（§18.13.2 / §18.15）
 │   ├── translate.py     # 英文→中文内置词表（枚举字段 + 长文本回退；离线免费，§18.13.1）
 │   ├── translate_llm.py # 描述/备注/名称的大模型翻译 + 存量重翻（§18.13.4）
+│   ├── grades.py        # 历史购买品相录入：年份/面值按 Numista 口径统一 + 组合去重合并（§18.16）
 │   └── pipeline.py      # 拍卖管道：采集 → 匹配 → 定价 编排（调度器与 CLI 共用）
 ├── textmatch.py         # 面值/材质文本匹配（采集过滤与页面筛选共用，§18.13.3 / §18.14）
-├── routers/coins.py     # 拍卖页（/coins、/coins/session/{id}、/coins/profile）+ 参考库页（/coins/info、/coins/series/{id}、/coins/manage）
-└── templates/coins/     # sessions.html、session.html、profile.html、info.html、series.html、manage.html
+├── routers/coins.py     # 拍卖页（/coins、/coins/session/{id}、/coins/profile）+ 参考库页（/coins/info、/coins/series/{id}、/coins/manage）+ 品相录入页（/coins/grades）
+└── templates/coins/     # sessions.html、session.html、profile.html、info.html、series.html、manage.html、grades.html
 config/config.yaml       # coins: 段（见 §18.10）
 data/
 └── orders.xlsx          # 画像输入（已存在）
@@ -527,3 +528,104 @@ async def download_series_images(config, *, numista_id, cdp_url=None) -> dict[st
 **表结构**：**不改**（靠文件是否存在判断），无 schema 变更、无迁移。
 
 **测试**（`tests/test_coins_pages.py`，`IMAGE_DIR` → `tmp_path`、`_fetch_bytes_via_cdp` 换桩）：未缓存→404 + 页面出链接；已缓存→200 + 页面出 `<img>`；落盘写文件并清旧后缀；未知系列报错；详情页含 `coin-zoom` 类与 `#coin-lightbox`；管理页「④ 下载图片」桩掉 `download_series_images` 后 302。
+
+---
+
+## 18.16 历史购买品相录入（对应 spec/coins.md §14.16）
+
+**定位**：给历史订单（`coin_orders`，§18.4）里的每个「国家 + 年份 + 面值」组合人工补一档品相。纯页面 + 人工录入，**不调接口、不进调度**。
+
+**数据层（`schema_version` 6 → 7，纯新增表 → 登记进 `db.FORWARD_ADDITIVE_UPGRADES`，无需 ALTER）**
+
+```sql
+CREATE TABLE IF NOT EXISTS coin_purchase_grades (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  country      TEXT NOT NULL,
+  era          TEXT NOT NULL,   -- 年份 / 年号（与 coin_orders.era 同源）
+  denomination TEXT NOT NULL,
+  grade        TEXT NOT NULL CHECK (grade IN ('好','普通','差')),
+  updated_at   TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uidx_coin_purchase_grades
+  ON coin_purchase_grades(country, era, denomination);
+```
+
+- **为什么不写 `coin_orders.condition`**：那是**订单级**、由 LLM 抽的**包浆描述**（如「巧克力包浆」），
+  覆盖成 好/普通/差 会污染画像（`condition` 是画像维度之一）并影响每日推荐。本表**与画像 / 推荐无关**，只作人工参考。
+- **一个组合一行**：去重键就是 `(country, era, denomination)`；重存为覆盖（upsert），选「未录入」则删行。
+
+**统一（`app/coins/grades.py`，纯函数）**
+
+历史订单里的 `era` / `denomination` 是 LLM 抄的**原样片段**，形态很杂（`1910` 与 `1910年`、
+`1便士` 与 `一分` 并存）。统一成与 Numista 中文表一致的口径，**统一后的值既是展示值、也是去重键与落库键**：
+
+- `normalize_country`：去殖民时期前缀（`英属新西兰` → `新西兰`、`荷属东印度` → `东印度`；
+  真库里 182 个国家里有 36 个带 `英属 / 法属 / 荷属 / 葡属 / 德属` 前缀）；去掉后会变空则原样保留。
+- `normalize_year`：去「年 / 年度」后缀只留纯数字（`1910年` → `1910`）；**年号**（`康德四年` / `民国31年`）
+  没有公历数字 → **原样保留**。
+- `normalize_denomination`：前导数字（阿拉伯 / 中文含大写 `壹贰伍拾` / 分数 `1/4`、`¼`、`2½`）→ 阿拉伯数字，
+  与单位之间加一个空格：`1便士`→`1 便士`、`一分`→`1 分`、`二十文`→`20 文`、`壹圆`→`1 圆`、
+  `1/4安娜`→`1/4 安娜`、`¼安娜`→`四分之一 安娜`、`半便士`→`半 便士`；
+  **认不出前导数字的原样保留**（`当制钱十文` / `大便士` / `克朗`）。
+- `build_combos(orders, grades)`：按统一后的三元组去重计数（**只取三者齐全**的行），
+  LEFT JOIN 已录品相；**已录品相但没有对应订单的组合（手工新增的）也作为一行**（`order_count = 0`）。
+- `filter_combos(combos, country, era, denomination, grade)`：国家 / 年份 / 面值的查询词也先按同一口径统一，再用
+  `app.textmatch.contains` 做宽松包含（输入 `1910年` 命中 `1910`、`1便士` 命中 `1 便士`）；
+  `grade` 空 = 不限，其余按 好 / 普通 / 差 精确相等。
+- `countries_of` / `denominations_of`：页面 `<datalist>` 候选（都是统一后的写法，如 `新西兰` / `1 便士`）。
+- `order_ids_for_combo(rows, country, era, denomination)`：从 `repository.list_coin_order_keys()` 里挑出属于
+  该组合（**统一后**）的订单 id —— 库里存的是**原始**写法（`1910年` / `一分`），删整行必须逐个统一后再比对，
+  不能按列相等去删。
+
+**repository 增量**（`app/repository.py`；SQL 只在此处，去重 / 统一 / 合并**不在**这里）
+
+```python
+list_coin_orders()                                                 # 已有：订单级原料，供 build_combos
+list_coin_order_keys() -> list[tuple[int, str|None, str|None, str|None]]   # (id, country, era, denomination)
+delete_coin_orders(ids: Sequence[int]) -> int                      # 按 id 删历史订单（删整行用）
+list_coin_purchase_grades() -> list[CoinPurchaseGrade]             # 供测试 / 核对
+upsert_coin_purchase_grade(country, era, denomination, grade)      # 按三键幂等写
+delete_coin_purchase_grade(country, era, denomination) -> bool     # 选「未录入」/ 删整行时清除
+```
+
+**路由**（追加到 `app/routers/coins.py`）
+
+| 方法 | 路径 | 职责 | 模板 |
+|---|---|---|---|
+| GET | `/coins/grades` | `build_combos` + `filter_combos`（国家 / 年份 / 面值 / 品相，均可空）→ 组合表 | `coins/grades.html` |
+| POST | `/coins/grades/add` | 手工新增一条组合（四项必填；统一后 upsert） | 302 → `/coins/grades` |
+| POST | `/coins/grades/delete` | 删整行：`order_ids_for_combo` 反查订单 → `delete_coin_orders` + `delete_coin_purchase_grade` | 302 → 回查询页（带原筛选条件） |
+| POST | `/coins/grades/save` | 保存整表：逐行 upsert / 删；键不完整或品相非法 → 400（整批不落库） | 302 → 回查询页（带原筛选条件） |
+
+- **保存用「按行对齐的重复字段」**：每行 `<input type="hidden" name="country/era/denomination">` + `<select name="grade">`，
+  四组字段按行序一一对应（浏览器原生表单即可，无需 JS）；另带 `filter_*` 三个隐藏字段，保存后重定向回同样的筛选结果。
+  提交值落库前**再过一遍统一**（幂等，防止手改表单）。
+- **品相取值**：`models.COIN_PURCHASE_GRADES = ("好","普通","差")`；下拉另有空值「未录入」（= 清除）。
+- **删整行不能是嵌套 form**（行在「保存」大表单里，HTML 不允许嵌套表单）：故删按钮是 `type="button"`，
+  页内二次确认后由**原生 JS 动态建一个隐藏表单**提交 `/coins/grades/delete`（连带把 `filter_*` 一起带上）。
+  第一次点变「确认删除」并在一旁给「取消」，再点才真提交；确认态按钮加 `.btn-danger` 描红。
+- **删整行的边界**：`country / era / denomination` 缺一的行**不显示**、因此也删不到；
+  重跑 `coins-parse-orders` 会从 `orders.xlsx` 重新导入（删除不是永久屏蔽）；画像标签也不会自动重算。
+
+**模板与样式**
+
+- 新建 `app/templates/coins/grades.html`：查询表单 + **新增组合表单**（国家 / 年份 / 面值 / 品相四项必填）+ 结果表（含**操作列：删除**）+
+  底部「保存」；删按钮的二次确认写在 `{% block scripts %}` 的原生 JS 里；`digest-meta` 放同款子导航，
+  并在 `sessions.html` / `info.html` / `manage.html` 的子导航里**补「品相录入」入口**。
+- `style.css` 末尾新增 `.coin-grade-table select`（行内下拉观感）、`.coin-grade-actions`（底部保存按钮）、
+  `.coin-grade-del`（小号按钮）与 `.btn-danger`（二次确认态描红）；其余复用既有类。
+
+**测试**（`tests/test_coins_pages.py` 增量，沿用「测试不发真实网络请求」）
+
+| 用例 | 断言 |
+|---|---|
+| 统一（国家 / 年份 / 面值） | `英属新西兰`→`新西兰`、`荷属东印度`→`东印度`、`1910年`→`1910`、`1便士`→`1 便士`、`一分`→`1 分`、`二十文`→`20 文`、`壹圆`→`1 圆`、`1/4安娜`→`1/4 安娜`、`¼安娜`→`四分之一 安娜`、`半便士`→`半 便士`；年号与 `当制钱十文` / `大便士` / `英属`（会变空）原样；已统一值幂等 |
+| 去重 | 同值不同写法（`1808` / `1808年`、`一分` / `1分`、`英属新西兰` / `新西兰`）合并为一行；缺任一维度的订单**不出现** |
+| 手工新增的组合 | 无订单也进列表，`order_count = 0` |
+| 筛选 | 国家 / 年份 / 面值 / 品相分别命中；输入 `1808年` 命中 `1808` |
+| 页面 | 组合数 = 结果表行数（隐藏键）；下拉含「未录入 / 好 / 普通 / 差」；查询表单含品相筛选；新增表单在页内；每行一个删按钮；删路径与「确认删除」在页内；展示统一后的值 |
+| 保存 | 302 回原筛选；统一后落库；重存不新增行；已录值回显 `selected` |
+| 清除 | 选「未录入」→ 删该组合、其余保留 |
+| 校验 | 品相非法 / 国家或年份为空 → 400，且**一行都不落库** |
+| 新增 | 302；年份面值统一后落库；组合出现在列表 |
+| 删整行 | 传**原始写法**也能删（按统一后组合比对）：该组合全部订单（含不同写法）+ 品相记录都删掉、其余订单不动；手工组合（无订单）删后只少品相行；键不完整 → 400 |

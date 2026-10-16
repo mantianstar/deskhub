@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-SCHEMA_VERSION = "6"
+SCHEMA_VERSION = "7"
 
 # 所有时间列存 UTC ISO8601 字符串（SQLite 无原生时间类型）
 DDL = """
@@ -305,6 +305,19 @@ CREATE TABLE IF NOT EXISTS coin_api_usage (
 );
 CREATE INDEX IF NOT EXISTS idx_coin_api_usage ON coin_api_usage(provider, called_at);
 
+-- 历史购买品相录入（人工按「国家 + 年份 + 面值」组合录一档品相，spec §14.16）
+-- 独立于 coin_orders：那是订单级原料，这里是一个币种组合一行，不覆盖 LLM 抽的 condition。
+CREATE TABLE IF NOT EXISTS coin_purchase_grades (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  country      TEXT NOT NULL,
+  era          TEXT NOT NULL,   -- 年份 / 年号（与 coin_orders.era 同源）
+  denomination TEXT NOT NULL,
+  grade        TEXT NOT NULL CHECK (grade IN ('好','普通','差')),
+  updated_at   TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uidx_coin_purchase_grades
+  ON coin_purchase_grades(country, era, denomination);
+
 -- ============ 功能开关（管理页 /control）============
 -- 控制「各类任务是否自动执行」：关掉后每天 08:00 的定时任务不再跑它。
 -- 页面上的「立即运行」是手动触发，忽略这张表（见 app/switches.py）。
@@ -446,6 +459,9 @@ COIN_SESSION_STATUS_LABELS = {
     "closed": "已结束",
 }
 
+# 历史购买品相录入的可选档位（coin_purchase_grades.grade 的 CHECK 一致）
+COIN_PURCHASE_GRADES = ("好", "普通", "差")
+
 
 @dataclass
 class CoinOrder:
@@ -460,6 +476,32 @@ class CoinOrder:
     denomination: str | None = None
     category: str | None = None
     condition: str | None = None
+
+
+@dataclass
+class CoinOrderCombo:
+    """历史订单按「国家 + 年份 + 面值」去重后的一行（品相录入页的展示单元）。
+
+    `order_count` 是该组合下的订单数；`grade` 是人工已录的品相（未录为 None）。
+    """
+
+    country: str
+    era: str
+    denomination: str
+    order_count: int
+    grade: str | None
+
+
+@dataclass
+class CoinPurchaseGrade:
+    """人工录入的一条品相（`(country, era, denomination)` 唯一）。"""
+
+    id: int | None
+    country: str
+    era: str
+    denomination: str
+    grade: str
+    updated_at: str
 
 
 @dataclass

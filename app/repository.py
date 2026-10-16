@@ -23,6 +23,7 @@ from app.models import (
     CoinOrder,
     CoinPriceRef,
     CoinProfileTag,
+    CoinPurchaseGrade,
     CoinSeries,
     CoinSeriesIssueStats,
     CoinSession,
@@ -717,6 +718,83 @@ def list_coin_orders() -> list[CoinOrder]:
         )
         for row in rows
     ]
+
+
+# ---------------------------------------------------------------- 历史购买品相录入（spec §14.16）
+# 去重 / 年份面值统一 / 合并一律在 `app.coins.grades`（纯函数）；这里只做读写。
+
+
+def list_coin_purchase_grades() -> list[CoinPurchaseGrade]:
+    with db.connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT id, country, era, denomination, grade, updated_at
+            FROM coin_purchase_grades ORDER BY country, era, denomination
+            """
+        ).fetchall()
+    return [
+        CoinPurchaseGrade(
+            id=row["id"],
+            country=row["country"],
+            era=row["era"],
+            denomination=row["denomination"],
+            grade=row["grade"],
+            updated_at=row["updated_at"],
+        )
+        for row in rows
+    ]
+
+
+def upsert_coin_purchase_grade(country: str, era: str, denomination: str, grade: str) -> None:
+    """按「国家 + 年份 + 面值」写一档品相（冲突则覆盖，幂等重存）。"""
+    with db.connect() as conn, conn:
+        conn.execute(
+            """
+            INSERT INTO coin_purchase_grades (country, era, denomination, grade, updated_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(country, era, denomination) DO UPDATE SET
+                grade      = excluded.grade,
+                updated_at = excluded.updated_at
+            """,
+            (country, era, denomination, grade, utcnow()),
+        )
+
+
+def delete_coin_purchase_grade(country: str, era: str, denomination: str) -> bool:
+    """清除某组合的品相（下拉选回「未录入」时用）。返回是否真的删了一行。"""
+    with db.connect() as conn, conn:
+        cursor = conn.execute(
+            """
+            DELETE FROM coin_purchase_grades
+            WHERE country = ? AND era = ? AND denomination = ?
+            """,
+            (country, era, denomination),
+        )
+    return cursor.rowcount > 0
+
+
+def list_coin_order_keys() -> list[tuple[int, str | None, str | None, str | None]]:
+    """`(id, country, era, denomination)`：供品相页按**统一后的组合**反查要删的历史订单。
+
+    存的是原始写法，比对必须走 `app.coins.grades`（不能按列相等）。
+    """
+    with db.connect() as conn:
+        rows = conn.execute(
+            "SELECT id, country, era, denomination FROM coin_orders ORDER BY id"
+        ).fetchall()
+    return [(row["id"], row["country"], row["era"], row["denomination"]) for row in rows]
+
+
+def delete_coin_orders(ids: Sequence[int]) -> int:
+    """按 id 删除历史订单（品相页删「错误数据」整行时用）。返回实际删除的行数。"""
+    if not ids:
+        return 0
+    placeholders = ",".join("?" for _ in ids)
+    with db.connect() as conn, conn:
+        cursor = conn.execute(
+            f"DELETE FROM coin_orders WHERE id IN ({placeholders})", list(ids)
+        )
+    return cursor.rowcount
 
 
 def _row_to_coin_tag(row: sqlite3.Row) -> CoinProfileTag:

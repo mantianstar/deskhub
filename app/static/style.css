@@ -821,3 +821,24 @@ body {
 
 .form-hint { margin: 10px 0 0; color: var(--text-muted); font-size: 12px; }
 
+/* 品相录入表：行内下拉框沿用 .field select 观感；底部保存按钮 */
+.coin-grade-table select {
+  padding: 6px 8px;
+  font-size: 13px;
+  font-family: inherit;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.coin-grade-table td:first-child { min-width: 90px; }
+
+/* 「删除整行」：二次确认态描红；确认 / 取消并排 */
+.coin-grade-del .btn { padding: 4px 10px; font-size: 12px; }
+.coin-grade-del .js-grade-del-cancel { margin-left: 6px; }
+.btn-danger { color: var(--danger-fg); background: var(--danger-bg); border-color: var(--danger-border); }
+.btn-danger:hover { color: var(--danger-fg); border-color: var(--danger-fg); }
+
+.coin-grade-actions { margin-top: 14px; }
+

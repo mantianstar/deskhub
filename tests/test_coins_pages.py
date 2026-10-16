@@ -14,6 +14,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app import config, repository
+from app.coins import grades as coins_grades
 from app.coins import numista as coins_numista
 from app.coins import numista_web as coins_numista_web
 from app.coins.numista import NumistaError
@@ -23,6 +24,7 @@ from app.models import (
     CoinIssue,
     CoinIssueValues,
     CoinLot,
+    CoinOrder,
     CoinPriceRef,
     CoinSeries,
     CoinSession,
@@ -902,3 +904,305 @@ def test_download_series_images_rejects_unknown_series(web, tmp_path, monkeypatc
     monkeypatch.setattr(coins_numista_web, "IMAGE_DIR", tmp_path / "coin_images")
     with pytest.raises(coins_numista_web.NumistaPageError):
         asyncio.run(coins_numista_web.download_series_images(config.get(), numista_id=999999))
+
+
+# ---------------------------------------------------------------- 历史购买品相录入（spec §14.16）
+
+
+def _seed_orders() -> None:
+    """四组可去重的完整组合 + 一条缺面值（应排除）；A1/A2 与 A5 用于验「同值不同写法」合并。"""
+    for order_no, name, country, era, denomination in (
+        ("A1", "英国1808年一分", "英国", "1808", "一分"),
+        ("A2", "英国1808年一分（再买一枚）", "英国", "1808年", "1分"),
+        ("A3", "印度1900年半安娜", "印度", "1900", "半安娜"),
+        ("A5", "英属新西兰1940年半便士", "英属新西兰", "1940", "半便士"),
+    ):
+        repository.upsert_coin_order(
+            CoinOrder(
+                order_no=order_no,
+                shop_name="小铺",
+                item_name=name,
+                price=10.0,
+                country=country,
+                era=era,
+                denomination=denomination,
+            )
+        )
+    repository.upsert_coin_order(
+        CoinOrder(order_no="A4", shop_name="小铺", item_name="无名币", price=5.0, country="英国", era="1808")
+    )
+
+
+def _combos(*, country=None, era=None, denomination=None, grade=None):
+    all_combos = coins_grades.build_combos(
+        repository.list_coin_orders(), repository.list_coin_purchase_grades()
+    )
+    return coins_grades.filter_combos(
+        all_combos, country=country, era=era, denomination=denomination, grade=grade
+    )
+
+
+def test_normalize_country_to_numista_style():
+    assert coins_grades.normalize_country("英属新西兰") == "新西兰"
+    assert coins_grades.normalize_country("英属澳大利亚") == "澳大利亚"
+    assert coins_grades.normalize_country("荷属东印度") == "东印度"
+    assert coins_grades.normalize_country("葡属澳门") == "澳门"
+    # 没有前缀 / 会变空 → 原样
+    assert coins_grades.normalize_country("英国") == "英国"
+    assert coins_grades.normalize_country("  英国 ") == "英国"
+    assert coins_grades.normalize_country("英属") == "英属"
+    assert coins_grades.normalize_country(None) == ""
+
+
+def test_normalize_year_to_numista_style():
+    assert coins_grades.normalize_year("1910年") == "1910"
+    assert coins_grades.normalize_year("1959") == "1959"
+    assert coins_grades.normalize_year(" 1910 ") == "1910"
+    # 年号没有公历数字 → 原样保留
+    assert coins_grades.normalize_year("康德四年") == "康德四年"
+    assert coins_grades.normalize_year("光绪") == "光绪"
+    assert coins_grades.normalize_year("民国六十二年") == "民国六十二年"
+
+
+def test_normalize_denomination_to_numista_style():
+    assert coins_grades.normalize_denomination("1便士") == "1 便士"
+    assert coins_grades.normalize_denomination("一分") == "1 分"
+    assert coins_grades.normalize_denomination("半便士") == "半 便士"
+    assert coins_grades.normalize_denomination("二十文") == "20 文"
+    assert coins_grades.normalize_denomination("五毫") == "5 毫"
+    assert coins_grades.normalize_denomination("2.5比塞塔") == "2.5 比塞塔"
+    # 大写中文数字与分数（真实订单里都有）
+    assert coins_grades.normalize_denomination("壹圆") == "1 圆"
+    assert coins_grades.normalize_denomination("拾分") == "10 分"
+    assert coins_grades.normalize_denomination("1/4安娜") == "1/4 安娜"
+    assert coins_grades.normalize_denomination("1/12先令") == "1/12 先令"
+    assert coins_grades.normalize_denomination("¼安娜") == "四分之一 安娜"
+    assert coins_grades.normalize_denomination("½便士") == "半 便士"
+    # 已是统一写法 → 幂等
+    assert coins_grades.normalize_denomination("1 便士") == "1 便士"
+    assert coins_grades.normalize_denomination("半 便士") == "半 便士"
+    # 认不出前导数字 → 原样保留
+    assert coins_grades.normalize_denomination("当制钱十文") == "当制钱十文"
+    assert coins_grades.normalize_denomination("大便士") == "大便士"
+
+
+def test_grades_page_empty_state(web):
+    page = web.get("/coins/grades")
+    assert page.status_code == 200
+    assert "没有可录入的历史记录" in page.text
+
+
+def test_build_combos_dedupes_after_normalizing(web):
+    _seed_orders()
+    # 「1808」与「1808年」、「一分」与「1分」统一后合并成一行（order_count=2）；
+    # 「英属新西兰」也统一成「新西兰」
+    assert [
+        (c.country, c.era, c.denomination, c.order_count, c.grade) for c in _combos()
+    ] == [
+        ("印度", "1900", "半 安娜", 1, None),
+        ("新西兰", "1940", "半 便士", 1, None),
+        ("英国", "1808", "1 分", 2, None),
+    ]
+
+
+def test_build_combos_includes_grades_without_orders(web):
+    """手工新增的组合（历史订单里没有）也进列表，order_count=0。"""
+    repository.upsert_coin_purchase_grade("英国", "1910", "1 便士", "好")
+    assert [
+        (c.country, c.era, c.denomination, c.order_count, c.grade) for c in _combos()
+    ] == [("英国", "1910", "1 便士", 0, "好")]
+
+
+def test_filter_combos(web):
+    _seed_orders()
+    assert [(c.era, c.denomination) for c in _combos(country="英国")] == [("1808", "1 分")]
+    assert [(c.country, c.era) for c in _combos(denomination="半安娜")] == [("印度", "1900")]
+    assert [(c.country, c.denomination) for c in _combos(era="1900")] == [("印度", "半 安娜")]
+    # 用户按原写法查（带「年」）也能命中统一后的值
+    assert [(c.country,) for c in _combos(era="1808年")] == [("英国",)]
+
+
+def test_grades_page_lists_combos_with_dropdown(web):
+    _seed_orders()
+    page = web.get("/coins/grades")
+    assert page.status_code == 200
+    # 三个去重组合 → 结果表里三行（每行一个隐藏键 + 一个品相下拉 + 一个删除按钮）
+    assert page.text.count('<input type="hidden" name="denomination"') == 3
+    assert page.text.count('class="btn btn-ghost js-grade-del"') == 3
+    # 行内下拉 ×3 + 「新增」表单下拉 ×1 + 查询表单的品相筛选 ×1
+    assert page.text.count('<select name="grade"') == 5
+    for label in ("未录入", "好", "普通", "差"):
+        assert f">{label}</option>" in page.text
+    # 查询表单的品相筛选
+    assert '<option value="" selected>全部</option>' in page.text
+    # 新增组合表单
+    assert 'action="/coins/grades/add"' in page.text
+    # 删除走页内二次确认
+    assert "'/coins/grades/delete'" in page.text
+    assert "确认删除" in page.text
+    # 展示的是统一后的值
+    assert "<td>1 分</td>" in page.text
+    assert "<td>新西兰</td>" in page.text
+
+
+def test_grades_page_filters_by_grade(web):
+    _seed_orders()
+    repository.upsert_coin_purchase_grade("英国", "1808", "1 分", "好")
+    repository.upsert_coin_purchase_grade("印度", "1900", "半 安娜", "差")
+
+    # 结果里三行：英国=好、印度=差、新西兰=未录入
+    assert [(c.country, c.grade) for c in _combos()] == [
+        ("印度", "差"),
+        ("新西兰", None),
+        ("英国", "好"),
+    ]
+    assert [(c.country,) for c in _combos(grade="好")] == [("英国",)]
+
+    # 页面：带品相条件只出对应行
+    page = web.get("/coins/grades", params={"grade": "好"})
+    assert page.text.count('<input type="hidden" name="denomination"') == 1
+    assert "本次 1 个组合 · 已录 1" in page.text
+
+
+def test_grades_save_upserts_and_clears(web):
+    _seed_orders()
+    resp = web.post(
+        "/coins/grades/save",
+        data={
+            "country": ["英国", "印度"],
+            "era": ["1808", "1900"],
+            "denomination": ["一分", "半安娜"],
+            "grade": ["好", "差"],
+            "filter_country": "英国",
+            "filter_year": "",
+            "filter_denomination": "",
+        },
+        follow_redirects=False,
+    )
+    assert resp.status_code == 302
+    # 带回筛选条件重定向
+    assert resp.headers["location"] == "/coins/grades?country=%E8%8B%B1%E5%9B%BD&year=&denomination="
+
+    # 落库键是统一后的写法
+    stored = {(g.country, g.era, g.denomination): g.grade for g in repository.list_coin_purchase_grades()}
+    assert stored == {("英国", "1808", "1 分"): "好", ("印度", "1900", "半 安娜"): "差"}
+    # 已录值回显
+    assert 'value="好" selected' in web.get("/coins/grades").text
+
+    # 选回「未录入」（空串）→ 清除该组合，另一行保留
+    web.post(
+        "/coins/grades/save",
+        data={
+            "country": ["英国", "印度"],
+            "era": ["1808", "1900"],
+            "denomination": ["一分", "半安娜"],
+            "grade": ["好", ""],
+        },
+    )
+    assert [g.grade for g in repository.list_coin_purchase_grades()] == ["好"]
+
+
+def test_grades_save_rejects_bad_grade(web):
+    _seed_orders()
+    resp = web.post(
+        "/coins/grades/save",
+        data={
+            "country": ["英国"],
+            "era": ["1808"],
+            "denomination": ["一分"],
+            "grade": ["极品"],
+        },
+        follow_redirects=False,
+    )
+    assert resp.status_code == 400
+    assert repository.list_coin_purchase_grades() == []
+
+
+def test_grades_add_creates_combo_and_normalizes(web):
+    _seed_orders()
+    resp = web.post(
+        "/coins/grades/add",
+        data={"country": "英国", "year": "1910年", "denomination": "1便士", "grade": "普通"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 302
+    assert resp.headers["location"] == "/coins/grades"
+    # 年份 / 面值统一后入库，且该组合出现在列表里（历史订单里没有）
+    assert [
+        (g.country, g.era, g.denomination, g.grade) for g in repository.list_coin_purchase_grades()
+    ] == [("英国", "1910", "1 便士", "普通")]
+    assert [
+        (c.country, c.era, c.denomination, c.order_count, c.grade) for c in _combos()
+    ][-1] == ("英国", "1910", "1 便士", 0, "普通")
+
+
+def test_grades_add_validates_input(web):
+    _seed_orders()
+    # 品相非法 / 国家为空 → 400，且不落库
+    assert web.post(
+        "/coins/grades/add",
+        data={"country": "英国", "year": "1910", "denomination": "1便士", "grade": "极品"},
+        follow_redirects=False,
+    ).status_code == 400
+    assert web.post(
+        "/coins/grades/add",
+        data={"country": "   ", "year": "1910", "denomination": "1便士", "grade": "好"},
+        follow_redirects=False,
+    ).status_code == 400
+    assert repository.list_coin_purchase_grades() == []
+
+
+def test_grades_delete_removes_orders_and_grade(web):
+    """删整行：清掉该组合的**全部历史订单**（含不同写法）+ 品相记录，其余组合不动。"""
+    _seed_orders()
+    repository.upsert_coin_purchase_grade("英国", "1808", "1 分", "好")
+    assert len(repository.list_coin_order_keys()) == 5  # A1/A2/A3/A5 + 缺面值的 A4
+
+    resp = web.post(
+        "/coins/grades/delete",
+        # 传原始写法也能删（按统一后的组合比对）
+        data={
+            "country": "英国",
+            "era": "1808年",
+            "denomination": "一分",
+            "filter_country": "英国",
+            "filter_year": "",
+            "filter_denomination": "",
+        },
+        follow_redirects=False,
+    )
+    assert resp.status_code == 302
+    assert resp.headers["location"] == "/coins/grades?country=%E8%8B%B1%E5%9B%BD&year=&denomination="
+
+    # A1（一分）与 A2（1分）都被删；缺面值的 A4、印度 A3、新西兰 A5 留下
+    remaining = repository.list_coin_order_keys()
+    assert {row[3] for row in remaining} == {None, "半安娜", "半便士"}
+    assert repository.list_coin_purchase_grades() == []
+    assert [(c.country,) for c in _combos(country="英国")] == []
+
+
+def test_grades_delete_removes_manual_combo_without_orders(web):
+    """手工新增的组合（无历史订单）也能整行删掉。"""
+    _seed_orders()
+    repository.upsert_coin_purchase_grade("英国", "1910", "1 便士", "好")
+    orders_before = len(repository.list_coin_order_keys())
+
+    resp = web.post(
+        "/coins/grades/delete",
+        data={"country": "英国", "era": "1910", "denomination": "1 便士"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 302
+    assert repository.list_coin_purchase_grades() == []
+    assert len(repository.list_coin_order_keys()) == orders_before  # 订单一条没动
+
+
+def test_grades_delete_validates_input(web):
+    _seed_orders()
+    resp = web.post(
+        "/coins/grades/delete",
+        data={"country": "英国", "era": "  ", "denomination": "1 便士"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 400
+    assert len(repository.list_coin_order_keys()) == 5

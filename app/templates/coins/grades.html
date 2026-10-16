@@ -1,0 +1,195 @@
+{% extends "base.html" %}
+{% block title %}{{ page_title }} · deskhub{% endblock %}
+
+{% block content %}
+<section class="digest-head">
+  <h1>铜币品相录入</h1>
+  <p class="digest-meta">
+    来自 {{ order_total }} 条历史订单 · 本次 {{ combos|length }} 个组合 · 已录 {{ graded_total }}
+    · <a href="/coins">拍卖</a> · <a href="/coins/profile">画像</a>
+    · <a href="/coins/info">信息</a> · <a href="/coins/manage">采集管理</a>
+  </p>
+</section>
+
+<p class="notice">
+  历史订单先按「国家 + 年份 + 面值」<strong>去重</strong>（三者缺一的不列出），
+  每行选一档<strong>品相</strong>后点底部<strong>保存</strong>写库；
+  选<strong>未录入</strong>则清除该行的记录。品相只作参考，不参与画像与推荐。<br>
+  国家 / 年份 / 面值统一成 <strong>Numista 口径</strong>：<code>英属新西兰</code> → <code>新西兰</code>、
+  <code>1910年</code> → <code>1910</code>、<code>1便士</code> → <code>1 便士</code>、<code>一分</code> → <code>1 分</code>；
+  年号（如 <code>康德四年</code>）没有公历数字，原样保留。<br>
+  行尾<strong>删除</strong>用于清掉错误数据：<strong>连该组合的历史订单一起删</strong>（需二次确认）；
+  重跑 <code>coins-parse-orders</code> 会把 <code>orders.xlsx</code> 里的订单重新导回来。
+</p>
+
+<form class="search-form" method="get" action="/coins/grades">
+  <div class="search-row search-row-labeled">
+    <label class="field">国家
+      <input class="search-input" type="text" name="country" value="{{ country }}"
+             list="coin-order-country-options" placeholder="可输入，如 英国" autocomplete="off">
+      <datalist id="coin-order-country-options">
+        {% for name in countries %}<option value="{{ name }}"></option>{% endfor %}
+      </datalist>
+    </label>
+    <label class="field">年份
+      <input class="search-input" type="text" name="year" value="{{ year }}" placeholder="如 1910（可空）">
+    </label>
+    <label class="field">面值
+      <input class="search-input" type="text" name="denomination" value="{{ denomination }}"
+             list="coin-order-denomination-options" placeholder="可输入，如 1 便士" autocomplete="off">
+      <datalist id="coin-order-denomination-options">
+        {% for name in denominations %}<option value="{{ name }}"></option>{% endfor %}
+      </datalist>
+    </label>
+    <label class="field">品相
+      <select name="grade">
+        <option value=""{{ ' selected' if not grade else '' }}>全部</option>
+        {% for item in grades %}
+        <option value="{{ item }}"{{ ' selected' if grade == item else '' }}>{{ item }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <button class="btn btn-primary" type="submit">查询</button>
+  </div>
+</form>
+
+<h2 class="coin-section-title">新增组合 <span class="coin-section-count">历史订单里没有的，在这里补一条</span></h2>
+<form class="search-form" method="post" action="/coins/grades/add">
+  <div class="search-row search-row-labeled">
+    <label class="field">国家
+      <input class="search-input" type="text" name="country" required
+             list="coin-order-country-options" placeholder="如 英国" autocomplete="off">
+    </label>
+    <label class="field">年份
+      <input class="search-input" type="text" name="year" required placeholder="如 1910">
+    </label>
+    <label class="field">面值
+      <input class="search-input" type="text" name="denomination" required
+             list="coin-order-denomination-options" placeholder="如 1 便士" autocomplete="off">
+    </label>
+    <label class="field">品相
+      <select name="grade" required>
+        <option value="" disabled selected>请选择</option>
+        {% for grade in grades %}<option value="{{ grade }}">{{ grade }}</option>{% endfor %}
+      </select>
+    </label>
+    <button class="btn btn-primary" type="submit">新增</button>
+  </div>
+  <p class="form-hint">四项都必填；年份 / 面值同样按上面的 Numista 口径统一后入库。</p>
+</form>
+
+{% if combos %}
+<form method="post" action="/coins/grades/save">
+  <input type="hidden" name="filter_country" value="{{ country }}">
+  <input type="hidden" name="filter_year" value="{{ year }}">
+  <input type="hidden" name="filter_denomination" value="{{ denomination }}">
+  <div class="table-wrap">
+    <table class="sources-table coin-grade-table">
+      <thead>
+        <tr>
+          <th>国家</th>
+          <th class="nowrap">年份</th>
+          <th>面值</th>
+          <th class="nowrap">品相</th>
+          <th class="nowrap">操作</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for combo in combos %}
+        <tr>
+          <td>{{ combo.country }}</td>
+          <td class="nowrap">{{ combo.era }}</td>
+          <td>{{ combo.denomination }}</td>
+          <td class="nowrap">
+            <input type="hidden" name="country" value="{{ combo.country }}">
+            <input type="hidden" name="era" value="{{ combo.era }}">
+            <input type="hidden" name="denomination" value="{{ combo.denomination }}">
+            <select name="grade" aria-label="品相">
+              <option value=""{{ ' selected' if not combo.grade else '' }}>未录入</option>
+              {% for grade in grades %}
+              <option value="{{ grade }}"{{ ' selected' if combo.grade == grade else '' }}>{{ grade }}</option>
+              {% endfor %}
+            </select>
+          </td>
+          <td class="nowrap coin-grade-del">
+            <button class="btn btn-ghost js-grade-del" type="button"
+                    data-country="{{ combo.country }}"
+                    data-era="{{ combo.era }}"
+                    data-denomination="{{ combo.denomination }}"
+                    title="删除整行：清掉该组合的全部历史订单与品相记录">删除</button>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="coin-grade-actions">
+    <button class="btn btn-primary" type="submit">保存</button>
+  </div>
+</form>
+{% else %}
+<div class="empty">
+  没有可录入的历史记录。先在「铜币画像」跑
+  <code>python -m app.cli coins-parse-orders</code> 从 <code>data/orders.xlsx</code> 生成订单。
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+// 「删除整行」的页内二次确认：第一次点变「确认删除」（旁边给「取消」），再点才真提交。
+// 行在「保存」大表单里，删不了嵌套 form，所以确认后动态建一个隐藏表单再提交。
+(function () {
+  function resetAll() {
+    document.querySelectorAll('button.js-grade-del').forEach(function (btn) {
+      delete btn.dataset.confirming;
+      btn.classList.remove('btn-danger');
+      btn.textContent = '删除';
+      var cancel = btn.parentNode.querySelector('.js-grade-del-cancel');
+      if (cancel) { cancel.remove(); }
+    });
+  }
+
+  function submitDelete(btn) {
+    var form = document.createElement('form');
+    form.method = 'post';
+    form.action = '/coins/grades/delete';
+    var fields = {
+      country: btn.dataset.country,
+      era: btn.dataset.era,
+      denomination: btn.dataset.denomination
+    };
+    // 带上当前筛选条件，删完回到同一批结果
+    ['country', 'year', 'denomination'].forEach(function (name) {
+      var src = document.querySelector('form[action="/coins/grades/save"] input[name="filter_' + name + '"]');
+      if (src) { fields['filter_' + name] = src.value; }
+    });
+    Object.keys(fields).forEach(function (name) {
+      var input = document.createElement('input');
+      input.type = 'hidden';
+      input.name = name;
+      input.value = fields[name];
+      form.appendChild(input);
+    });
+    document.body.appendChild(form);
+    form.submit();
+  }
+
+  document.querySelectorAll('button.js-grade-del').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      if (btn.dataset.confirming === '1') { submitDelete(btn); return; }
+      resetAll();
+      btn.dataset.confirming = '1';
+      btn.classList.add('btn-danger');
+      btn.textContent = '确认删除';
+      var cancel = document.createElement('button');
+      cancel.type = 'button';
+      cancel.className = 'btn btn-ghost js-grade-del-cancel';
+      cancel.textContent = '取消';
+      cancel.addEventListener('click', resetAll);
+      btn.after(cancel);
+    });
+  });
+})();
+</script>
+{% endblock %}

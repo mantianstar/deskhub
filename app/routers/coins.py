@@ -15,6 +15,7 @@ from fastapi.responses import FileResponse
 from starlette.responses import Response
 
 from app import config, repository
+from app.coins import grades as coins_grades
 from app.coins import numista as coins_numista
 from app.coins import numista_web as coins_numista_web
 from app.coins import pipeline as coins_pipeline
@@ -23,6 +24,7 @@ from app.coins.numista_web import NumistaPageError
 from app.models import (
     COIN_DIMENSION_LABELS,
     COIN_PROFILE_DIMENSIONS,
+    COIN_PURCHASE_GRADES,
     COIN_SESSION_STATUS_LABELS,
 )
 from app.routers import templates
@@ -466,3 +468,148 @@ async def download_images(
         logger.warning("下载图片失败：%s", exc)
         return _render_manage(request, country, year, denomination, composition, str(exc))
     return _redirect(_manage_url(country, year, denomination, composition))
+
+
+# ---------------------------------------------------------------- 历史购买品相录入（spec §14.16）
+# 历史订单（coin_orders）按「国家 + 年份 + 面值」去重后，人工为每个组合录一档品相。
+# 品相存独立表 coin_purchase_grades，不覆盖订单里 LLM 抽的 condition，也不影响画像 / 推荐。
+# 年份 / 面值按 Numista 口径统一（去重键与落库键都是统一后的值，见 `app.coins.grades`）。
+
+
+def _grades_url(country: str, year: str, denomination: str) -> str:
+    query = urlencode({"country": country, "year": year, "denomination": denomination})
+    return f"/coins/grades?{query}"
+
+
+def _normalize_grade(country: str, year: str, denomination: str) -> tuple[str, str, str]:
+    """把「国家 / 年份 / 面值」统一成落库口径（与页面展示、去重键同一份实现）。"""
+    return (
+        coins_grades.normalize_country(country),
+        coins_grades.normalize_year(year),
+        coins_grades.normalize_denomination(denomination),
+    )
+
+
+@router.get("/coins/grades")
+def grades_page(
+    request: Request,
+    country: str = "",
+    year: str = "",
+    denomination: str = "",
+    grade: str = "",
+) -> Response:
+    """品相录入页：查去重后的历史购买组合（不调接口），供人工录品相。"""
+    all_combos = coins_grades.build_combos(
+        repository.list_coin_orders(), repository.list_coin_purchase_grades()
+    )
+    combos = coins_grades.filter_combos(
+        all_combos,
+        country=country or None,
+        era=year or None,
+        denomination=denomination or None,
+        grade=grade or None,
+    )
+    return templates.TemplateResponse(
+        request,
+        "coins/grades.html",
+        {
+            "request": request,
+            "page_title": "铜币品相录入",
+            "country": country,
+            "year": year,
+            "denomination": denomination,
+            "grade": grade,
+            "countries": coins_grades.countries_of(all_combos),
+            "denominations": coins_grades.denominations_of(all_combos),
+            "grades": COIN_PURCHASE_GRADES,
+            "combos": combos,
+            "graded_total": sum(1 for combo in combos if combo.grade),
+            "order_total": repository.count_coin_orders(),
+        },
+    )
+
+
+@router.post("/coins/grades/add")
+def add_grade(
+    country: str = Form(...),
+    year: str = Form(...),
+    denomination: str = Form(...),
+    grade: str = Form(""),
+) -> Response:
+    """手工新增一条历史订单里没有的组合（国家 + 年份 + 面值 + 品相四项必填）。"""
+    key_country, key_era, key_denomination = _normalize_grade(country, year, denomination)
+    if not (key_country and key_era and key_denomination):
+        return Response(status_code=400)
+    if grade not in COIN_PURCHASE_GRADES:
+        return Response(status_code=400)
+    repository.upsert_coin_purchase_grade(key_country, key_era, key_denomination, grade)
+    return _redirect("/coins/grades")
+
+
+@router.post("/coins/grades/delete")
+def delete_combo(
+    country: str = Form(...),
+    era: str = Form(...),
+    denomination: str = Form(...),
+    filter_country: str = Form(""),
+    filter_year: str = Form(""),
+    filter_denomination: str = Form(""),
+) -> Response:
+    """删除整行（历史错误数据）：清掉该组合的全部历史订单 + 该组合的品相记录。
+
+    库里存的是**原始**写法，故先按同一口径统一、再逐个比对订单（见 `grades.order_ids_for_combo`）。
+    注意：重跑 `coins-parse-orders` 会把 `orders.xlsx` 里的订单重新导回来；画像标签也不会自动重算。
+    """
+    key_country, key_era, key_denomination = _normalize_grade(country, era, denomination)
+    if not (key_country and key_era and key_denomination):
+        return Response(status_code=400)
+    order_ids = coins_grades.order_ids_for_combo(
+        repository.list_coin_order_keys(), key_country, key_era, key_denomination
+    )
+    deleted = repository.delete_coin_orders(order_ids)
+    repository.delete_coin_purchase_grade(key_country, key_era, key_denomination)
+    logger.info(
+        "删除品相录入整行：%s / %s / %s（连带历史订单 %d 条）",
+        key_country,
+        key_era,
+        key_denomination,
+        deleted,
+    )
+    return _redirect(_grades_url(filter_country, filter_year, filter_denomination))
+
+
+@router.post("/coins/grades/save")
+def save_grades(
+    country: list[str] = Form(default=[]),
+    era: list[str] = Form(default=[]),
+    denomination: list[str] = Form(default=[]),
+    grade: list[str] = Form(default=[]),
+    filter_country: str = Form(""),
+    filter_year: str = Form(""),
+    filter_denomination: str = Form(""),
+) -> Response:
+    """保存录入的品相：一行一个组合（四个字段按行对齐）。
+
+    下拉选「未录入」（空串）→ 清除该组合的记录；其余按 `(country, era, denomination)` upsert。
+    任一行的键不完整或品相非法 → 400（整批不落库，避免半截写入）。
+    """
+    if not (len(country) == len(era) == len(denomination) == len(grade)):
+        return Response(status_code=400)
+
+    pending: list[tuple[str, str, str, str]] = []
+    for raw_country, raw_era, raw_denomination, value in zip(country, era, denomination, grade):
+        key_country, key_era, key_denomination = _normalize_grade(
+            raw_country, raw_era, raw_denomination
+        )
+        if not (key_country and key_era and key_denomination):
+            return Response(status_code=400)
+        if value and value not in COIN_PURCHASE_GRADES:
+            return Response(status_code=400)
+        pending.append((key_country, key_era, key_denomination, value))
+
+    for key_country, key_era, key_denomination, value in pending:
+        if value:
+            repository.upsert_coin_purchase_grade(key_country, key_era, key_denomination, value)
+        else:
+            repository.delete_coin_purchase_grade(key_country, key_era, key_denomination)
+    return _redirect(_grades_url(filter_country, filter_year, filter_denomination))

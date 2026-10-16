@@ -10,6 +10,74 @@
 
 ---
 
+## v1.8 — 2026-10-16 品相录入：三元组统一 + 新增组合 + 整行删除 + 品相查询
+
+**起因**：品相录入页上线后用户连提四项 —— ① 年份与面值要「参考 Numista 做统一处理」（如 `1910`、`1 便士`）；
+② 历史订单里没有的组合也要能录入；③ 国家也要统一（`英属新西兰` / `英属澳大利亚` 去掉「英属」）；
+④ 历史错误数据要能**整行删除**，且删除要带确认。另补一项：加品相查询条件。
+
+**改了什么**
+
+- **新增 `app/coins/grades.py`**（纯函数，不依赖 FastAPI / DB）：`normalize_year`（去「年 / 年度」后缀只留数字，
+  年号原样）、`normalize_denomination`（前导数字转阿拉伯、与单位间加空格；认不出前导数字的原样保留）、
+  `build_combos`（按统一后的三元组去重 + LEFT JOIN 已录品相 + 收进「无订单的手工组合」）、
+  `filter_combos`（查询词同口径统一后宽松包含）、`countries_of` / `denominations_of`（候选）。
+  年号（`康德四年`）与 `当制钱十文` 这类原样保留。
+- **统一后的值 = 去重键 = 落库键**：`1910` 与 `1910年`、`一分` 与 `1分` 合并成一行；`coin_orders` 一行不改。
+- **去重从 SQL 挪到模块**：`repository` 去掉 `list_coin_order_combos` / 候选两个函数（收敛为纯读写），
+  分组与合并全在 `grades.py`，`app.textmatch.contains` 复用同一份匹配口径。
+- **可手工新增组合**：新增 `POST /coins/grades/add`（国家 / 年份 / 面值 / 品相四项必填，统一后 upsert）；
+  新增的组合即使没有历史订单也出现在列表里。页面加「新增组合」表单与统一口径说明。
+- **保存前再过一遍统一**：`POST /coins/grades/save` 的提交值落库前统一（幂等，防手改表单）。
+- **国家也统一**：去殖民时期前缀（`英属新西兰` → `新西兰`、`英属澳大利亚` → `澳大利亚`、`荷属东印度` → `东印度`）；
+  真库里 182 个国家里有 36 个带 `英属 / 法属 / 荷属 / 葡属 / 德属` 前缀。
+- **整行删除（历史错误数据）**：行尾「删除」→ **页内二次确认**（第一次点变「确认删除」并给「取消」，再点才提交），
+  删掉该组合在 `coin_orders` 里的**全部订单**（含不同写法）+ 该组合的品相记录；库里有缺任一维度的行不显示、也删不到。
+- **新增 `POST /coins/grades/delete`**：按统一后的组合反查要删的订单 id（`grades.order_ids_for_combo` +
+  `repository.list_coin_order_keys` / `delete_coin_orders`），删除后重定向回原筛选结果。
+- **品相查询条件**（补）：`grades.filter_combos` 加 `grade`（空 = 不限，其余按 好 / 普通 / 差 精确相等）；
+  `GET /coins/grades` 读 `grade`；查询表单加品相下拉（全部 / 好 / 普通 / 差）。
+
+**验证结论**
+
+- 真实库：1567 单 → **845 组合**（原始写法去重 953 → 仅统一年份 / 面值 867 → 再加国家前缀 **845**，
+  即国家前缀合并掉 22 组）；`¼安娜` → `四分之一 安娜`、`壹圆` → `1 圆`、`英属海峡` → `海峡`。
+- 实测：查询「英国 + `1910年`」命中 1 组（`1910`）；POST `/coins/grades/add`（`1910年` / `1便士`）→ 302，
+  落库 `英国 / 1910 / 1 便士`；页面 845 行各带一个「删除」按钮；按品相筛（真实库 853 组合 / 已录 163）`grade=好` → 47 组。
+- `pytest` 274 → **284 passed**（新增：年份 / 面值 / 国家统一、同值合并、手工新增、删整行（连带订单 / 手工组合 / 参数校验）、品相筛选）。
+
+**影响**：[spec/coins.md](./spec/coins.md) §14.16、[plan/coins.md](./plan/coins.md) §18.2/§18.16、[tasks/coins.md](./tasks/coins.md)、[README.md](./README.md)。
+
+---
+
+## v1.7 — 2026-10-16 历史购买品相录入
+
+**起因**：历史订单（`orders.xlsx`）只有订单名与价格，硬币的**品相**没地方记；
+用户要求加一个页面：把历史记录按「国家 + 年份 + 面值」先去重，用国家 / 年份 / 面值查询，
+结果为「国家 + 年份 + 面值 + 品相」，品相由用户下拉选（好 / 普通 / 差），点保存写库。
+
+**改了什么**
+
+- **新增独立表 `coin_purchase_grades`**（`(country, era, denomination)` 唯一，一档 `grade`），`schema_version` 6 → 7
+  （纯新增表 → 登记进 `db.FORWARD_ADDITIVE_UPGRADES`，无需 ALTER）。
+  **不写 `coin_orders.condition`** —— 那是订单级、LLM 抽的包浆描述，覆盖会污染画像、影响推荐。
+- **去重查询**：`repository.list_coin_order_combos` 按「国家 + 年份 + 面值」分组（**只取三者齐全**的行），
+  LEFT JOIN 已录品相；三条件做宽松包含匹配。另有 `upsert_coin_purchase_grade` / `delete_coin_purchase_grade` / 两个候选下拉。
+- **页面**：`GET /coins/grades`（查询表单 + 去重组合表 + 行内品相下拉 + 底部「保存」）、
+  `POST /coins/grades/save`（逐行 upsert；选「未录入」即清除；键不完整 / 品相非法 → 400、整批不落库、
+  302 回原筛选结果）；新建 `coins/grades.html`，`sessions/info/manage.html` 子导航补「品相录入」入口。
+- **文档**：spec §14.16、plan §18.16、tasks M23 原地新增（编号顺延）。
+
+**验证结论**
+
+- 真实库（1567 条订单 → **953 个组合**）：`/coins/grades` 200；筛「东加勒比」出 2 个组合；
+  POST 保存 302、落库 2 行、页面回显 `selected`；老库启动日志 `schema 版本向前升级：6 → 7`。
+- `pytest` 268 → **274 passed**（新增 6 例：去重 / 筛选 / 页面下拉 / 保存与清除 / 非法品相 400）。
+
+**影响**：[spec/coins.md](./spec/coins.md) §14.16、[spec.md](./spec.md)、[plan/coins.md](./plan/coins.md) §18.2/§18.16、[plan.md](./plan.md)、[tasks/coins.md](./tasks/coins.md)、[tasks.md](./tasks.md)。
+
+---
+
 ## v1.6 — 2026-10-15 信息页扩充 + 翻译改大模型
 
 **起因**：用户连续四项要求 —— ① 管理页加「获取年份估值」「下载图片」；② 详情页图片点击放大；
