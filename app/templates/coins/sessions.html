@@ -8,6 +8,8 @@
     共 {{ cards|length }} 个命中专场
     {%- if summary.last_ok_at %} · 数据更新至 {{ summary.last_ok_at | local_time }}{% endif %}
     · <a href="/coins/profile">画像</a>
+    · <a href="/coins/collection">收藏画像</a>
+    · <a href="/coins/collections">系列映射</a>
     · <a href="/coins/grades">品相录入</a>
     · <a href="/coins/info">信息</a>
     · <a href="/coins/manage">采集管理</a>
@@ -16,6 +18,15 @@
     <button class="btn" type="submit">刷新采集</button>
   </form>
 </section>
+
+<form class="search-form" method="get" action="/coins">
+  <div class="search-row search-row-labeled">
+    <label class="field">拍卖截止日期
+      <input type="date" name="auction_date" value="{{ auction_date }}">
+    </label>
+    <button class="btn btn-primary" type="submit">查询</button>
+  </div>
+</form>
 
 {% if cards %}
   {% for card in cards %}
@@ -35,7 +46,7 @@
     {% if card.cover_urls %}
     <div class="coin-thumbs">
       {% for url in card.cover_urls[:4] %}
-      <img class="coin-thumb" src="{{ url }}" alt="" loading="lazy">
+      <img class="coin-thumb coin-zoom" src="{{ url }}" alt="" loading="lazy">
       {% endfor %}
     </div>
     {% endif %}
@@ -50,7 +61,7 @@
   {% endfor %}
 {% else %}
 <div class="empty">
-  今天没有与你画像匹配的专场。<br>
+  {{ auction_date }} 没有与你画像匹配的专场。<br>
   先跑一次采集：<code>python -m app.cli coins-fetch</code>；
   画像可用 <code>python -m app.cli coins-parse-orders</code> 生成。
 </div>

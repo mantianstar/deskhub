@@ -6,7 +6,7 @@
   <h1>铜币品相录入</h1>
   <p class="digest-meta">
     来自 {{ order_total }} 条历史订单 · 本次 {{ combos|length }} 个组合 · 已录 {{ graded_total }}
-    · <a href="/coins">拍卖</a> · <a href="/coins/profile">画像</a>
+    · <a href="/coins">拍卖</a> · <a href="/coins/profile">画像</a> · <a href="/coins/collection">收藏画像</a> · <a href="/coins/collections">系列映射</a>
     · <a href="/coins/info">信息</a> · <a href="/coins/manage">采集管理</a>
   </p>
 </section>
@@ -17,7 +17,7 @@
   选<strong>未录入</strong>则清除该行的记录。品相只作参考，不参与画像与推荐。<br>
   国家 / 年份 / 面值统一成 <strong>Numista 口径</strong>：<code>英属新西兰</code> → <code>新西兰</code>、
   <code>1910年</code> → <code>1910</code>、<code>1便士</code> → <code>1 便士</code>、<code>一分</code> → <code>1 分</code>；
-  年号（如 <code>康德四年</code>）没有公历数字，原样保留。<br>
+  年号纪年取年份数字（<code>明治十五年</code> → <code>15</code>），只有年号没有数字的原样保留。<br>
   行尾<strong>删除</strong>用于清掉错误数据：<strong>连该组合的历史订单一起删</strong>（需二次确认）；
   重跑 <code>coins-parse-orders</code> 会把 <code>orders.xlsx</code> 里的订单重新导回来。
 </p>

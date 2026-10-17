@@ -133,6 +133,20 @@ class CoinNumistaConfig:
 
 
 @dataclass(frozen=True)
+class CoinCollectionConfig:
+    """收藏画像与三层推荐的口径（spec §14.17）。"""
+
+    # 前两层推荐总数少于此值时，才触发第三层「跨系列相似推荐」
+    min_results: int = 5
+    # 稀缺权重 = 1 / max(rarity, rarity_floor)；rarity 是 Numista Frequency / 100
+    rarity_floor: float = 0.005
+    # 每个收藏系列的升级项最多取几个
+    top_upgrades_per_series: int = 3
+    # 面值层级（跨系列相似推荐用）：同一组里的面值视为同一层级
+    denomination_tiers: tuple[tuple[str, ...], ...] = ()
+
+
+@dataclass(frozen=True)
 class CoinsConfig:
     """铜币拍卖（spec §14 / plan §18.10）。"""
 
@@ -154,6 +168,8 @@ class CoinsConfig:
             api_key="",
         )
     )
+    # 收藏画像与三层推荐（spec §14.17）
+    collection: CoinCollectionConfig = field(default_factory=CoinCollectionConfig)
 
 
 def _default_coins_config() -> CoinsConfig:
@@ -269,6 +285,22 @@ def _opt_bool(section: dict[str, Any], key: str, default: bool, where: str) -> b
     return value
 
 
+def _opt_int(section: dict[str, Any], key: str, default: int, where: str, *, minimum: int = 0) -> int:
+    value = section.get(key, default)
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ConfigError(f"{where}.{key}：必须是整数")
+    if value < minimum:
+        raise ConfigError(f"{where}.{key}：必须 >= {minimum}，当前 {value}")
+    return value
+
+
+def _opt_float(section: dict[str, Any], key: str, default: float, where: str) -> float:
+    value = section.get(key, default)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ConfigError(f"{where}.{key}：必须是数字")
+    return float(value)
+
+
 # ---------------------------------------------------------------- 各段解析
 
 
@@ -375,6 +407,21 @@ def _parse_coins(raw: dict[str, Any]) -> CoinsConfig:
     if statistic not in ("median", "mean"):
         raise ConfigError(f"{where}.price.statistic：只支持 median / mean，当前 {statistic!r}")
 
+    collection = section.get("collection") or {}
+    if not isinstance(collection, dict):
+        raise ConfigError(f"{where}.collection：必须是对象")
+    raw_tiers = collection.get("denomination_tiers") or []
+    if not isinstance(raw_tiers, list) or any(not isinstance(tier, list) for tier in raw_tiers):
+        raise ConfigError(f"{where}.collection.denomination_tiers：必须是二维列表")
+    tiers: list[tuple[str, ...]] = []
+    for index, tier in enumerate(raw_tiers):
+        values = tuple(str(value).strip() for value in tier if str(value).strip())
+        if len(values) < 2:
+            raise ConfigError(
+                f"{where}.collection.denomination_tiers[{index}]：每组至少两个面值"
+            )
+        tiers.append(values)
+
     numista_key_env = _opt_str(numista, "api_key_env", "DESKHUB_NUMISTA_API_KEY", f"{where}.numista")
 
     return CoinsConfig(
@@ -415,6 +462,14 @@ def _parse_coins(raw: dict[str, Any]) -> CoinsConfig:
             cdp_url=_opt_str(
                 numista, "cdp_url", "http://127.0.0.1:9222", f"{where}.numista"
             ),
+        ),
+        collection=CoinCollectionConfig(
+            min_results=_opt_int(collection, "min_results", 5, f"{where}.collection", minimum=1),
+            rarity_floor=_opt_float(collection, "rarity_floor", 0.005, f"{where}.collection"),
+            top_upgrades_per_series=_opt_int(
+                collection, "top_upgrades_per_series", 3, f"{where}.collection", minimum=1
+            ),
+            denomination_tiers=tuple(tiers),
         ),
     )
 

@@ -3,8 +3,9 @@
 历史订单里的 `era` / `denomination` 是 LLM 从订单名里抄的**原样片段**，形态很杂
 （「1910」与「1910年」并存、「1便士」与「一分」并存）。本模块把它们统一成与 Numista 中文表一致的口径：
 
-- **年份**：去掉「年 / 年度」后缀只留数字（`1910年` → `1910`）；年号（`康德四年` / `明治八年`）
-  没有公历数字，**原样保留**。
+- **年份**：去掉「年 / 年度」后缀只留数字（`1910年` → `1910`）；年号纪年取年号后的年份数字
+  （`明治十五年` → `15`、`康德元年` → `1`），与 Numista 的 `year` 对齐；只有年号没有年份数字的
+  （`光绪`）**原样保留**。
 - **面值**：数字转成阿拉伯数字、与单位之间加一个空格（`1便士` → `1 便士`、`一分` → `1 分`、
   `半便士` → `半 便士`、`二十文` → `20 文`）。认不出前导数字的（如 `当制钱十文`）原样保留。
 - **国家**：去掉殖民时期的前缀（`英属新西兰` → `新西兰`、`英属澳大利亚` → `澳大利亚`），
@@ -39,6 +40,10 @@ _LEADING_FRACTION = {"½": "半", "¼": "四分之一", "¾": "四分之三"}
 _LEADING_ARABIC = re.compile(r"^\s*(\d+(?:\.\d+)?(?:\s*/\s*\d+)?[½¼¾]?)")
 _LEADING_CN = re.compile(r"^\s*([零〇一二两三四五六七八九十百千壹贰貳叁肆伍陆陸柒捌玖拾佰仟]+)")
 _TRAILING_YEAR_SUFFIX = re.compile(r"\s*年度?\s*$")
+# 年号纪年末尾的年份数字（`明治十五年` / `民国31年` / `康德元年`）；`元` 表示第一年
+_TRAILING_YEAR_NUMBER = re.compile(
+    r"([0-9]+|[零〇一二两三四五六七八九十百千壹贰貳叁肆伍陆陸柒捌玖拾佰仟]+|元)$"
+)
 
 
 def _cn_numeral_to_int(text: str) -> int | None:
@@ -81,12 +86,26 @@ def normalize_country(value: str | None) -> str:
 
 
 def normalize_year(value: str | None) -> str:
-    """年份：去「年 / 年度」后缀只留纯数字；年号（无公历数字）原样保留。"""
+    """年份：去「年 / 年度」后缀只留数字；年号纪年取年份数字（`明治十五年` → `15`）。
+
+    年号纪年的数字与 Numista 的 `year` 同口径（如明治十五年 = 15），中文数字转阿拉伯数字；
+    只有年号没有年份数字（`光绪`）或认不出数字的原样保留。
+    """
     text = (value or "").strip()
     if not text:
         return text
     stripped = _TRAILING_YEAR_SUFFIX.sub("", text)
-    return stripped if stripped.isdigit() else text
+    if stripped.isdigit():
+        return stripped
+    match = _TRAILING_YEAR_NUMBER.search(stripped)
+    if match:
+        digits = match.group(1)
+        if digits.isdigit():
+            return digits
+        number = _cn_numeral_to_int("一" if digits == "元" else digits)
+        if number is not None:
+            return str(number)
+    return text
 
 
 def normalize_denomination(value: str | None) -> str:

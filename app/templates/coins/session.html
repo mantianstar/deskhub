@@ -75,7 +75,7 @@
   {% if lot.image_urls %}
   <div class="coin-lot-imgs">
     {% for url in lot.image_urls[:3] %}
-    <img class="coin-lot-img" src="{{ url }}" alt="" loading="lazy">
+    <img class="coin-lot-img coin-zoom" src="{{ url }}" alt="" loading="lazy">
     {% endfor %}
   </div>
   {% endif %}

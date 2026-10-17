@@ -197,7 +197,7 @@ CREATE INDEX IF NOT EXISTS idx_coin_runs ON coin_fetch_runs(kind, started_at DES
 
 | 路由 | 方法 | 职责 | 模板 |
 |---|---|---|---|
-| `/coins` | GET | 专场列表（**仅**含推荐拍品的专场；空态提示） | `coins/sessions.html` |
+| `/coins` | GET | 专场列表（**仅**含推荐拍品的专场；按拍卖截止日期筛选，默认今日；空态提示） | `coins/sessions.html` |
 | `/coins/session/{id}` | GET | 单专场：店铺头 + 推荐拍品列表（id 不存在返回 404） | `coins/session.html` |
 | `/coins/profile` | GET | 画像标签列表（按维度分组） | `coins/profile.html` |
 | `/coins/profile/{id}/toggle` | POST | 启停标签 | — |
@@ -562,8 +562,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS uidx_coin_purchase_grades
 
 - `normalize_country`：去殖民时期前缀（`英属新西兰` → `新西兰`、`荷属东印度` → `东印度`；
   真库里 182 个国家里有 36 个带 `英属 / 法属 / 荷属 / 葡属 / 德属` 前缀）；去掉后会变空则原样保留。
-- `normalize_year`：去「年 / 年度」后缀只留纯数字（`1910年` → `1910`）；**年号**（`康德四年` / `民国31年`）
-  没有公历数字 → **原样保留**。
+- `normalize_year`：去「年 / 年度」后缀只留纯数字（`1910年` → `1910`）；**年号纪年**取年号后的年份数字
+  （中文数字转阿拉伯，`明治十五年` → `15`、`民国31年` → `31`、`康德元年` → `1`）；只有年号没有年份数字的
+  （`光绪`）**原样保留**。
 - `normalize_denomination`：前导数字（阿拉伯 / 中文含大写 `壹贰伍拾` / 分数 `1/4`、`¼`、`2½`）→ 阿拉伯数字，
   与单位之间加一个空格：`1便士`→`1 便士`、`一分`→`1 分`、`二十文`→`20 文`、`壹圆`→`1 圆`、
   `1/4安娜`→`1/4 安娜`、`¼安娜`→`四分之一 安娜`、`半便士`→`半 便士`；
@@ -620,7 +621,7 @@ delete_coin_purchase_grade(country, era, denomination) -> bool     # 选「未�
 
 | 用例 | 断言 |
 |---|---|
-| 统一（国家 / 年份 / 面值） | `英属新西兰`→`新西兰`、`荷属东印度`→`东印度`、`1910年`→`1910`、`1便士`→`1 便士`、`一分`→`1 分`、`二十文`→`20 文`、`壹圆`→`1 圆`、`1/4安娜`→`1/4 安娜`、`¼安娜`→`四分之一 安娜`、`半便士`→`半 便士`；年号与 `当制钱十文` / `大便士` / `英属`（会变空）原样；已统一值幂等 |
+| 统一（国家 / 年份 / 面值） | `英属新西兰`→`新西兰`、`荷属东印度`→`东印度`、`1910年`→`1910`、`1便士`→`1 便士`、`一分`→`1 分`、`二十文`→`20 文`、`壹圆`→`1 圆`、`1/4安娜`→`1/4 安娜`、`¼安娜`→`四分之一 安娜`、`半便士`→`半 便士`；年号纪年取数字（`明治十五年`→`15`、`康德四年`→`4`、`康德元年`→`1`），`光绪` / `当制钱十文` / `大便士` / `英属`（会变空）原样；已统一值幂等 |
 | 去重 | 同值不同写法（`1808` / `1808年`、`一分` / `1分`、`英属新西兰` / `新西兰`）合并为一行；缺任一维度的订单**不出现** |
 | 手工新增的组合 | 无订单也进列表，`order_count = 0` |
 | 筛选 | 国家 / 年份 / 面值 / 品相分别命中；输入 `1808年` 命中 `1808` |
@@ -630,3 +631,90 @@ delete_coin_purchase_grade(country, era, denomination) -> bool     # 选「未�
 | 校验 | 品相非法 / 国家或年份为空 → 400，且**一行都不落库** |
 | 新增 | 302；年份面值统一后落库；组合出现在列表 |
 | 删整行 | 传**原始写法**也能删（按统一后组合比对）：该组合全部订单（含不同写法）+ 品相记录都删掉、其余订单不动；手工组合（无订单）删后只少品相行；键不完整 → 400 |
+
+---
+
+## 18.17 收藏画像与三层推荐（对应 spec/coins.md §14.17）
+
+**数据层（`schema_version` 8 → 9，纯新增表 → 登记进 `db.FORWARD_ADDITIVE_UPGRADES`）**
+
+```sql
+CREATE TABLE IF NOT EXISTS coin_collection_series (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  collection_key TEXT NOT NULL UNIQUE,      -- 自定义 collection_series_id
+  name           TEXT NOT NULL,             -- 国家 · 执政者 · 面值
+  country        TEXT NOT NULL,
+  ruler          TEXT,
+  denomination   TEXT NOT NULL,
+  size_mm        REAL,                      -- 代表尺寸（成员中位数）
+  size_band      TEXT,                      -- 小 / 中 / 大 / 超大
+  created_at     TEXT NOT NULL,
+  updated_at     TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS coin_collection_series_members (
+  id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+  collection_id       INTEGER NOT NULL REFERENCES coin_collection_series(id) ON DELETE CASCADE,
+  numista_series_id   INTEGER NOT NULL UNIQUE,
+  numista_series_name TEXT,
+  created_at          TEXT NOT NULL
+);
+```
+
+**模块分工**
+
+| 文件 | 职责 |
+|---|---|
+| `app/coins/collection.py` | 纯函数 + 组装：尺寸分档、Bronze/Copper 过滤、精制过滤、年份规格聚合、已有/缺失/升级年份、未映射系列自动成组 |
+| `app/coins/recommend.py` | 三层推荐排序、日本年号翻译、面值写法变体、当日拍品匹配、`rematch_all` |
+| `app/repository.py` | 收藏系列 / 成员 CRUD、`list_coin_today_lots`（按 `coin_sessions.auction_at` 取当日） |
+| `app/routers/coins.py` | `/coins/collection`、`/coins/collections` 及映射维护 POST |
+| `app/config.py` | `coins.collection`：`min_results` / `rarity_floor` / `top_upgrades_per_series` / `denomination_tiers` |
+
+**画像算法**
+
+- 成员 series 先过滤材质；单版按 `year` 聚合，剔除 `is_proof` 或单版备注含 Proof/精制的条目；
+  同一年按 `(有发行量, mintage, numista_id)` 降序取第一条。
+- `rarity = frequency / 100`；`price_estimates = {VF: value_vf, XF: value_xf}`。
+- 已有年份：`coin_orders` + `coin_purchase_grades` 按统一后的「国家 + 年份 + 面值」宽松匹配；
+  需升级年份：已有年份中 `grade == "差"`。
+- 收藏系列尺寸：显式 `size_mm` 优先，否则取成员 series 尺寸中位数。
+
+**推荐算法**
+
+- P1：`position_weight × scarcity_weight`；`position_weight` 首/末/执政者边界 1.5；
+  `scarcity_weight = 1 / max(rarity, rarity_floor)`，无 rarity 时 1.0。
+- P2：`XF/VF × 1/max(rarity, floor)`，每系列取前 `top_upgrades_per_series`。
+- P3：仅当前两层与当日拍品的**匹配条数** < `min_results`（没有当日拍品时按推荐项数兜底）；
+  候选来自 `load_explore_profiles()`（未映射青铜/铜系列按同国家 + 同执政者 + 同面值 + 尺寸差 ≤ 2mm 自动成组），
+  取候选的缺失年份；按尺寸差升序、`-rarity` 升序。
+- 匹配：拍品标题需同时命中 `country`、任一年份写法、任一面值写法；日本年号由
+  `ruler` / 系列名 / `gregorian_year` 定位，输出 `明治6年` / `明治六年`。
+
+**采集改动**
+
+- `SessionCard` 增加 `end_at`（UTC ISO，来自列表页 `end_time`）；`list_sessions` 传入业务时区。
+- `pipeline._collect` 先用 `repository.local_day_bounds` 过滤，只对当日截拍专场拉详情。
+- `pipeline.run` 优先调用 `recommend.rematch_all`；收藏画像为空时回退 `matcher.rematch_all`。
+- `_price_recommended` 新增 `keywords` 参数：新推荐直接使用推荐项关键词；旧画像仍从标题反推。
+
+**页面**
+
+- `/coins/collection`：优先级规则说明 + 三层推荐合并表（一个年份一行，含推荐原因 / 今日命中，可按系列 / 推荐原因 / 是否命中筛选，是否命中默认「已命中」）+ 收藏系列画像卡片。
+- `/coins/collections`：新建收藏系列表单 + 每个系列的成员表 / 加入 series / 删除系列；
+  series 候选只列 Bronze/Copper，按国家 + 执政者 + 面值筛选（默认取收藏系列自身的值）。
+- 子导航在 `sessions/info/manage/grades/profile.html` 补「收藏画像」「系列映射」。
+
+**测试（`tests/test_coins_collection.py`）**
+
+| 用例 | 断言 |
+|---|---|
+| 尺寸分档 | 24.9→小、25→中、30→大、35→超大 |
+| 材质 / 精制过滤 | Bronze/Copper/青铜/铜通过；Copper-nickel/银剔除；`is_proof` 或单版备注 Proof 剔除 |
+| 年份规格 | 同年多版取最大发行量；Frequency 0.6% → rarity 0.006；精制版不参与 |
+| 画像 | 已有/缺失/升级年份正确；银币与精制年份不进入年份列表 |
+| P1 | 首/末年位置权重 1.5；稀缺权重 1/rarity |
+| P2 | 只取 `差`；每系列最多 3 个 |
+| 年号 | `明治6年` / `明治六年` / `1873`；标题 `明治六年二钱` 能命中 |
+| P3 | 前两层不足时用未映射相似系列补齐 |
+| 映射表 | 收藏系列 CRUD、成员增删 |
+| 页面 | 新建 → 映射 → 两个页面 200 且渲染名称/年份；推荐表按系列 / 推荐原因 / 是否命中筛选；候选默认取系列执政者、可切「全部」；空库空态 200 |

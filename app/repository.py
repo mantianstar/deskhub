@@ -15,6 +15,8 @@ from zoneinfo import ZoneInfo
 from app import db, models, textmatch
 from app.config import SourceConfig
 from app.models import (
+    CoinCollectionMember,
+    CoinCollectionSeries,
     CoinFetchRun,
     CoinIssue,
     CoinIssueValues,
@@ -30,6 +32,7 @@ from app.models import (
     CoinSessionCard,
     CoinSessionDetail,
     CoinShop,
+    CoinTodayLot,
     DigestItem,
     FetchRun,
     FetchStatus,
@@ -797,6 +800,174 @@ def delete_coin_orders(ids: Sequence[int]) -> int:
     return cursor.rowcount
 
 
+# ---------------------------------------------------------------- 收藏系列（spec §14.17）
+
+
+def _row_to_collection_series(row: sqlite3.Row) -> CoinCollectionSeries:
+    return CoinCollectionSeries(
+        id=row["id"],
+        collection_key=row["collection_key"],
+        name=row["name"],
+        country=row["country"],
+        ruler=row["ruler"],
+        denomination=row["denomination"],
+        size_mm=row["size_mm"],
+        size_band=row["size_band"],
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
+
+
+def list_coin_collection_series() -> list[CoinCollectionSeries]:
+    with db.connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM coin_collection_series ORDER BY country, ruler, denomination, id"
+        ).fetchall()
+    return [_row_to_collection_series(row) for row in rows]
+
+
+def get_coin_collection_series(collection_id: int) -> CoinCollectionSeries | None:
+    with db.connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM coin_collection_series WHERE id = ?", (collection_id,)
+        ).fetchone()
+    return _row_to_collection_series(row) if row else None
+
+
+def upsert_coin_collection_series(
+    *,
+    collection_key: str,
+    name: str,
+    country: str,
+    ruler: str | None,
+    denomination: str,
+    size_mm: float | None = None,
+    size_band: str | None = None,
+) -> int:
+    """按 `collection_key` 建/改收藏系列，返回 id。"""
+    now = utcnow()
+    with db.connect() as conn, conn:
+        conn.execute(
+            """
+            INSERT INTO coin_collection_series
+                (collection_key, name, country, ruler, denomination, size_mm, size_band,
+                 created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(collection_key) DO UPDATE SET
+                name         = excluded.name,
+                country      = excluded.country,
+                ruler        = excluded.ruler,
+                denomination = excluded.denomination,
+                size_mm      = excluded.size_mm,
+                size_band    = excluded.size_band,
+                updated_at   = excluded.updated_at
+            """,
+            (
+                collection_key,
+                name,
+                country,
+                ruler,
+                denomination,
+                size_mm,
+                size_band,
+                now,
+                now,
+            ),
+        )
+        row = conn.execute(
+            "SELECT id FROM coin_collection_series WHERE collection_key = ?", (collection_key,)
+        ).fetchone()
+    return int(row["id"])
+
+
+def delete_coin_collection_series(collection_id: int) -> bool:
+    with db.connect() as conn, conn:
+        cursor = conn.execute("DELETE FROM coin_collection_series WHERE id = ?", (collection_id,))
+    return cursor.rowcount > 0
+
+
+def _row_to_collection_member(row: sqlite3.Row) -> CoinCollectionMember:
+    return CoinCollectionMember(
+        id=row["id"],
+        collection_id=row["collection_id"],
+        numista_series_id=row["numista_series_id"],
+        numista_series_name=row["numista_series_name"],
+        created_at=row["created_at"],
+    )
+
+
+def list_coin_collection_members(collection_id: int | None = None) -> list[CoinCollectionMember]:
+    sql = "SELECT * FROM coin_collection_series_members"
+    params: list[object] = []
+    if collection_id is not None:
+        sql += " WHERE collection_id = ?"
+        params.append(collection_id)
+    sql += " ORDER BY collection_id, numista_series_id"
+    with db.connect() as conn:
+        rows = conn.execute(sql, params).fetchall()
+    return [_row_to_collection_member(row) for row in rows]
+
+
+def upsert_coin_collection_member(
+    collection_id: int, numista_series_id: int, numista_series_name: str | None
+) -> None:
+    """把一个 Numista 系列映射到收藏系列；已映射到别处则改归属（冲突覆盖）。"""
+    with db.connect() as conn, conn:
+        conn.execute(
+            """
+            INSERT INTO coin_collection_series_members
+                (collection_id, numista_series_id, numista_series_name, created_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(numista_series_id) DO UPDATE SET
+                collection_id       = excluded.collection_id,
+                numista_series_name = excluded.numista_series_name
+            """,
+            (collection_id, numista_series_id, numista_series_name, utcnow()),
+        )
+
+
+def delete_coin_collection_member(member_id: int) -> bool:
+    with db.connect() as conn, conn:
+        cursor = conn.execute(
+            "DELETE FROM coin_collection_series_members WHERE id = ?", (member_id,)
+        )
+    return cursor.rowcount > 0
+
+
+def list_coin_today_lots(tz: ZoneInfo, *, now: datetime | None = None) -> list[CoinTodayLot]:
+    """当日截拍专场里的全部拍品（推荐匹配用）。"""
+    start, end = local_day_bounds(tz, now=now)
+    with db.connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT l.id, l.session_id, l.title, l.start_price, l.current_price,
+                   l.image_urls, s.title AS session_title, s.auction_at,
+                   sh.name AS shop_name
+            FROM coin_lots l
+            JOIN coin_sessions s ON s.id = l.session_id
+            LEFT JOIN coin_shops sh ON sh.id = s.shop_id
+            WHERE s.auction_at >= ? AND s.auction_at < ?
+            ORDER BY s.auction_at, l.id
+            """,
+            (start, end),
+        ).fetchall()
+    return [
+        CoinTodayLot(
+            id=row["id"],
+            session_id=row["session_id"],
+            title=row["title"],
+            start_price=row["start_price"],
+            current_price=row["current_price"],
+            image_urls=_json_list(row["image_urls"]),
+            shop_name=row["shop_name"],
+            session_title=row["session_title"],
+            auction_at=row["auction_at"],
+        )
+        for row in rows
+    ]
+
+
+
 def _row_to_coin_tag(row: sqlite3.Row) -> CoinProfileTag:
     return CoinProfileTag(
         id=row["id"],
@@ -1174,20 +1345,32 @@ def _row_to_session_card(row: sqlite3.Row) -> CoinSessionCard:
     )
 
 
-def list_coin_session_cards(limit: int | None = None) -> list[CoinSessionCard]:
+def list_coin_session_cards(
+    limit: int | None = None,
+    *,
+    day_bounds: tuple[str, str] | None = None,
+) -> list[CoinSessionCard]:
     """第一页：**只列出至少命中 1 条推荐拍品的专场**（spec §14.7「没有就不展示」）。
 
     未命中的专场仍全量入库，只是不在这里出现 —— 画像改动后可以重新匹配，不必重抓。
+    `day_bounds` 给定时只取截拍时间落在该 `[start, end)` 区间（UTC 存储格式）的专场。
     """
+    conditions = [
+        """(SELECT COUNT(*) FROM coin_lots l
+            WHERE l.session_id = s.id AND l.is_recommended = 1) > 0"""
+    ]
+    params: list[object] = []
+    if day_bounds is not None:
+        conditions.append("s.auction_at >= ? AND s.auction_at < ?")
+        params.extend(day_bounds)
     sql = (
         _SESSION_CARD_SQL
+        + " WHERE "
+        + " AND ".join(conditions)
         + """
-    WHERE (SELECT COUNT(*) FROM coin_lots l
-            WHERE l.session_id = s.id AND l.is_recommended = 1) > 0
     ORDER BY (s.auction_at IS NULL), s.auction_at DESC, s.id DESC
     """
     )
-    params: list[object] = []
     if limit is not None:
         sql += " LIMIT ?"
         params.append(limit)

@@ -22,17 +22,47 @@
     </nav>
   </header>
 
-  <main class="content">
+  <main class="content{% block content_class %}{% endblock %}">
     {% block content %}{% endblock %}
   </main>
 
   <footer class="site-foot">本地服务 · 只有我一个人用</footer>
+
+  <div class="coin-lightbox" id="coin-lightbox" hidden>
+    <img alt="放大查看">
+  </div>
 
   <script>
     // 点击外链后置灰，防止重复点（无框架、无 CDN）
     document.addEventListener("click", function (event) {
       var link = event.target.closest("a.item-link");
       if (link) { link.classList.add("is-clicked"); }
+    });
+
+    // 图片点击放大（原生、无框架、无 CDN）：点缩略图开灯箱，点遮罩 / 再点图 / Esc 关闭。
+    // 缩略图可能包在链接里（专场卡片），故拦截默认跳转。
+    document.addEventListener("click", function (event) {
+      var box = document.getElementById("coin-lightbox");
+      var img = event.target.closest("img.coin-zoom");
+      if (img) {
+        event.preventDefault();
+        event.stopPropagation();
+        box.querySelector("img").src = img.src;
+        box.hidden = false;
+        return;
+      }
+      if (event.target === box || event.target === box.querySelector("img")) {
+        box.hidden = true;
+        box.querySelector("img").removeAttribute("src");
+      }
+    });
+
+    document.addEventListener("keydown", function (event) {
+      var box = document.getElementById("coin-lightbox");
+      if (event.key === "Escape" && !box.hidden) {
+        box.hidden = true;
+        box.querySelector("img").removeAttribute("src");
+      }
     });
   </script>
   {% block scripts %}{% endblock %}

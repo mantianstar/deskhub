@@ -1,0 +1,219 @@
+{% extends "base.html" %}
+{% block title %}{{ page_title }} · deskhub{% endblock %}
+{% block content_class %} content-wide{% endblock %}
+
+{% block content %}
+{% macro render_pager(pager) %}
+{% if pager.total_pages > 1 %}
+<nav class="pager">
+  {% if pager.prev_url %}
+  <a class="btn" href="{{ pager.prev_url }}">上一页</a>
+  {% else %}
+  <span class="btn btn-disabled">上一页</span>
+  {% endif %}
+  <span class="pager-meta">第 {{ pager.page }} / {{ pager.total_pages }} 页</span>
+  {% if pager.next_url %}
+  <a class="btn" href="{{ pager.next_url }}">下一页</a>
+  {% else %}
+  <span class="btn btn-disabled">下一页</span>
+  {% endif %}
+</nav>
+{% endif %}
+{% endmacro %}
+
+<section class="digest-head">
+  <h1>收藏画像</h1>
+  <p class="digest-meta">
+    {{ profiles_total }} 个收藏系列 · {{ item_total }} 条推荐 · 当日拍品 {{ today_lots|length }} 条
+  </p>
+</section>
+
+<nav class="coin-tabs">
+  <a href="/coins">拍卖</a>
+  <a class="is-active" href="/coins/collection">收藏画像</a>
+  <a href="/coins/collections">系列映射</a>
+  <a href="/coins/grades">品相录入</a>
+  <a href="/coins/info">信息</a>
+  <a href="/coins/manage">采集管理</a>
+</nav>
+
+{% if not profiles %}
+<div class="empty">
+  还没有收藏系列。先去 <a href="/coins/collections">系列映射</a> 新建收藏系列，
+  再把多个 Numista series 合并进来。
+</div>
+{% else %}
+<nav class="coin-jump">
+  <a href="#recommendations">推荐 {{ item_total }}</a>
+  <span>·</span>
+  <a href="#profiles">收藏系列 {{ profiles_total }}</a>
+</nav>
+
+<h2 class="coin-section-title" id="recommendations">
+  推荐 <span class="coin-section-count">{{ filtered_total }}{% if filtered_total != item_total %} / {{ item_total }}{% endif %} 条</span>
+</h2>
+
+<div class="coin-priority-rules">
+  <p class="coin-section-note"><strong>优先级 1 · 稀缺年份</strong>：收藏位置权重 × 稀缺权重；首年 / 末年 / 执政者更替年权重 1.5</p>
+  <p class="coin-section-note"><strong>优先级 2 · 差品升级</strong>：品相敏感度（XF / VF）× 稀有度；每个系列最多 3 个</p>
+  <p class="coin-section-note"><strong>优先级 3 · 相似推荐</strong>：仅当前两层不足时触发；尺寸差升序 → 稀有度降序</p>
+</div>
+
+<form class="search-form" method="get" action="/coins/collection">
+  <div class="search-row search-row-labeled">
+    <label class="field">系列
+      <select name="series">
+        <option value="">全部</option>
+        {% for option in collection_options %}
+        <option value="{{ option.key }}"{% if option.key == filter_series %} selected{% endif %}>{{ option.name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label class="field">推荐原因
+      <select name="reason">
+        <option value="">全部</option>
+        {% for priority, label in reason_labels.items() %}
+        <option value="{{ priority }}"{% if filter_reason|int == priority %} selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label class="field">是否命中
+      <select name="hit">
+        <option value="all"{% if filter_hit == 'all' %} selected{% endif %}>全部</option>
+        <option value="1"{% if filter_hit == '1' %} selected{% endif %}>已命中（今日命中 &gt; 0）</option>
+        <option value="0"{% if filter_hit == '0' %} selected{% endif %}>未命中</option>
+      </select>
+    </label>
+    <button class="btn btn-primary" type="submit">查询</button>
+    {% if filter_series or filter_reason or filter_hit %}
+    <a class="btn btn-ghost" href="/coins/collection">重置</a>
+    {% endif %}
+  </div>
+</form>
+
+{% if not items %}
+<div class="empty coin-empty-inline">暂无推荐项</div>
+{% else %}
+<div class="table-wrap">
+  <table class="sources-table">
+    <thead>
+      <tr>
+        <th>系列</th>
+        <th class="nowrap">年份</th>
+        <th class="nowrap">推荐原因</th>
+        <th class="nowrap">分数</th>
+        <th class="nowrap">发行量</th>
+        <th class="nowrap">稀有度</th>
+        <th class="nowrap">尺寸 / 重量</th>
+        <th class="nowrap">VF / XF</th>
+        <th>搜索词</th>
+        <th class="nowrap">今日命中</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for item in items %}
+      <tr>
+        <td>{{ item.collection.name }}</td>
+        <td class="nowrap">{{ item.year_labels|join(' / ') }}</td>
+        <td class="nowrap">{{ reason_labels.get(item.priority, item.reason) }}</td>
+        <td class="nowrap">{{ '%.3f' % item.score }}</td>
+        <td class="nowrap">{{ item.spec.mintage if item.spec and item.spec.mintage is not none else '—' }}</td>
+        <td class="nowrap">
+          {% if item.spec and item.spec.rarity is not none %}{{ '%.2f%%' % (item.spec.rarity * 100) }}{% else %}—{% endif %}
+        </td>
+        <td class="nowrap">
+          {{ item.spec.size_mm if item.spec and item.spec.size_mm else '—' }} mm /
+          {{ item.spec.weight_g if item.spec and item.spec.weight_g else '—' }} g
+        </td>
+        <td class="nowrap">
+          {{ item.spec.price_vf if item.spec and item.spec.price_vf else '—' }} /
+          {{ item.spec.price_xf if item.spec and item.spec.price_xf else '—' }}
+        </td>
+        <td><code>{{ item.keyword }}</code></td>
+        <td class="nowrap">{{ item.matched_lots|length }} 条</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{{ render_pager(item_pager) }}
+{% endif %}
+
+<h2 class="coin-section-title" id="profiles">
+  收藏系列画像 <span class="coin-section-count">{{ profiles_total }} 个</span>
+</h2>
+{% for profile in profiles %}
+<details class="coin-profile-row" id="collection-{{ profile.collection.id }}">
+  <summary class="coin-profile-summary">
+    <span class="coin-profile-name">{{ profile.collection.name }}</span>
+    <span class="coin-profile-range">
+      {% if profile.min_year is not none %}{{ profile.min_year }}–{{ profile.max_year }}{% if profile.years %} · {{ profile.years|length }} 年{% endif %}{% else %}无年份{% endif %}
+    </span>
+    <span class="coin-profile-stats">
+      已有 {{ profile.owned_years|length }} · 缺 {{ profile.missing_years|length }} · 升级 {{ profile.upgrade_years|length }}
+    </span>
+    <span class="coin-profile-size">
+      {{ profile.size_band or '未分档' }} · 成员 {{ profile.member_series_ids|length }}
+    </span>
+  </summary>
+  <div class="coin-profile-body">
+    <p class="digest-meta">
+      国家 {{ profile.collection.country }}
+      {%- if profile.collection.ruler %} · 执政者 {{ profile.collection.ruler }}{% endif %}
+      · 面值 {{ profile.collection.denomination }}
+      · 成员系列 {{ profile.member_series_ids|join(', ') or '无' }}
+    </p>
+
+    <div class="coin-year-group">
+      <span class="coin-year-label">已有</span>
+      <span class="coin-year-chips">
+        {% for year in profile.owned_years %}<span class="coin-chip">{{ year }}</span>{% else %}<span class="digest-meta">—</span>{% endfor %}
+      </span>
+    </div>
+    <div class="coin-year-group">
+      <span class="coin-year-label">缺失</span>
+      <span class="coin-year-chips">
+        {% for year in profile.missing_years %}<span class="coin-chip">{{ year }}</span>{% else %}<span class="digest-meta">—</span>{% endfor %}
+      </span>
+    </div>
+    <div class="coin-year-group">
+      <span class="coin-year-label">需升级</span>
+      <span class="coin-year-chips">
+        {% for year in profile.upgrade_years %}<span class="coin-chip">{{ year }}</span>{% else %}<span class="digest-meta">—</span>{% endfor %}
+      </span>
+    </div>
+
+    <details class="coin-year-specs">
+      <summary>年份规格字典（{{ profile.year_specs|length }} 个年份）</summary>
+      <div class="table-wrap">
+        <table class="sources-table">
+          <thead>
+            <tr>
+              <th>年份</th>
+              <th>发行量</th>
+              <th>稀有度</th>
+              <th>尺寸 / 重量</th>
+              <th>VF / XF 参考价</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for year, specs in profile.year_specs.items() %}
+            {% set spec = specs[0] %}
+            <tr>
+              <td>{{ year }}{% if spec.gregorian_year and spec.gregorian_year != year %}（{{ spec.gregorian_year }}）{% endif %}</td>
+              <td>{{ spec.mintage if spec.mintage is not none else '—' }}</td>
+              <td>{% if spec.rarity is not none %}{{ '%.2f%%' % (spec.rarity * 100) }}{% else %}—{% endif %}</td>
+              <td>{{ spec.size_mm or '—' }} mm / {{ spec.weight_g or '—' }} g</td>
+              <td>{{ spec.price_vf or '—' }} / {{ spec.price_xf or '—' }} {{ spec.currency or '' }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </details>
+  </div>
+</details>
+{% endfor %}
+{{ render_pager(profile_pager) }}
+{% endif %}
+{% endblock %}

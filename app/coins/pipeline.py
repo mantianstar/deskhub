@@ -21,6 +21,7 @@ from dataclasses import dataclass
 
 from app import repository
 from app.coins import matcher, pricing
+from app.coins import recommend as coins_recommend
 from app.coins.gapi import GapiError, MxiqiGapi
 from app.config import Config
 from app.models import CoinFetchRun, CoinFetchStatus, CoinLot, CoinSession, CoinShop
@@ -104,13 +105,26 @@ async def run(
         if not price_only:
             sessions_seen, sessions_stored, lots_stored = await _collect(config, api, started)
 
-        match_result = matcher.rematch_all(config)
-        logger.info(
-            "铜币匹配：拍品 %d 条，命中 %d 条（阈值 %g）",
-            match_result.lots_total,
-            match_result.lots_recommended,
-            match_result.threshold,
-        )
+        # 收藏画像优先：配了收藏系列映射就按三层推荐匹配；否则回退旧的标签匹配
+        recommend_result = coins_recommend.rematch_all(config)
+        if recommend_result.profiles_total:
+            match_result = recommend_result
+            price_keywords = recommend_result.keywords
+            logger.info(
+                "铜币推荐匹配：拍品 %d 条，命中 %d 条（推荐项 %d 个）",
+                match_result.lots_total,
+                match_result.lots_recommended,
+                match_result.items_total,
+            )
+        else:
+            match_result = matcher.rematch_all(config)
+            price_keywords = None
+            logger.info(
+                "铜币匹配（回退画像标签）：拍品 %d 条，命中 %d 条（阈值 %g）",
+                match_result.lots_total,
+                match_result.lots_recommended,
+                match_result.threshold,
+            )
 
         if collect_only:
             return CoinsRunResult(
@@ -124,7 +138,9 @@ async def run(
                 errors,
             )
 
-        priced, skipped, deferred, generic, price_errors = await _price_recommended(config, api)
+        priced, skipped, deferred, generic, price_errors = await _price_recommended(
+            config, api, keywords=price_keywords
+        )
         errors += price_errors
     finally:
         if owned:
@@ -164,6 +180,16 @@ async def _collect(config: Config, api: MxiqiGapi, started: str) -> tuple[int, i
         logger.warning("铜币专场列表拉取失败：%s", exc)
         _record(RUN_KIND_SESSIONS, TARGET_LIST, started, CoinFetchStatus.HTTP_ERROR, error=str(exc))
         return 0, 0, 0
+
+    # 只抓当日截拍的店铺（spec §14.17）：截拍时间落在业务时区「今天」的专场才继续拉详情
+    day_start, day_end = repository.local_day_bounds(config.app.tz)
+    before = len(cards)
+    cards = [
+        card
+        for card in cards
+        if card.end_at is not None and day_start <= card.end_at < day_end
+    ]
+    logger.info("铜币采集：今日截拍专场 %d 个（列表共 %d 个）", len(cards), before)
 
     limit = config.coins.max_sessions_per_run
     cards = cards[:limit]
@@ -247,17 +273,20 @@ async def _collect(config: Config, api: MxiqiGapi, started: str) -> tuple[int, i
 
 
 async def _price_recommended(
-    config: Config, client: MxiqiGapi
+    config: Config, client: MxiqiGapi, *, keywords: dict[int, str] | None = None
 ) -> tuple[int, int, int, int, int]:
     """给「推荐且今天还没查过价」的拍品查推荐价。
 
     返回（已查, 当日跳过, 因上限推迟, 关键词太泛不报价, 失败）。
 
+    `keywords` 非空时走**收藏画像推荐**：直接用推荐项生成的关键词，不再从拍品标题反推标签。
+    `keywords` 为 None 时回退旧的标签匹配（与 v1 行为一致）。
+
     **限速**（用户 2026-10-12 要求：不要求效率）：每次查价之间停 `query_interval_seconds`
     （带 ±40% 抖动，避免固定节奏），并且单轮最多查 `max_queries_per_run` 条 —— 剩下的留到下一轮。
     """
     day_start = repository.local_day_bounds(config.app.tz)[0]
-    tags = repository.list_coin_profile_tags(only_enabled=True)
+    tags = repository.list_coin_profile_tags(only_enabled=True) if keywords is None else []
     price_cfg = config.coins.price
     base_interval = price_cfg.query_interval_seconds
     cap = price_cfg.max_queries_per_run
@@ -276,18 +305,24 @@ async def _price_recommended(
             skipped += 1  # 当日缓存，避免重复请求（plan §18.6）
             continue
 
-        hits = matcher.match_lot(lot.title, tags)
-        if not matcher.has_specific_hit(hits):
-            # 只有国家/年代这类泛词 → 搜出来的同类币根本不是同一档东西，
-            # 报出来的价会离谱（实测：当前价 ¥330 的银套币被报成 ¥2）。宁可空着。
-            logger.info(
-                "关键词太泛，不报价 lot_id=%s 命中=%s title=%s",
-                lot.id,
-                [hit.value for hit in hits],
-                lot.title[:40],
-            )
-            generic += 1
-            continue
+        if keywords is not None:
+            keyword = keywords.get(lot.id)
+            if not keyword:
+                continue
+        else:
+            hits = matcher.match_lot(lot.title, tags)
+            if not matcher.has_specific_hit(hits):
+                # 只有国家/年代这类泛词 → 搜出来的同类币根本不是同一档东西，
+                # 报出来的价会离谱（实测：当前价 ¥330 的银套币被报成 ¥2）。宁可空着。
+                logger.info(
+                    "关键词太泛，不报价 lot_id=%s 命中=%s title=%s",
+                    lot.id,
+                    [hit.value for hit in hits],
+                    lot.title[:40],
+                )
+                generic += 1
+                continue
+            keyword = matcher.build_keyword(hits)
 
         if attempts >= cap:
             deferred += 1  # 本轮不查了，留到下一轮（限速优先）
@@ -302,7 +337,6 @@ async def _price_recommended(
             await asyncio.sleep(delay)
         attempts += 1
 
-        keyword = matcher.build_keyword(hits)
         started = repository.utcnow()
         try:
             ref = await pricing.price_lot(

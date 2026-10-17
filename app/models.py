@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
-SCHEMA_VERSION = "8"
+SCHEMA_VERSION = "9"
 
 # 所有时间列存 UTC ISO8601 字符串（SQLite 无原生时间类型）
 DDL = """
@@ -319,6 +319,32 @@ CREATE TABLE IF NOT EXISTS coin_purchase_grades (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS uidx_coin_purchase_grades
   ON coin_purchase_grades(country, era, denomination);
+
+-- 收藏系列（spec §14.17）：Numista 系列划分过细，把「同执政者同面值、尺寸差 ≤ 2mm」的
+-- 多个 Numista series 手工合并成一个收藏系列。`collection_key` 是自定义 series id。
+CREATE TABLE IF NOT EXISTS coin_collection_series (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  collection_key TEXT    NOT NULL UNIQUE,
+  name           TEXT    NOT NULL,          -- 国家 · 执政者 · 面值
+  country        TEXT    NOT NULL,
+  ruler          TEXT,
+  denomination   TEXT    NOT NULL,
+  size_mm        REAL,                      -- 代表尺寸（成员系列尺寸中位数）
+  size_band      TEXT,                      -- 小 / 中 / 大 / 超大
+  created_at     TEXT    NOT NULL,
+  updated_at     TEXT    NOT NULL
+);
+
+-- 收藏系列 ↔ Numista 系列的手工映射（一个 Numista series 只能属于一个收藏系列）
+CREATE TABLE IF NOT EXISTS coin_collection_series_members (
+  id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+  collection_id       INTEGER NOT NULL REFERENCES coin_collection_series(id) ON DELETE CASCADE,
+  numista_series_id   INTEGER NOT NULL UNIQUE,
+  numista_series_name TEXT,
+  created_at          TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_coin_collection_members
+  ON coin_collection_series_members(collection_id);
 
 -- ============ 功能开关（管理页 /control）============
 -- 控制「各类任务是否自动执行」：关掉后每天 08:00 的定时任务不再跑它。
@@ -727,3 +753,112 @@ class CoinSessionDetail:
     recommended_count: int
     shop: CoinShop | None
     lots: list[CoinLotCard]
+
+
+# ---------------------------------------------------------------- 收藏画像（spec §14.17）
+
+
+@dataclass
+class CoinCollectionSeries:
+    """合并后的收藏系列（多个 Numista series → 一个自定义 series）。"""
+
+    id: int | None
+    collection_key: str
+    name: str
+    country: str
+    ruler: str | None
+    denomination: str
+    size_mm: float | None
+    size_band: str | None
+    created_at: str
+    updated_at: str
+
+
+@dataclass
+class CoinCollectionMember:
+    """收藏系列 ↔ Numista 系列的手工映射。"""
+
+    id: int | None
+    collection_id: int
+    numista_series_id: int
+    numista_series_name: str | None
+    created_at: str
+
+
+@dataclass(frozen=True)
+class CoinYearSpec:
+    """画像「年份规格字典」里的一年（同一年多个普制版别时取发行量最大的）。"""
+
+    year: int
+    gregorian_year: int | None
+    numista_issue_id: int
+    mintage: int | None
+    rarity: float | None          # Numista Frequency / 100，0.006 = 0.6%
+    size_mm: float | None
+    weight_g: float | None
+    price_vf: float | None
+    price_xf: float | None
+    currency: str | None
+    is_proof: bool | None
+
+    def as_dict(self) -> dict:
+        return {
+            "mintage": self.mintage,
+            "rarity": self.rarity,
+            "size": self.size_mm,
+            "weight": self.weight_g,
+            "price_estimates": {"VF": self.price_vf, "XF": self.price_xf},
+        }
+
+
+@dataclass
+class CoinCollectionProfile:
+    """一个收藏系列的画像（spec §14.17 第 5 条）。"""
+
+    collection: CoinCollectionSeries
+    member_series_ids: list[int]
+    min_year: int | None
+    max_year: int | None
+    years: list[int]
+    owned_years: list[int]
+    missing_years: list[int]
+    upgrade_years: list[int]
+    year_specs: dict[int, list[CoinYearSpec]]
+    size_band: str | None
+
+    def year_specs_dict(self) -> dict[str, list[dict]]:
+        return {str(year): [spec.as_dict() for spec in specs] for year, specs in self.year_specs.items()}
+
+
+@dataclass(frozen=True)
+class CoinTodayLot:
+    """当日截拍专场里的一条拍品（推荐匹配用）。"""
+
+    id: int
+    session_id: int
+    title: str
+    start_price: float | None
+    current_price: float | None
+    image_urls: list[str]
+    shop_name: str | None
+    session_title: str
+    auction_at: str | None
+
+
+@dataclass
+class CoinRecommendation:
+    """三层优先级的一条目标购买推荐。"""
+
+    priority: int
+    collection: CoinCollectionSeries
+    year: int
+    year_labels: list[str]
+    keyword: str
+    score: float
+    reason: str
+    spec: CoinYearSpec | None = None
+    matched_lots: list[CoinTodayLot] = field(default_factory=list)
+
+    @property
+    def year_label(self) -> str:
+        return self.year_labels[0] if self.year_labels else str(self.year)

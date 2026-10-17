@@ -8,17 +8,20 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import datetime
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import FileResponse
 from starlette.responses import Response
 
-from app import config, repository
+from app import config, repository, textmatch
+from app.coins import collection as coins_collection
 from app.coins import grades as coins_grades
 from app.coins import numista as coins_numista
 from app.coins import numista_web as coins_numista_web
 from app.coins import pipeline as coins_pipeline
+from app.coins import recommend as coins_recommend
 from app.coins.numista import ISSUER_CODES, NumistaError
 from app.coins.numista_web import NumistaPageError
 from app.models import (
@@ -26,6 +29,8 @@ from app.models import (
     COIN_PROFILE_DIMENSIONS,
     COIN_PURCHASE_GRADES,
     COIN_SESSION_STATUS_LABELS,
+    CoinCollectionSeries,
+    CoinSeries,
 )
 from app.routers import templates
 
@@ -59,8 +64,15 @@ templates.env.globals["coin_session_status_labels"] = SESSION_STATUS_LABELS
 
 
 @router.get("/coins")
-def sessions_page(request: Request) -> Response:
-    cards = repository.list_coin_session_cards()
+def sessions_page(request: Request, auction_date: str = "") -> Response:
+    """专场列表：按拍卖截止日期筛选，默认今日（业务时区）。"""
+    cfg = config.get()
+    try:
+        selected_day = datetime.strptime(auction_date, "%Y-%m-%d").date()
+    except ValueError:
+        selected_day = datetime.now(cfg.app.tz).date()
+    start, end = repository.day_bounds_utc(cfg.app.tz, selected_day)
+    cards = repository.list_coin_session_cards(day_bounds=(start, end))
     return templates.TemplateResponse(
         request,
         "coins/sessions.html",
@@ -68,6 +80,7 @@ def sessions_page(request: Request) -> Response:
             "request": request,
             "page_title": "铜币拍卖",
             "cards": cards,
+            "auction_date": selected_day.isoformat(),
             "summary": repository.coin_fetch_summary(),
         },
     )
@@ -613,3 +626,438 @@ def save_grades(
         else:
             repository.delete_coin_purchase_grade(key_country, key_era, key_denomination)
     return _redirect(_grades_url(filter_country, filter_year, filter_denomination))
+
+
+# ---------------------------------------------------------------- 收藏画像与映射（spec §14.17）
+
+COIN_COLLECTION_PAGE_SIZE = 20
+COIN_RECOMMEND_PAGE_SIZE = 20
+COIN_PROFILE_PAGE_SIZE = 10
+COIN_MEMBER_CANDIDATE_LIMIT = 50
+COIN_REASON_LABELS = {1: "稀缺年份", 2: "差品升级", 3: "相似推荐"}
+
+
+def _page_number(raw: str, total_pages: int) -> int:
+    """页码参数 → 1..total_pages；非法值按第 1 页。"""
+    try:
+        page = int(raw)
+    except (TypeError, ValueError):
+        page = 1
+    return min(max(page, 1), max(total_pages, 1))
+
+
+def _paginate(items: list, raw_page: str, size: int) -> tuple[list, int, int]:
+    total_pages = max(1, (len(items) + size - 1) // size)
+    page = _page_number(raw_page, total_pages)
+    start = (page - 1) * size
+    return items[start : start + size], page, total_pages
+
+
+def _query_url(path: str, params: dict[str, object], anchor: str = "") -> str:
+    query = {key: value for key, value in params.items() if value not in (None, "", 0)}
+    suffix = f"?{urlencode(query)}" if query else ""
+    return f"{path}{suffix}" + (f"#{anchor}" if anchor else "")
+
+
+def _collection_page_url(
+    page: int,
+    ppage: int,
+    *,
+    series: str = "",
+    reason: str = "",
+    hit: str = "",
+    anchor: str = "",
+) -> str:
+    return _query_url(
+        "/coins/collection",
+        {
+            "page": page if page > 1 else 0,
+            "ppage": ppage if ppage > 1 else 0,
+            "series": series,
+            "reason": reason,
+            "hit": hit,
+        },
+        anchor,
+    )
+
+
+def _collection_ruler(collection: CoinCollectionSeries) -> str:
+    """收藏系列的执政者：优先显式字段，其次取「国家 · 执政者 · 面值」名称的第二段。"""
+    if collection.ruler:
+        return collection.ruler
+    parts = [part.strip() for part in (collection.name or "").split("·")]
+    if len(parts) >= 3 and parts[1] not in ("", "-", "—"):
+        return parts[1]
+    return ""
+
+
+def _member_filters(
+    collection: CoinCollectionSeries,
+    series_by_country: dict[str, list[CoinSeries]],
+    country_by_norm: dict[str, str],
+    member_ids: set[int],
+    country_param: str,
+    ruler_param: str,
+    denomination_param: str,
+) -> dict[str, object]:
+    """某一收藏系列的成员候选：国家 / 执政者 / 面值默认取收藏系列自身的值。"""
+    countries = sorted(series_by_country)
+    default_country = country_by_norm.get(textmatch.normalize(collection.country))
+    selected_country = country_param or default_country or collection.country
+    if selected_country not in series_by_country:
+        countries = sorted(set(countries) | {selected_country})
+
+    in_country = series_by_country.get(selected_country, [])
+    ruler_by_norm = {
+        textmatch.normalize(item.ruler): item.ruler
+        for item in in_country
+        if item.ruler
+    }
+    rulers = sorted(ruler_by_norm.values())
+    own_ruler = ruler_by_norm.get(textmatch.normalize(_collection_ruler(collection)))
+    if ruler_param == "__all__":
+        selected_ruler = ""
+    elif ruler_param and ruler_param in rulers:
+        selected_ruler = ruler_param
+    elif ruler_param:
+        selected_ruler = ""
+    else:
+        selected_ruler = own_ruler or ""
+
+    in_scope = [
+        item
+        for item in in_country
+        if not selected_ruler
+        or textmatch.normalize(item.ruler) == textmatch.normalize(selected_ruler)
+    ]
+
+    denomination_by_norm = {
+        textmatch.normalize(item.denomination): item.denomination
+        for item in in_scope
+        if item.denomination
+    }
+    denominations = sorted(denomination_by_norm.values())
+    own_denomination = denomination_by_norm.get(textmatch.normalize(collection.denomination))
+    if denomination_param and denomination_param in denominations:
+        selected_denomination = denomination_param
+    elif country_param or ruler_param:
+        # 切换国家 / 执政者后旧面值通常不在新列表里：先回落本系列面值，再回落第一个面值
+        selected_denomination = (
+            own_denomination or (denominations[0] if denominations else collection.denomination)
+        )
+    else:
+        selected_denomination = own_denomination or collection.denomination
+    if selected_denomination not in denominations:
+        denominations = sorted(set(denominations) | {selected_denomination})
+
+    candidates = [
+        item
+        for item in in_scope
+        if item.denomination
+        and textmatch.normalize(item.denomination)
+        == textmatch.normalize(selected_denomination)
+        and item.numista_id not in member_ids
+    ]
+    candidates.sort(key=lambda item: (item.min_year or 9999, item.numista_id))
+    return {
+        "countries": countries,
+        "country": selected_country,
+        "rulers": rulers,
+        "ruler": selected_ruler,
+        "denominations": denominations,
+        "denomination": selected_denomination,
+        "candidates": candidates[:COIN_MEMBER_CANDIDATE_LIMIT],
+        "candidate_total": len(candidates),
+        "truncated": len(candidates) > COIN_MEMBER_CANDIDATE_LIMIT,
+    }
+
+
+@router.get("/coins/collection")
+def collection_page(
+    request: Request,
+    page: str = "",
+    ppage: str = "",
+    series: str = "",
+    reason: str = "",
+    hit: str = "1",
+) -> Response:
+    """收藏画像 + 三层优先级推荐合并表 + 当日拍品匹配结果。
+
+    「是否命中」默认只看已命中（今日命中 > 0）；选「全部」时传 `hit=all`。
+    """
+    cfg = config.get()
+    profiles, items = coins_recommend.load_recommendations(cfg)
+
+    filtered = items
+    if series:
+        filtered = [item for item in filtered if item.collection.collection_key == series]
+    if reason in ("1", "2", "3"):
+        filtered = [item for item in filtered if str(item.priority) == reason]
+    if hit == "1":
+        filtered = [item for item in filtered if item.matched_lots]
+    elif hit == "0":
+        filtered = [item for item in filtered if not item.matched_lots]
+
+    paged_items, page_no, total_pages = _paginate(
+        filtered, page, COIN_RECOMMEND_PAGE_SIZE
+    )
+    profile_items, profile_page, profile_total_pages = _paginate(
+        profiles, ppage, COIN_PROFILE_PAGE_SIZE
+    )
+
+    item_pager = {
+        "page": page_no,
+        "total_pages": total_pages,
+        "prev_url": _collection_page_url(
+            page_no - 1,
+            profile_page,
+            series=series,
+            reason=reason,
+            hit=hit,
+            anchor="recommendations",
+        )
+        if page_no > 1
+        else "",
+        "next_url": _collection_page_url(
+            page_no + 1,
+            profile_page,
+            series=series,
+            reason=reason,
+            hit=hit,
+            anchor="recommendations",
+        )
+        if page_no < total_pages
+        else "",
+    }
+
+    profile_pager = {
+        "page": profile_page,
+        "total_pages": profile_total_pages,
+        "prev_url": _collection_page_url(
+            page_no,
+            profile_page - 1,
+            series=series,
+            reason=reason,
+            hit=hit,
+            anchor="profiles",
+        )
+        if profile_page > 1
+        else "",
+        "next_url": _collection_page_url(
+            page_no,
+            profile_page + 1,
+            series=series,
+            reason=reason,
+            hit=hit,
+            anchor="profiles",
+        )
+        if profile_page < profile_total_pages
+        else "",
+    }
+
+    return templates.TemplateResponse(
+        request,
+        "coins/collection.html",
+        {
+            "request": request,
+            "page_title": "收藏画像",
+            "profiles": profile_items,
+            "profiles_total": len(profiles),
+            "profile_pager": profile_pager,
+            "items": paged_items,
+            "item_pager": item_pager,
+            "item_total": len(items),
+            "filtered_total": len(filtered),
+            "reason_labels": COIN_REASON_LABELS,
+            "collection_options": [
+                {"key": profile.collection.collection_key, "name": profile.collection.name}
+                for profile in profiles
+            ],
+            "filter_series": series,
+            "filter_reason": reason,
+            "filter_hit": hit,
+            "today_lots": repository.list_coin_today_lots(cfg.app.tz),
+        },
+    )
+
+
+def _collections_redirect() -> Response:
+    return _redirect("/coins/collections")
+
+
+@router.get("/coins/collections")
+def collections_page(
+    request: Request,
+    page: str = "",
+    expand: str = "",
+    mcountry: str = "",
+    mruler: str = "",
+    mdenomination: str = "",
+) -> Response:
+    """收藏系列映射维护：新建收藏系列 + 把 Numista series 手工合并进来。"""
+    collections = repository.list_coin_collection_series()
+    members = repository.list_coin_collection_members()
+    series = repository.list_coin_series(cn=True)
+    series_by_id = {item.numista_id: item for item in series}
+    members_by_collection: dict[int, list] = {
+        collection.id or 0: [] for collection in collections
+    }
+    for member in members:
+        members_by_collection.setdefault(member.collection_id, []).append(member)
+
+    profiles = coins_collection.load_profiles()
+    profile_by_id = {profile.collection.id: profile for profile in profiles}
+    # 映射候选只列青铜/铜系列，避免银、镍币误入
+    series_candidates = [
+        item for item in series if coins_collection.is_bronze_or_copper(item.composition)
+    ]
+
+    try:
+        expand_id = int(expand)
+    except (TypeError, ValueError):
+        expand_id = 0
+    if expand_id:
+        # 展开目标可能不在当前页：先定位到它所在页，再分页
+        for index, collection in enumerate(collections):
+            if collection.id == expand_id:
+                page = str(index // COIN_COLLECTION_PAGE_SIZE + 1)
+                break
+
+    paged_collections, page_no, total_pages = _paginate(
+        collections, page, COIN_COLLECTION_PAGE_SIZE
+    )
+    expanded_id = expand_id if any(item.id == expand_id for item in paged_collections) else 0
+
+    collection_name_by_id = {collection.id: collection.name for collection in collections}
+    owner_by_series = {
+        member.numista_series_id: collection_name_by_id.get(member.collection_id)
+        for member in members
+    }
+
+    series_by_country: dict[str, list[CoinSeries]] = {}
+    for item in series_candidates:
+        if item.issuer:
+            series_by_country.setdefault(item.issuer, []).append(item)
+    country_by_norm = {
+        textmatch.normalize(country): country for country in series_by_country
+    }
+
+    member_filters: dict[int, dict[str, object]] = {}
+    for collection in paged_collections:
+        is_expanded = collection.id == expanded_id
+        member_filters[collection.id or 0] = _member_filters(
+            collection,
+            series_by_country,
+            country_by_norm,
+            {
+                member.numista_series_id
+                for member in members_by_collection.get(collection.id or 0, [])
+            },
+            mcountry if is_expanded else "",
+            mruler if is_expanded else "",
+            mdenomination if is_expanded else "",
+        )
+
+    prev_url = (
+        _query_url("/coins/collections", {"page": page_no - 1}) if page_no > 1 else ""
+    )
+    next_url = (
+        _query_url("/coins/collections", {"page": page_no + 1})
+        if page_no < total_pages
+        else ""
+    )
+
+    return templates.TemplateResponse(
+        request,
+        "coins/collections.html",
+        {
+            "request": request,
+            "page_title": "收藏系列映射",
+            "collections": paged_collections,
+            "total_collections": len(collections),
+            "total_members": len(members),
+            "page": page_no,
+            "total_pages": total_pages,
+            "prev_url": prev_url,
+            "next_url": next_url,
+            "expanded_id": expanded_id,
+            "members_by_collection": members_by_collection,
+            "series_by_id": series_by_id,
+            "profile_by_id": profile_by_id,
+            "series_candidates": series_candidates,
+            "member_filters": member_filters,
+            "owner_by_series": owner_by_series,
+        },
+    )
+
+
+@router.post("/coins/collections/add")
+def add_collection(
+    collection_key: str = Form(""),
+    name: str = Form(""),
+    country: str = Form(...),
+    ruler: str = Form(""),
+    denomination: str = Form(...),
+    size_mm: str = Form(""),
+) -> Response:
+    country = country.strip()
+    denomination = denomination.strip()
+    if not country or not denomination:
+        return Response(status_code=400)
+    ruler_value = ruler.strip() or None
+    size_value: float | None = None
+    if size_mm.strip():
+        try:
+            size_value = float(size_mm)
+        except ValueError:
+            return Response(status_code=400)
+    key = collection_key.strip() or f"{country}-{ruler_value or '-'}-{denomination}"
+    display_name = name.strip() or " · ".join(
+        part for part in (country, ruler_value or "-", denomination) if part
+    )
+    repository.upsert_coin_collection_series(
+        collection_key=key,
+        name=display_name,
+        country=country,
+        ruler=ruler_value,
+        denomination=denomination,
+        size_mm=size_value,
+        size_band=coins_collection.size_band(size_value),
+    )
+    return _collections_redirect()
+
+
+@router.post("/coins/collections/{collection_id}/delete")
+def delete_collection(collection_id: int) -> Response:
+    if not repository.delete_coin_collection_series(collection_id):
+        return Response(status_code=404)
+    return _collections_redirect()
+
+
+@router.post("/coins/collections/members/add")
+def add_collection_member(
+    collection_id: int = Form(...),
+    numista_series_id: int = Form(...),
+) -> Response:
+    series = repository.get_coin_series(numista_series_id, cn=True)
+    if series is None:
+        return Response(status_code=400)
+    if not coins_collection.is_bronze_or_copper(series.composition):
+        return Response(status_code=400)
+    name = " · ".join(
+        part for part in (series.issuer, series.ruler, series.denomination) if part
+    ) or series.title
+    repository.upsert_coin_collection_member(collection_id, numista_series_id, name)
+    # 加入后保持该收藏系列展开，避免用户重新找卡片
+    return _redirect(f"/coins/collections?expand={collection_id}#collection-{collection_id}")
+
+
+@router.post("/coins/collections/members/{member_id}/delete")
+def delete_collection_member(member_id: int, collection_id: int = Form(0)) -> Response:
+    if not repository.delete_coin_collection_member(member_id):
+        return Response(status_code=404)
+    if collection_id:
+        return _redirect(
+            f"/coins/collections?expand={collection_id}#collection-{collection_id}"
+        )
+    return _collections_redirect()

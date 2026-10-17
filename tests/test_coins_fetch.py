@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -270,6 +271,12 @@ async def test_search_sold_skips_blank_keyword():
 # 这一段验的是「编排 + 落库」：一个替身同时扮采集与查价，都不碰网络。
 
 
+def _today_end_at() -> str:
+    """今天正午（业务时区）的 UTC ISO：满足「只抓当日截拍专场」。"""
+    noon = datetime.now(SHANGHAI).replace(hour=12, minute=0, second=0, microsecond=0)
+    return noon.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
 def _card(mxiqi_id: str = "328062") -> SessionCard:
     return SessionCard(
         mxiqi_id=mxiqi_id,
@@ -285,6 +292,7 @@ def _card(mxiqi_id: str = "328062") -> SessionCard:
             avatar_url="https://oss.mxiqi.com/V1/USR/avatar",
             badges=[{"kind": "认证", "label": "认证"}, {"kind": "years", "label": "2年店铺"}],
         ),
+        end_at=_today_end_at(),
     )
 
 
@@ -292,7 +300,7 @@ def _detail(mxiqi_id: str) -> SessionDetail:
     return SessionDetail(
         card=_card(mxiqi_id),
         deposit=10.0,
-        end_at="2026-10-12T11:30:00Z",
+        end_at=_today_end_at(),
         lots=[
             LotInfo(
                 mxiqi_id="1870684",
@@ -372,7 +380,7 @@ async def test_pipeline_collects_and_matches(temp_db):
     # 截拍时间落了库（UTC ISO + 原始文案）
     detail = repository.get_coin_session_detail(cards[0].session_id)
     assert detail is not None
-    assert detail.auction_at == "2026-10-12T11:30:00Z"
+    assert detail.auction_at == _today_end_at()
     assert detail.auction_at_raw == "10月12日 星期一 19:30"
 
 

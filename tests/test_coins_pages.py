@@ -9,6 +9,7 @@ M14 的采集按钮在用例里一律把 `numista.collect_*` 换成桩，不发�
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime
 
 import pytest
 from fastapi.testclient import TestClient
@@ -41,6 +42,15 @@ def web(tmp_path, monkeypatch, no_scheduler):
     config.reset()
 
 
+def _today_auction_at() -> str:
+    """今日 15:25（业务时区）的截拍时间，UTC ISO 存储格式。"""
+    return repository.to_utc_str(
+        datetime.now(config.get().app.tz).replace(
+            hour=15, minute=25, second=0, microsecond=0
+        )
+    )
+
+
 def _seed_session() -> int:
     """造一个「有推荐拍品」的专场，返回 session_id。"""
     now = repository.utcnow()
@@ -61,7 +71,7 @@ def _seed_session() -> int:
             shop_id=shop_id,
             title="猩哥外币小铺➡【东印度硬币专场】",
             status="running",
-            auction_at="2026-10-08T07:25:00Z",
+            auction_at=_today_auction_at(),
             auction_at_raw="10月8日 星期四 15:25",
             deposit=10.0,
             lot_total=50,
@@ -152,6 +162,23 @@ def test_sessions_page_shows_only_sessions_with_hits(web):
     assert "命中 1 件" in page.text
     assert f'href="/coins/session/{session_id}"' in page.text
     assert page.text.count("coin-thumb") >= 4  # 4 张商品图
+    assert 'class="coin-thumb coin-zoom"' in page.text  # 点击可放大
+    assert 'id="coin-lightbox"' in page.text
+
+
+def test_sessions_page_filters_by_auction_date_defaults_today(web):
+    """拍卖截止日期控件默认今日；选其他日期只出该日截拍的专场。"""
+    session_id = _seed_session()
+    today = datetime.now(config.get().app.tz).date().isoformat()
+
+    page = web.get("/coins")
+    assert page.status_code == 200
+    assert f'name="auction_date" value="{today}"' in page.text
+    assert f'href="/coins/session/{session_id}"' in page.text
+
+    page = web.get("/coins", params={"auction_date": "2026-10-08"})
+    assert f'href="/coins/session/{session_id}"' not in page.text
+    assert "没有与你画像匹配的专场" in page.text
 
 
 def test_sessions_page_empty_state(web):
@@ -187,6 +214,7 @@ def test_session_page_renders_shop_header_and_recommended_lots(web):
     assert "某无关的纪念章" not in page.text
     # 最多 3 张图
     assert page.text.count("coin-lot-img") >= 3
+    assert 'class="coin-lot-img coin-zoom"' in page.text  # 点击可放大
 
 
 def test_session_page_404_for_unknown(web):
@@ -998,10 +1026,14 @@ def test_normalize_year_to_numista_style():
     assert coins_grades.normalize_year("1910年") == "1910"
     assert coins_grades.normalize_year("1959") == "1959"
     assert coins_grades.normalize_year(" 1910 ") == "1910"
-    # 年号没有公历数字 → 原样保留
-    assert coins_grades.normalize_year("康德四年") == "康德四年"
+    # 年号纪年 → 取年份数字（与 Numista 的 year 对齐）
+    assert coins_grades.normalize_year("康德四年") == "4"
+    assert coins_grades.normalize_year("康德元年") == "1"
+    assert coins_grades.normalize_year("明治十五年") == "15"
+    assert coins_grades.normalize_year("明治15年") == "15"
+    assert coins_grades.normalize_year("民国六十二年") == "62"
+    # 只有年号、没有年份数字 → 原样保留
     assert coins_grades.normalize_year("光绪") == "光绪"
-    assert coins_grades.normalize_year("民国六十二年") == "民国六十二年"
 
 
 def test_normalize_denomination_to_numista_style():

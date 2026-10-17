@@ -21,6 +21,7 @@
 | 描述 / 备注 / 名称走大模型翻译 | M21 | ✅ |
 | 历史购买品相录入 | M23 | ✅ |
 | 单版年份并显公历 | M24 | ✅ |
+| 收藏画像 + 三层推荐 | M25 | ✅ |
 
 ---
 
@@ -130,6 +131,21 @@
 |---|---|---|---|
 | [x] M24-A | 年份列并显公历：`coin_issues[_cn]` 加 `gregorian_year` + `schema_version` 7→8（`app/migrations/v8.py`）；`IssueInfo` / `CoinIssue` / repository upsert 与行映射带上该字段；`series.html` 年份列按「year == gregorian_year 只显 year，否则显 year(gregorian_year)」渲染 | `app/models.py`、`app/migrations/v8.py`、`app/repository.py`、`app/coins/numista.py`、`app/templates/coins/series.html`、`tests/test_coins_numista.py`、`tests/test_coins_pages.py` | 2317 重新采集（12 条，`6 → 1873`…`25 → 1892`），页面显示 `6(1873)`；670 页面仍只显 `1895`；`pytest`（284 → **286 passed**） |
 
+## 收藏画像 + 三层推荐 M25（spec/coins.md §14.17）
+
+> 基于 Numista 系列 + 历史订单品相，构建收藏系列画像；采集改为只抓当日截拍店铺；
+> 推荐项与已入库拍品匹配（年份翻译回 `明治6年` / `明治六年`）。
+
+| # | 块 | 产出 | 验证 |
+|---|---|---|---|
+| [x] M25-A | 数据层：`coin_collection_series` / `coin_collection_series_members` + `schema_version` 8→9（纯新增表，登记 `FORWARD_ADDITIVE_UPGRADES`）+ repository CRUD + `list_coin_today_lots` | `app/models.py`、`app/db.py`、`app/repository.py` | `pytest` 映射 CRUD 用例通过；老库启动自动 8→9 |
+| [x] M25-B | 画像纯函数：材质/精制过滤、尺寸分档、同年取最大发行量、已有/缺失/升级年份、未映射系列自动成组 | `app/coins/collection.py`、`app/config.py`、`config/config.yaml` | 12 条画像/推荐用例通过（分档边界、Frequency→rarity、仅「差」升级等） |
+| [x] M25-C | 三层推荐：P1 位置×稀缺、P2 敏感度×稀有度（每系列前 3）、P3 跨系列相似兜底；日本年号与面值写法变体；拍品匹配 | `app/coins/recommend.py` | `明治六年二钱` / `明治6年 2钱` 均命中；P3 仅在前两层不足时触发 |
+| [x] M25-D | 采集与管道：`SessionCard.end_at`；只抓当日截拍专场；优先按收藏推荐匹配，画像为空回退旧标签；查价使用推荐关键词 | `app/coins/gapi.py`、`app/coins/pipeline.py` | 真实管道用例改为当日截拍；非当日不再采集；全量 `pytest` 300 passed |
+| [x] M25-E | 页面：`/coins/collection`（画像 + 三层推荐 + 当日命中）、`/coins/collections`（新建 / 映射 / 增删）；子导航补入口 | `app/routers/coins.py`、`app/templates/coins/{collection,collections}.html`、5 个子导航模板、`app/static/style.css` | 页面 smoke：新建 → 映射 → 两页 200 且渲染名称/年份；空库空态 200 |
+| [x] M25-F | 页面重排：系列映射改折叠摘要 + 国家/面值候选筛选（默认取收藏系列自身值）+ 20 个/页；收藏画像改推荐优先 + 两行式紧凑行（三层各 20 条/页）+ 画像摘要 10 个/页；成员与候选下拉都显示年份范围；两页 1040px | `app/routers/coins.py`、`app/templates/coins/{collection,collections}.html`、`app/templates/base.html`、`app/static/style.css`、`tests/test_coins_collection.py` | 新增 3 例覆盖国家/面值候选筛选、两页分页；年份范围断言并入原 smoke；`pytest`（300 → **303 passed**）；curl 两页 200、日本/2 钱筛选只剩 2317 |
+| [x] M25-G | 收藏画像：三层推荐合并成一张表（一个年份一行、带表头与今日命中列），优先级规则说明移到表格上方；新增系列 / 推荐原因 / 是否命中筛选。系列映射：加入成员新增执政者筛选，默认取收藏系列名称里的执政者 | `app/routers/coins.py`、`app/templates/coins/{collection,collections}.html`、`app/static/style.css`、`tests/test_coins_collection.py` | 新增 2 例覆盖推荐表筛选与执政者候选筛选；`pytest`（303 → **305 passed**） |
+
 ---
 
 ## 未结项（需要时间 / 需要你）
@@ -179,7 +195,7 @@
 | 验收项 | 对应块 | 状态 |
 |---|---|---|
 | 去重（只列国家/年份/面值齐全的组合） | M23-A/C | [x] 真实库 1567 单 → 845 组合；去重用例覆盖 |
-| 国家 / 年份 / 面值按 Numista 口径统一 | M23-C/E | [x] `英属新西兰`→`新西兰`、`1910年`→`1910`、`1便士`→`1 便士`、`一分`→`1 分`、`壹圆`→`1 圆`；年号原样 |
+| 国家 / 年份 / 面值按 Numista 口径统一 | M23-C/E | [x] `英属新西兰`→`新西兰`、`1910年`→`1910`、`1便士`→`1 便士`、`一分`→`1 分`、`壹圆`→`1 圆`；年号纪年取数字（`明治十五年`→`15`、`康德四年`→`4`） |
 | 同值不同写法合并成一行 | M23-C/E | [x] 953（原始）→ 867（年份/面值）→ **845**（加国家前缀）；用例覆盖 |
 | 按国家 / 年份 / 面值 / 品相查询 | M23-A/C/G | [x] 宽松包含 + 品相精确匹配；输入 `1910年` 命中 `1910` |
 | 可手工新增历史订单缺失的组合 | M23-C | [x] `POST /coins/grades/add` 四项必填；新增后进列表（订单数 0） |

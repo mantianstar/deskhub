@@ -20,7 +20,14 @@ BUSY_TIMEOUT_MS = 5000
 # 允许「向前直接抬版本号」的升级：这些升级只**新增表/索引**，DDL 里是 `CREATE ... IF NOT EXISTS`，
 # `executescript(models.DDL)` 已经把它们建好了，所以不需要额外迁移，只把版本号抬上去即可。
 # 加列 / 改列 / 改约束**不在其列** —— 那种必须写 app/migrations/vN.py 手工执行（plan §6.2）。
-FORWARD_ADDITIVE_UPGRADES = {("1", "2"), ("2", "3"), ("4", "5"), ("5", "6"), ("6", "7")}
+FORWARD_ADDITIVE_UPGRADES = {
+    ("1", "2"),
+    ("2", "3"),
+    ("4", "5"),
+    ("5", "6"),
+    ("6", "7"),
+    ("8", "9"),
+}
 
 _db_path: Path | None = None
 

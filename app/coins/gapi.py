@@ -74,6 +74,8 @@ class SessionCard:
     view_count: int | None
     cover_urls: list[str]
     shop: ShopInfo | None = None
+    # 截拍时间的 UTC ISO8601（采集时只抓「当日截拍」的专场，见 spec §14.17）
+    end_at: str | None = None
 
 
 @dataclass(frozen=True)
@@ -182,7 +184,9 @@ def shop_from(org: dict | None) -> ShopInfo | None:
     )
 
 
-def card_from_auction(item: dict, *, oss_base: str = DEFAULT_OSS_BASE) -> SessionCard | None:
+def card_from_auction(
+    item: dict, *, oss_base: str = DEFAULT_OSS_BASE, tz=None
+) -> SessionCard | None:
     """`ListAuction` 的一张专场卡 → `SessionCard`。"""
     auction_id = item.get("auction_id")
     if auction_id is None:
@@ -196,6 +200,7 @@ def card_from_auction(item: dict, *, oss_base: str = DEFAULT_OSS_BASE) -> Sessio
         view_count=(item.get("stat") or {}).get("pv"),
         cover_urls=_images(oss_base, item.get("thumbs"), 4),
         shop=shop_from(item.get("org_info")),
+        end_at=to_utc_iso(item.get("end_time"), tz) if tz is not None else None,
     )
 
 
@@ -328,7 +333,7 @@ class MxiqiGapi:
         for mode in (1, 2):
             data = await self._call(ACTION_LIST, {"auction_mode": mode})
             for item in ((data.get("auctions") or {}).get("items")) or []:
-                card = card_from_auction(item)
+                card = card_from_auction(item, tz=self._cfg.app.tz)
                 if card and card.mxiqi_id not in seen:
                     seen.add(card.mxiqi_id)
                     cards.append(card)

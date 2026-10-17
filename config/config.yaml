@@ -65,6 +65,14 @@ coins:
     prompt_version: coins-v1
     batch_size: 20                        # 每次送模型抽取的订单条数
     concurrency: 6                        # 抽取批次的并发数（一次性批量任务，可比打分高）
+  # 收藏画像与三层推荐（spec/coins.md §14.17）
+  collection:
+    min_results: 5                        # 前两层推荐少于此数时才触发第三层相似推荐
+    rarity_floor: 0.005                   # 稀缺权重 = 1 / max(rarity, 0.005)
+    top_upgrades_per_series: 3            # 每个收藏系列的升级项最多几个
+    # 面值层级：同一组里的面值视为同一层级（跨系列相似推荐用）
+    denomination_tiers:
+      - ["penny", "便士", "10 centimes", "10 分"]
   # Numista 目录接口（铜币参考库：按国家/年份/面值查系列，按系列号查全部单版）
   # API Key 只写环境变量名，真实值放 .env（见 .env.example）
   numista:
