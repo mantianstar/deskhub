@@ -315,7 +315,7 @@ coins:
 - **字段缺口**（API 没给的不臆造）：单版无「造币厂名 / 版别备注 / 重量 / 厚度 / 币边 / 是否精制·样币 / 图片」→ 尺寸/重量/厚度/币边**继承系列层**；厂标=`mint_letter`；精制/样币按 `comment` 关键词（proof / essai / pattern）标注，无备注则留 `NULL`（未知≠否）；其余留空。
 - **数据层（§18.7 增量，`schema_version` 2 → 3）**：新增两张表（DDL 见 `app/models.py`）——
   `coin_series`（numista_id 唯一、title/url/object_type/issuer/min-max_year/ruler/denomination/size/weight/thickness/shape/composition/edge/正反面描述·铭文·图片/catalog_no/fetched_at）、
-  `coin_issues`（numista_id 唯一、series_id 外键、year/mint/mint_mark/variety/comment/mintage/size/weight/thickness/edge/is_proof/is_essai/picture/fetched_at）。
+  `coin_issues`（numista_id 唯一、series_id 外键、year/gregorian_year/mint/mint_mark/variety/comment/mintage/size/weight/thickness/edge/is_proof/is_essai/picture/fetched_at）。
   repository 增量：`upsert_coin_series` / `upsert_coin_issue`（按 numista_id 幂等） / `get_coin_series` / `list_coin_series` / `list_coin_issues` / `count_coin_series` / `count_coin_issues`。
 - **访问边界**：只打 Numista 公开 API（带 Key，走 `DESKHUB_NUMISTA_API_KEY`）；`NumistaClient._get` 内置请求间隔限速；单次搜索最多取 `coins.numista.max_series` 个系列的详情（Type Detail 有配额）。
 - **测试**（沿用「测试不发真实网络请求」）：`tests/test_coins_numista.py` —— 翻译用例、真实 payload 驱动的解析用例、桩客户端验请求路径与参数、桩客户端 + 真库验幂等落库。
@@ -330,6 +330,7 @@ coins:
 4. **风控**（免费额度每月 2000 次，响应**不带限流头**）：`NumistaClient._guard_quota` 每次请求前检查 —— 单轮上限 `max_requests_per_run`（默认 40）、月度上限 `monthly_limit`（默认 1500，按业务时区切月）；每次成功请求落 `coin_api_usage` 计数，CLI 末尾打印「本月已用 N/1500」。
 
 - **repository 增量**：`upsert_coin_series_cn` / `upsert_coin_issue_cn`、`get_coin_series(cn)` / `list_coin_series(cn)` / `list_coin_issues(cn)` / `count_coin_series(cn)` / `count_coin_issues(cn)`、`record_api_call` / `count_api_calls_since`、`local_month_start_utc`。
+- **字段新增链路**（单版 / 系列加字段，按此顺序一遍改完，不逐层探索）：`models.py` 的 DDL + dataclass → `SCHEMA_VERSION` + `app/migrations/vN.py`（老表加列）→ `IssueInfo` / `series_from_type` 解析 → `repository` 的 `_*_COLUMNS` / `_*_values` / `_row_to_*` → 模板 → 测试构造器与断言 → CHANGELOG。
 - **迁移机制**：见 [core.md](./core.md) §6.2（`CREATE TABLE IF NOT EXISTS` 只能新增表；加列走 `app/migrations/` 登记的幂等 `ALTER TABLE`）。
 
 ### 18.13.2 各品相估值 + Frequency（网页链路）

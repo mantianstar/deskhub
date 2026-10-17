@@ -274,6 +274,7 @@ class IssueInfo:
     numista_id: int
     series_numista_id: int
     year: int | None
+    gregorian_year: int | None
     mint: str | None
     mint_mark: str | None
     variety: str | None
@@ -363,12 +364,14 @@ def issue_from_issue(data: dict, series: SeriesInfo) -> IssueInfo:
     """
     comment = data.get("comment")
     year = data.get("year")
+    gregorian_year = data.get("gregorian_year")
     if year is None:
-        year = data.get("gregorian_year")
+        year = gregorian_year
     return IssueInfo(
         numista_id=int(data["id"]),
         series_numista_id=series.numista_id,
         year=year,
+        gregorian_year=gregorian_year,
         mint=None,
         mint_mark=data.get("mint_letter"),
         variety=None,
@@ -536,6 +539,7 @@ def _issue_row(issue: IssueInfo, series_id: int, fetched_at: str) -> CoinIssue:
         numista_id=issue.numista_id,
         series_id=series_id,
         year=issue.year,
+        gregorian_year=issue.gregorian_year,
         mint=issue.mint,
         mint_mark=issue.mint_mark,
         variety=issue.variety,

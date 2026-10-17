@@ -5,7 +5,7 @@
 > **「为什么改、踩了什么坑」的过程叙述统一在 [CHANGELOG.md](../CHANGELOG.md)**，本文件只留任务拆解与验证结论。
 > 顺序（spec/coins.md §14.10）：**先画像 → 再打通采集 → 再匹配定价 → 最后页面**；高风险环节（采集 → 采集接口）单独成块、单独验证。
 
-## 里程碑一览（M7 ~ M22）
+## 里程碑一览（M7 ~ M24）
 
 | 主题 | 里程碑 | 状态 |
 |---|---|---|
@@ -20,6 +20,7 @@
 | 采集过滤 + 清理存量 | M18 | ✅ |
 | 描述 / 备注 / 名称走大模型翻译 | M21 | ✅ |
 | 历史购买品相录入 | M23 | ✅ |
+| 单版年份并显公历 | M24 | ✅ |
 
 ---
 
@@ -122,6 +123,12 @@
 | [x] M23-E | 国家也统一 + 整行删除（一次成文）：`grades.normalize_country` 去殖民前缀（`英属`/`法属`/`荷属`/`葡属`/`德属`…）；repository 加 `list_coin_order_keys` / `delete_coin_orders`；`grades.order_ids_for_combo` 按统一后的组合反查订单 id；路由加 `POST /coins/grades/delete`；模板加「操作」列 + 页内二次确认 JS + 说明；`style.css` 加 `.btn-danger` | `app/coins/grades.py`、`app/repository.py`、`app/routers/coins.py`、`app/templates/coins/grades.html`、`app/static/style.css` | 真实库：候选国家 **155 → 140**（36 个 `X属` 前缀合并掉 22 组，组合数 867 → **845**）；页面 845 行各带一个「删除」按钮；删整行连带该组合全部订单（含不同写法）|
 | [x] M23-F | 测试 + 文档回写 | `tests/test_coins_pages.py`（国家统一 / 删整行连带订单 / 删手工组合 / 参数校验 4 例）、spec/plan/tasks/CHANGELOG/README | `pytest`（279 → **283 passed**）|
 | [x] M23-G | 品相查询条件：`filter_combos` 加 `grade`（空=不限，其余精确相等）；路由 `GET /coins/grades` 加 `grade` 参数；模板查询表单加品相下拉（全部 / 好 / 普通 / 差） | `app/coins/grades.py`、`app/routers/coins.py`、`app/templates/coins/grades.html`、`tests/test_coins_pages.py` | 真实库（853 组合 / 已录 163）：`grade=好` → 47 组合；空 → 853；`pytest`（283 → **284 passed**）|
+
+## 单版年份并显公历 M24（spec/coins.md §14.13 / §14.14）
+
+| # | 块 | 产出 | 验证 |
+|---|---|---|---|
+| [x] M24-A | 年份列并显公历：`coin_issues[_cn]` 加 `gregorian_year` + `schema_version` 7→8（`app/migrations/v8.py`）；`IssueInfo` / `CoinIssue` / repository upsert 与行映射带上该字段；`series.html` 年份列按「year == gregorian_year 只显 year，否则显 year(gregorian_year)」渲染 | `app/models.py`、`app/migrations/v8.py`、`app/repository.py`、`app/coins/numista.py`、`app/templates/coins/series.html`、`tests/test_coins_numista.py`、`tests/test_coins_pages.py` | 2317 重新采集（12 条，`6 → 1873`…`25 → 1892`），页面显示 `6(1873)`；670 页面仍只显 `1895`；`pytest`（284 → **286 passed**） |
 
 ---
 

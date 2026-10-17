@@ -1324,8 +1324,8 @@ _SERIES_COLUMNS = (
     "fetched_at",
 )
 _ISSUE_COLUMNS = (
-    "numista_id", "series_id", "year", "mint", "mint_mark", "variety", "comment", "mintage",
-    "size_mm", "weight_g", "thickness_mm", "edge", "is_proof", "is_essai", "picture",
+    "numista_id", "series_id", "year", "gregorian_year", "mint", "mint_mark", "variety", "comment",
+    "mintage", "size_mm", "weight_g", "thickness_mm", "edge", "is_proof", "is_essai", "picture",
     "catalog_no", "fetched_at",
 )
 # 估值表不与 coin_issues 共主键：它按**单版编号**对齐（页面可能与接口不同批采到）
@@ -1387,6 +1387,7 @@ def _issue_values(issue: CoinIssue) -> tuple:
         issue.numista_id,
         issue.series_id,
         issue.year,
+        issue.gregorian_year,
         issue.mint,
         issue.mint_mark,
         issue.variety,
@@ -1463,6 +1464,7 @@ def _row_to_coin_issue(row: sqlite3.Row) -> CoinIssue:
         numista_id=row["numista_id"],
         series_id=row["series_id"],
         year=row["year"],
+        gregorian_year=row["gregorian_year"],
         mint=row["mint"],
         mint_mark=row["mint_mark"],
         variety=row["variety"],

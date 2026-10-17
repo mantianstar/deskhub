@@ -10,6 +10,27 @@
 
 ---
 
+## v1.9 — 2026-10-17 系列详情：单版年份并显公历
+
+**起因**：年号纪年的单版（如日本明治 `6` 年）在「各年份信息」表里只显 `6`，看不出对应公历；
+要求 `year` 与 `gregorian_year` 不一致时显示 `year(gregorian_year)`，一致时只显 `year`。
+
+**改了什么**
+
+- `coin_issues` / `coin_issues_cn` 新增 `gregorian_year`（`schema_version` 7 → 8，登记 `app/migrations/v8.py`）。
+- 采集链路存下该字段：`IssueInfo` / `CoinIssue` / repository 的 upsert 列与行映射；`year` 仍存 Numista 原值。
+- 详情页年份列：`year != gregorian_year` → `year(gregorian_year)`，否则只显 `year`。
+
+**验证结论**
+
+- 重新采集系列 **2317**（2 Sen - Meiji）12 条：`6 → 1873`、`10 → 1877`、`25 → 1892`；页面渲染 `6(1873)`。
+- 系列 **670** 未重采（`gregorian_year` 为空）→ 仍只显 `1895`，不受影响。
+- `pytest` 284 → **286 passed**（新增：解析保留公历年、页面并显 / 一致时不并显）。
+
+**影响**：[spec/coins.md](./spec/coins.md) §14.13 / §14.14、[plan/coins.md](./plan/coins.md) §18.13、[tasks/coins.md](./tasks/coins.md)。
+
+---
+
 ## v1.8 — 2026-10-16 品相录入：三元组统一 + 新增组合 + 整行删除 + 品相查询
 
 **起因**：品相录入页上线后用户连提四项 —— ① 年份与面值要「参考 Numista 做统一处理」（如 `1910`、`1 便士`）；

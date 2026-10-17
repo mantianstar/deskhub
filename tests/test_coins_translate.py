@@ -294,6 +294,7 @@ def _seed_english_rows() -> None:
             numista_id=116868,
             series_id=series_id,
             year=1895,
+            gregorian_year=1895,
             mint=None,
             mint_mark=None,
             variety=None,

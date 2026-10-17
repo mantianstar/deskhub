@@ -228,6 +228,7 @@ def test_issue_inherits_series_physical_specs_and_flags_proof():
     assert issue.numista_id == 116868
     assert issue.series_numista_id == 670
     assert issue.year == 1895
+    assert issue.gregorian_year == 1895
     assert issue.comment == "normal tide, Proof"
     assert issue.catalog_no == "Sp#3961"
     assert issue.is_proof is True
@@ -245,6 +246,14 @@ def test_issue_gets_mintage_and_unknown_flags_when_comment_missing():
 
     no_comment = numista.issue_from_issue({"id": 9, "year": 1900}, series)
     assert no_comment.is_proof is None and no_comment.is_essai is None
+
+
+def test_issue_keeps_gregorian_year_when_different():
+    """年号纪年（如明治 6 年）保留原值 year，并单独存公历 gregorian_year。"""
+    series = numista.series_from_type(TYPE_DETAIL)
+
+    issue = numista.issue_from_issue({"id": 10, "year": 6, "gregorian_year": 1873}, series)
+    assert (issue.year, issue.gregorian_year) == (6, 1873)
 
 
 # ---------------------------------------------------------------- 请求（桩客户端）

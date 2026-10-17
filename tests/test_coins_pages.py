@@ -331,6 +331,7 @@ def _seed_series() -> int:
             numista_id=9001,
             series_id=series_id,
             year=1808,
+            gregorian_year=1808,
             mint="Royal Mint",
             mint_mark=None,
             variety=None,
@@ -353,6 +354,7 @@ def _seed_series() -> int:
             numista_id=9002,
             series_id=series_id,
             year=1809,
+            gregorian_year=1809,
             mint="Royal Mint",
             mint_mark=None,
             variety=None,
@@ -471,6 +473,42 @@ def test_series_page_merges_year_info_and_values(web):
     assert "CNY" in page.text
 
 
+def test_series_page_shows_gregorian_year_when_different(web):
+    """年份与公历不一致时并显 `year(gregorian_year)`；一致时只显年份。"""
+    series = _make_series(2317, "2 分", "青铜")
+    series_id = repository.upsert_coin_series_cn(series)
+    now = repository.utcnow()
+    for numista_id, (year, gregorian_year) in enumerate(((6, 1873), (1895, 1895)), start=1):
+        repository.upsert_coin_issue_cn(
+            CoinIssue(
+                id=None,
+                numista_id=numista_id,
+                series_id=series_id,
+                year=year,
+                gregorian_year=gregorian_year,
+                mint=None,
+                mint_mark=None,
+                variety=None,
+                comment=None,
+                mintage=None,
+                size_mm=None,
+                weight_g=None,
+                thickness_mm=None,
+                edge=None,
+                is_proof=None,
+                is_essai=None,
+                picture=None,
+                catalog_no=None,
+                fetched_at=now,
+            )
+        )
+
+    page = web.get("/coins/series/2317")
+
+    assert "6(1873)" in page.text
+    assert "1895(1895)" not in page.text
+
+
 def test_series_page_image_click_zoom_markup(web, tmp_path, monkeypatch):
     """详情页图片带 `coin-zoom` 类 + 灯箱节点，供前端点击放大。"""
     image_dir = tmp_path / "coin_images"
@@ -536,6 +574,7 @@ def test_series_page_issues_without_values_hint(web):
             numista_id=9001,
             series_id=series_id,
             year=1808,
+            gregorian_year=1808,
             mint=None,
             mint_mark=None,
             variety=None,
@@ -570,6 +609,7 @@ def test_year_stats_counts_distinct_years_not_issues(web):
                 numista_id=numista_id,
                 series_id=series_id,
                 year=year,
+                gregorian_year=year,
                 mint=None,
                 mint_mark=None,
                 variety=None,

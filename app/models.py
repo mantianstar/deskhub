@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-SCHEMA_VERSION = "7"
+SCHEMA_VERSION = "8"
 
 # 所有时间列存 UTC ISO8601 字符串（SQLite 无原生时间类型）
 DDL = """
@@ -236,7 +236,8 @@ CREATE TABLE IF NOT EXISTS coin_issues (
   id           INTEGER PRIMARY KEY AUTOINCREMENT,
   numista_id   INTEGER NOT NULL UNIQUE,   -- 单版编号（Numista issue id）
   series_id    INTEGER NOT NULL REFERENCES coin_series(id) ON DELETE CASCADE,
-  year         INTEGER,                   -- 年份
+  year         INTEGER,                   -- 年份（Numista 原值，如明治 6 年 = 6）
+  gregorian_year INTEGER,                 -- 公历年份（与 year 不一致时页面并显）
   mint         TEXT,                      -- 造币厂
   mint_mark    TEXT,                      -- 厂标
   variety      TEXT,                      -- 版别备注
@@ -260,6 +261,7 @@ CREATE TABLE IF NOT EXISTS coin_issues_cn (
   numista_id   INTEGER NOT NULL UNIQUE,
   series_id    INTEGER NOT NULL REFERENCES coin_series_cn(id) ON DELETE CASCADE,
   year         INTEGER,
+  gregorian_year INTEGER,
   mint         TEXT,
   mint_mark    TEXT,
   variety      TEXT,
@@ -624,6 +626,7 @@ class CoinIssue:
     numista_id: int
     series_id: int
     year: int | None
+    gregorian_year: int | None
     mint: str | None
     mint_mark: str | None
     variety: str | None

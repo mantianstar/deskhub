@@ -103,7 +103,7 @@
     <tbody>
       {% for issue, value in rows %}
       <tr>
-        <td class="nowrap">{{ issue.year if issue.year is not none else '—' }}</td>
+        <td class="nowrap">{% if issue.year is none %}—{% else %}{{ issue.year }}{% if issue.gregorian_year is not none and issue.gregorian_year != issue.year %}({{ issue.gregorian_year }}){% endif %}{% endif %}</td>
         <td>{{ issue.mint_mark or '—' }}</td>
         <td class="nowrap">{{ issue.mintage if issue.mintage is not none else '—' }}</td>
         <td class="nowrap">{{ (value.value_g | price) if value else '—' }}</td>
