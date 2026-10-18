@@ -220,7 +220,7 @@ def test_year_specs_pick_max_mintage_and_exclude_proof():
     series = _series(1)
     issues = [
         _issue(11, 1, year=1900, mintage=100),
-        _issue(12, 1, year=1900, mintage=300),
+        _issue(12, 1, year=1900, mintage=300, comment="币面有戳记"),
         _issue(13, 1, year=1900, mintage=9999, is_proof=True),
         _issue(14, 1, year=1901, mintage=None),
     ]
@@ -234,6 +234,7 @@ def test_year_specs_pick_max_mintage_and_exclude_proof():
     assert specs[1900][0].rarity == 0.006
     assert specs[1900][0].price_vf == 10.0
     assert specs[1900][0].price_xf == 30.0
+    assert specs[1900][0].comment == "币面有戳记"
     assert specs[1901][0].mintage is None
 
 
@@ -454,9 +455,10 @@ def web(tmp_path, monkeypatch, no_scheduler):
 def test_collection_pages_create_map_and_render(web):
     series = _series(670)
     series_id = repository.upsert_coin_series_cn(series)
-    repository.upsert_coin_issue_cn(_issue(9001, series_id, year=1860, mintage=1000))
+    repository.upsert_coin_issue_cn(_issue(9001, series_id, year=1860, mintage=1000, comment="币面有戳记"))
     repository.upsert_coin_issue_cn(_issue(9002, series_id, year=1861, mintage=800))
     repository.upsert_coin_issue_values(_values(9001, 670, frequency=0.6, vf=10.0, xf=30.0))
+    repository.upsert_coin_purchase_grade("英国", "1860", "1 便士", "差")
     # 同国家 / 面值的另一个候选，用于验证候选下拉里的年份范围
     repository.upsert_coin_series_cn(
         _series(671, ruler="爱德华七世", min_year=1874, max_year=1901)
@@ -498,6 +500,9 @@ def test_collection_pages_create_map_and_render(web):
     assert "收藏画像" in page.text
     assert "英国 · 维多利亚 · 1 便士" in page.text
     assert "1860" in page.text
+    assert "币面有戳记" in page.text  # 年份规格字典的备注列
+    assert 'class="row-year-upgrade"' in page.text  # 需升级年份行
+    assert 'class="row-year-missing"' in page.text  # 缺失年份行
 
 
 def test_collection_member_filter_by_country_and_denomination(web):

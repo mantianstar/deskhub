@@ -194,17 +194,19 @@
               <th>稀有度</th>
               <th>尺寸 / 重量</th>
               <th>VF / XF 参考价</th>
+              <th>备注</th>
             </tr>
           </thead>
           <tbody>
             {% for year, specs in profile.year_specs.items() %}
             {% set spec = specs[0] %}
-            <tr>
+            <tr{% if year in profile.upgrade_years %} class="row-year-upgrade"{% elif year in profile.missing_years %} class="row-year-missing"{% endif %}>
               <td>{{ year }}{% if spec.gregorian_year and spec.gregorian_year != year %}（{{ spec.gregorian_year }}）{% endif %}</td>
               <td>{{ spec.mintage if spec.mintage is not none else '—' }}</td>
               <td>{% if spec.rarity is not none %}{{ '%.2f%%' % (spec.rarity * 100) }}{% else %}—{% endif %}</td>
               <td>{{ spec.size_mm or '—' }} mm / {{ spec.weight_g or '—' }} g</td>
               <td>{{ spec.price_vf or '—' }} / {{ spec.price_xf or '—' }} {{ spec.currency or '' }}</td>
+              <td>{{ spec.comment or '—' }}</td>
             </tr>
             {% endfor %}
           </tbody>

@@ -431,8 +431,10 @@ Numista 单版接口只给 `year / mintage / comment / mint_letter / references 
 | 已有年份 | 历史订单或品相记录能匹配上的年份 |
 | 缺失年份 | 年份列表 − 已有年份 |
 | 需升级年份 | 已有年份中**人工品相为「差」**的年份 |
-| 年份规格字典 | `{ "年份": [{ mintage, rarity, size, weight, price_estimates: {VF, XF} }, ...] }`；同一年多个普制版别时取发行量最大的一条 |
+| 年份规格字典 | `{ "年份": [{ mintage, rarity, size, weight, price_estimates: {VF, XF}, comment }, ...] }`；同一年多个普制版别时取发行量最大的一条；`comment` 取 `coin_issues_cn.comment` |
 | 尺寸档位 | 成员系列尺寸中位数对应的档位（收藏系列显式填了尺寸则用显式值） |
+
+年份规格字典的表格里，缺失年份行与需升级年份行用不同底色标记。
 
 匹配口径：国家 / 年份 / 面值先按 §14.16 的 Numista 口径统一，再做宽松包含。
 `rarity` = Numista Frequency / 100（0.6% → 0.006）。

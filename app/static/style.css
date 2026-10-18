@@ -25,6 +25,10 @@
   --danger-bg: #fdecec;
   --danger-fg: #b42318;
   --danger-border: #f3c3c0;
+
+  /* 收藏画像年份规格字典：缺失 / 需升级行底色 */
+  --year-missing-bg: #fdecec;
+  --year-upgrade-bg: #fff8e6;
 }
 
 * { box-sizing: border-box; }
@@ -1037,4 +1041,8 @@ img.coin-zoom { cursor: zoom-in; }
 .coin-year-specs { margin-top: 10px; }
 .coin-year-specs summary { cursor: pointer; color: var(--text-muted); font-size: 13px; }
 .coin-year-specs .table-wrap { margin-top: 8px; }
+
+/* 年份规格字典：缺失 / 需升级年份的行底色 */
+.row-year-missing { background: var(--year-missing-bg); }
+.row-year-upgrade { background: var(--year-upgrade-bg); }
 

@@ -135,6 +135,7 @@ def build_year_specs(
                 price_xf=value.value_xf if value else None,
                 currency=value.currency if value else None,
                 is_proof=issue.is_proof,
+                comment=issue.comment,
             )
         )
 

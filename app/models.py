@@ -800,6 +800,7 @@ class CoinYearSpec:
     price_xf: float | None
     currency: str | None
     is_proof: bool | None
+    comment: str | None = None      # 单版备注（`coin_issues_cn.comment`）
 
     def as_dict(self) -> dict:
         return {
@@ -808,6 +809,7 @@ class CoinYearSpec:
             "size": self.size_mm,
             "weight": self.weight_g,
             "price_estimates": {"VF": self.price_vf, "XF": self.price_xf},
+            "comment": self.comment,
         }
 
 
