@@ -1,14 +1,29 @@
 {% extends "base.html" %}
 {% block title %}{{ page_title }} · deskhub{% endblock %}
+{% block content_class %} content-wide{% endblock %}
+{% from "coins/_macros.html" import coin_nav with context %}
 
 {% block content %}
+{{ coin_nav("library") }}
 {% if not series %}
 <div class="empty">
-  这个系列不在本地库里（可能还没采集）。<a href="/coins/info">返回铜币信息</a>
+  这个系列不在本地库里（可能还没采集）。<a href="/coins/info">返回币库</a>
 </div>
 {% else %}
 
-<p class="crumb"><a href="/coins/info">← 返回信息</a></p>
+<p class="crumb"><a href="/coins/info">← 返回币库</a></p>
+
+{% if is_candidate %}
+<div class="coin-candidate-banner">
+  <p>来自候选池，尚未采纳。采纳后可在币库与采集中心看到该系列。</p>
+  <form method="post" action="/coins/explore/status">
+    <input type="hidden" name="numista_id" value="{{ series.numista_id }}">
+    <input type="hidden" name="status" value="adopted">
+    <input type="hidden" name="next" value="{{ return_to }}">
+    <button class="btn btn-primary" type="submit">采纳</button>
+  </form>
+</div>
+{% endif %}
 
 <section class="digest-head">
   <h1>{{ series.title or series.numista_id }}</h1>
@@ -71,6 +86,27 @@
   {% if series.reverse_desc %}<p><span class="coin-text-label">背面描述</span>{{ series.reverse_desc }}</p>{% endif %}
   {% if series.reverse_lettering %}<p><span class="coin-text-label">背面铭文</span>{{ series.reverse_lettering }}</p>{% endif %}
   {% if series.comments %}<p><span class="coin-text-label">备注</span>{{ series.comments }}</p>{% endif %}
+</div>
+{% endif %}
+
+{% if not is_candidate %}
+<div class="coin-series-actions" aria-label="补齐数据">
+  <span class="coin-series-actions-label">补齐数据</span>
+  <form method="post" action="/coins/manage/fetch-issues">
+    <input type="hidden" name="series_id" value="{{ series.numista_id }}">
+    <input type="hidden" name="return_to" value="{{ return_to }}">
+    <button class="btn btn-ghost" type="submit">② 获取年份信息</button>
+  </form>
+  <form method="post" action="/coins/manage/fetch-values">
+    <input type="hidden" name="series_id" value="{{ series.numista_id }}">
+    <input type="hidden" name="return_to" value="{{ return_to }}">
+    <button class="btn btn-ghost" type="submit">③ 获取年份估值</button>
+  </form>
+  <form method="post" action="/coins/manage/download-images">
+    <input type="hidden" name="series_id" value="{{ series.numista_id }}">
+    <input type="hidden" name="return_to" value="{{ return_to }}">
+    <button class="btn btn-ghost" type="submit">④ 下载图片</button>
+  </form>
 </div>
 {% endif %}
 

@@ -611,6 +611,8 @@ body {
   overflow-wrap: anywhere;
 }
 
+.coin-lot-reason { margin: 2px 0 8px; color: var(--accent); font-size: 13px; }
+
 .coin-lot-prices {
   display: flex;
   flex-wrap: wrap;
@@ -709,6 +711,24 @@ body {
 
 .coin-series-line { margin: 0 0 3px; color: var(--text-muted); font-size: 12.5px; }
 
+.coin-series-main {
+  display: flex;
+  flex: 1 1 auto;
+  gap: 14px;
+  min-width: 0;
+  color: var(--text);
+  text-decoration: none;
+}
+.coin-series-actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  justify-content: center;
+  gap: 6px;
+}
+.coin-series-actions .btn { padding: 4px 10px; font-size: 12px; text-align: center; }
+.coin-series-tags { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0 0; }
+
 .coin-series-tag {
   display: inline-block;
   padding: 1px 8px;
@@ -719,6 +739,38 @@ body {
 }
 
 .coin-series-tag-off { border-color: var(--border); color: var(--text-muted); }
+
+/* 系列详情：未采纳候选横幅 + ②③④ 补数据动作条 */
+.coin-candidate-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: 0 0 14px;
+  padding: 10px 14px;
+  background: #eef4ff;
+  border: 1px solid #c7dbff;
+  border-radius: 10px;
+  color: var(--accent);
+  font-size: 13px;
+}
+.coin-candidate-banner p { margin: 0; }
+.coin-candidate-banner form { margin: 0; }
+
+.coin-series-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 14px 0 4px;
+  padding: 10px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.coin-series-actions form { margin: 0; }
+.coin-series-actions-label { color: var(--text-muted); font-size: 12px; }
 
 .coin-series-imgs-lg { display: flex; gap: 12px; margin-bottom: 14px; }
 
@@ -792,6 +844,95 @@ img.coin-zoom { cursor: zoom-in; }
 /* 操作列按钮竖排：内容区 780px 下横排会把表撑宽、横向滚动藏住按钮 */
 .coin-manage-table .row-actions form { display: block; margin: 0 0 4px; }
 .coin-manage-table .row-actions form:last-child { margin-bottom: 0; }
+
+/* 采集中心：4 步流水线 */
+.coin-pipe-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto 140px;
+  gap: 16px;
+  align-items: center;
+  padding: 14px;
+  margin-bottom: 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.coin-pipe-series { display: flex; gap: 10px; min-width: 0; }
+.coin-pipe-thumbs { display: flex; flex: 0 0 auto; gap: 4px; }
+.coin-pipe-main { min-width: 0; }
+.coin-pipe-title { color: var(--text); font-size: 14px; font-weight: 600; text-decoration: none; }
+.coin-pipe-title:hover { color: var(--accent); }
+.coin-pipe-meta { margin: 3px 0; color: var(--text-muted); font-size: 12px; }
+.coin-pipe-status { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; }
+.coin-pipe-steps { display: flex; gap: 4px; }
+.coin-step {
+  display: inline-flex;
+  width: 24px;
+  height: 24px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+.coin-step.is-done {
+  color: var(--score-high-fg);
+  background: var(--score-high-bg);
+  border-color: var(--score-high-border);
+}
+.coin-step.is-pending {
+  color: #7a5b12;
+  background: #fff8e6;
+  border-color: #f2e0ae;
+}
+.coin-pipe-actions { display: flex; flex-direction: column; align-items: stretch; gap: 4px; }
+.coin-pipe-action-label { color: var(--text-muted); font-size: 12px; text-align: right; }
+.coin-pipe-actions form { margin: 0; }
+.coin-pipe-actions .btn { width: 100%; padding: 3px 8px; font-size: 12px; }
+
+@media (max-width: 900px) {
+  .coin-pipe-row { grid-template-columns: 1fr; }
+  .coin-pipe-steps { justify-content: flex-start; }
+  .coin-pipe-actions { flex-direction: row; flex-wrap: wrap; }
+  .coin-pipe-action-label { width: 100%; text-align: left; }
+  .coin-pipe-actions .btn { width: auto; }
+}
+
+/* 候选池：卡片布局 */
+.coin-candidate-list { display: flex; flex-direction: column; gap: 8px; }
+.coin-candidate-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.coin-candidate-main { display: flex; flex: 1 1 auto; gap: 12px; min-width: 0; }
+.coin-candidate-meta { min-width: 0; }
+.coin-candidate-title { color: var(--text); font-size: 14px; font-weight: 600; text-decoration: none; }
+.coin-candidate-title:hover { color: var(--accent); }
+.coin-candidate-line { margin: 3px 0; color: var(--text-muted); font-size: 12px; }
+.coin-candidate-tags { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0 0; }
+.coin-candidate-actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+}
+.coin-candidate-actions .coin-status-form { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.coin-candidate-actions .btn { padding: 4px 10px; font-size: 12px; }
+
+@media (max-width: 900px) {
+  .coin-candidate-card { flex-direction: column; align-items: stretch; }
+  .coin-candidate-actions { align-items: flex-start; }
+  .coin-candidate-actions .coin-status-form { align-items: flex-start; }
+}
 
 /* 候选池表：列多，收紧内边距；不套用管理页首列 220px 的底宽 */
 .coin-explore-table th,
@@ -892,6 +1033,26 @@ img.coin-zoom { cursor: zoom-in; }
 
 .form-hint { margin: 10px 0 0; color: var(--text-muted); font-size: 12px; }
 
+/* 品相台账：筛选条吸顶、保存按钮吸底（长表滚动时仍可查 / 存） */
+.coin-filter-sticky {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 6%);
+}
+
+.coin-grade-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 10;
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 14px;
+  padding: 12px 0;
+  background: var(--bg);
+  border-top: 1px solid var(--border);
+}
+
 /* 品相录入表：行内下拉框沿用 .field select 观感；底部保存按钮 */
 .coin-grade-table select {
   padding: 6px 8px;
@@ -904,6 +1065,7 @@ img.coin-zoom { cursor: zoom-in; }
 }
 
 .coin-grade-table td:first-child { min-width: 90px; }
+.coin-grade-collection { color: var(--text-muted); font-size: 13px; }
 
 /* 「删除整行」：二次确认态描红；确认 / 取消并排 */
 .coin-grade-del .btn { padding: 4px 10px; font-size: 12px; }
@@ -911,7 +1073,7 @@ img.coin-zoom { cursor: zoom-in; }
 .btn-danger { color: var(--danger-fg); background: var(--danger-bg); border-color: var(--danger-border); }
 .btn-danger:hover { color: var(--danger-fg); border-color: var(--danger-fg); }
 
-.coin-grade-actions { margin-top: 14px; }
+.coin-grade-actions .btn { min-width: 96px; }
 
 /* ---------------------------------------------------------------- 收藏画像 / 系列映射（spec §14.17） */
 
@@ -942,6 +1104,315 @@ img.coin-zoom { cursor: zoom-in; }
   border-color: var(--border);
   font-weight: 600;
 }
+
+/* 铜币模块统一页头 / KPI / 子导航 / 命中拍品 */
+.coin-page-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.coin-page-head h1 { font-size: 20px; margin: 0; }
+.coin-page-sub { margin: 4px 0 0; color: var(--text-muted); font-size: 13px; }
+.coin-page-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+
+.coin-kpis {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.coin-kpi {
+  padding: 10px 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.coin-kpi-label { display: block; color: var(--text-muted); font-size: 12px; }
+.coin-kpi-value { display: block; margin-top: 2px; font-size: 18px; font-weight: 600; }
+
+.coin-subtabs {
+  display: flex;
+  gap: 4px;
+  margin: -6px 0 16px;
+  border-bottom: 1px solid var(--border);
+}
+.coin-subtabs a {
+  padding: 5px 10px;
+  color: var(--text-muted);
+  font-size: 13px;
+  text-decoration: none;
+  border-bottom: 2px solid transparent;
+}
+.coin-subtabs a:hover { color: var(--accent); }
+.coin-subtabs a.is-active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+  font-weight: 600;
+}
+
+.coin-rec-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 260px;
+  gap: 16px;
+  align-items: start;
+}
+.coin-rec-list { min-width: 0; }
+.coin-rec-section + .coin-rec-section { margin-top: 18px; }
+.coin-rec-section-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0 0 10px;
+  font-size: 14px;
+  font-weight: 600;
+}
+.coin-rec-section-count { color: var(--text-muted); font-size: 12px; font-weight: 400; }
+.coin-rec-card {
+  padding: 14px 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.coin-rec-card + .coin-rec-card { margin-top: 8px; }
+.coin-rec-card.is-focus { border-color: var(--accent); }
+.coin-rec-card.is-precise { border-left: 3px solid #f59e0b; }
+.coin-rec-card.is-similar { background: var(--score-low-bg); }
+.coin-rec-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.coin-rec-title h3 { margin: 0; font-size: 14px; font-weight: 600; }
+.coin-rec-meta { margin: 4px 0 0; color: var(--text-muted); font-size: 12.5px; }
+.coin-reason {
+  flex: 0 0 auto;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.coin-reason-1 { color: var(--danger-fg); background: var(--danger-bg); border-color: var(--danger-border); }
+.coin-reason-2 { color: #7a5b12; background: #fff8e6; border-color: #f2e0ae; }
+.coin-reason-3 { color: var(--text-muted); background: var(--score-low-bg); border-color: var(--border); }
+.coin-rec-facts { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 8px; color: var(--text-muted); font-size: 12px; }
+.coin-rec-lots { margin-top: 10px; border-top: 1px solid var(--border); }
+.coin-rec-lot {
+  display: grid;
+  grid-template-columns: minmax(72px, 110px) minmax(0, 1fr) auto auto;
+  gap: 8px;
+  align-items: center;
+  padding: 7px 0;
+  border-bottom: 1px dashed var(--border);
+  color: var(--text);
+  font-size: 12.5px;
+  text-decoration: none;
+}
+.coin-rec-lot:last-child { border-bottom: 0; }
+.coin-rec-lot:hover .coin-rec-lot-title { color: var(--accent); }
+.coin-rec-lot-shop { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.coin-rec-lot-title { color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.coin-rec-lot-price { color: var(--accent); font-weight: 600; white-space: nowrap; }
+.coin-rec-lot-time { color: var(--text-muted); font-size: 12px; white-space: nowrap; }
+.coin-rec-more { margin: 6px 0 0; color: var(--text-muted); font-size: 12px; }
+.coin-rec-empty {
+  margin: 10px 0 0;
+  padding: 8px 10px;
+  background: var(--score-low-bg);
+  border-radius: 8px;
+  color: var(--text-muted);
+  font-size: 12.5px;
+}
+.coin-rec-foot {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.coin-rec-keyword code { font-size: 12px; }
+.coin-rec-rail {
+  position: sticky;
+  top: 16px;
+  padding: 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.coin-rail-title { margin: 0 0 10px; font-size: 14px; font-weight: 600; }
+.coin-rail-count { color: var(--text-muted); font-size: 12px; font-weight: 400; }
+.coin-rail-summary {
+  margin: -2px 0 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px dashed var(--border);
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.coin-rail-item {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 8px 0;
+  border-top: 1px dashed var(--border);
+  color: var(--text);
+  text-decoration: none;
+}
+.coin-rail-item:first-of-type { border-top: 0; padding-top: 0; }
+.coin-rail-body { flex: 1; min-width: 0; }
+.coin-rail-shop { display: block; font-size: 13px; font-weight: 600; }
+.coin-rail-title-text { display: block; margin-top: 2px; color: var(--text-muted); font-size: 12px; }
+.coin-rail-meta { display: block; margin-top: 4px; color: var(--text-muted); font-size: 12px; }
+.coin-rail-circle {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  font-size: 12px;
+  font-weight: 700;
+}
+.coin-rail-circle.is-precise {
+  color: #15803d;
+  background: #f0fdf4;
+  border: 2px solid #4ade80;
+  box-shadow: 0 0 0 3px #dcfce7;
+}
+.coin-rail-circle.is-similar {
+  color: #4d7c0f;
+  background: #f7fee7;
+  border: 2px solid #bef264;
+}
+.coin-rail-other {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border);
+  color: var(--text-muted);
+  font-size: 12.5px;
+}
+.coin-rail-other-text { display: flex; flex-direction: column; gap: 2px; }
+.coin-rail-other-text b { color: var(--text); font-size: 13px; }
+.coin-rail-other-btn {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  color: var(--text);
+  font-size: 12.5px;
+  text-decoration: none;
+}
+.coin-rail-other-btn:hover { border-color: var(--accent); color: var(--accent); }
+.coin-rail-empty { margin: 0; color: var(--text-muted); font-size: 12.5px; }
+.coin-rail-link { display: block; margin-top: 10px; color: var(--accent); font-size: 12.5px; text-decoration: none; }
+.coin-rail-link:hover { text-decoration: underline; }
+
+@media (max-width: 900px) {
+  .coin-rec-layout { grid-template-columns: 1fr; }
+  .coin-rec-rail { position: static; }
+}
+@media (max-width: 760px) {
+  .coin-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .coin-page-head { flex-direction: column; }
+  .coin-rec-lot { grid-template-columns: 1fr auto; }
+  .coin-rec-lot-time { display: none; }
+}
+
+/* 收藏：新建、覆盖进度、年份矩阵、品相面板 */
+.coin-new-collection { margin: 0 0 16px; }
+.coin-new-collection > summary { display: inline-flex; align-items: center; gap: 4px; list-style: none; cursor: pointer; }
+.coin-new-collection > summary::-webkit-details-marker { display: none; }
+.coin-new-collection[open] > summary { margin-bottom: 8px; }
+.coin-new-collection .search-form {
+  padding: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.coin-progress {
+  height: 6px;
+  margin-top: 10px;
+  border-radius: 999px;
+  background: var(--surface-muted);
+  overflow: hidden;
+}
+.coin-progress span { display: block; height: 100%; background: var(--accent); border-radius: 999px; }
+.coin-progress-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 8px;
+  color: var(--text-muted);
+  font-size: 12.5px;
+}
+.coin-text-danger { color: var(--danger-fg); }
+.coin-text-warning { color: #7a5b12; }
+.coin-year-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 8px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.coin-year-legend span { display: flex; align-items: center; gap: 4px; }
+.coin-dot { width: 8px; height: 8px; border-radius: 999px; border: 1px solid var(--border); }
+.coin-dot-owned { background: var(--score-high-fg); border-color: var(--score-high-fg); }
+.coin-dot-missing { background: transparent; border-color: var(--danger-fg); }
+.coin-dot-upgrade { background: #f2e0ae; border-color: #b7791f; }
+.coin-dot-excluded { background: var(--surface-muted); border-color: var(--border); }
+.coin-year-matrix { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
+.coin-year-chip {
+  padding: 1px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 500;
+}
+.coin-year-chip.is-owned { border-color: var(--score-high-border); }
+.coin-year-chip.is-missing { border-color: var(--danger-border); border-style: dashed; color: var(--danger-fg); }
+.coin-year-chip.is-upgrade { border-color: #f2e0ae; background: #fff8e6; color: #7a5b12; }
+.coin-grade-panel {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 10px 12px;
+  background: var(--surface-muted);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.coin-grade-panel .field { display: flex; flex-direction: column; gap: 2px; }
+.coin-grade-panel select {
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 13px;
+}
+.coin-member-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-top: 12px; }
+.coin-member-label { margin-right: 4px; color: var(--text-muted); font-size: 12px; }
+.coin-member-chip {
+  padding: 1px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-muted);
+  font-size: 12px;
+  text-decoration: none;
+}
+.coin-member-chip:hover { color: var(--accent); border-color: var(--accent); }
 
 .coin-jump {
   margin: -6px 0 14px;

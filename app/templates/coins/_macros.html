@@ -1,0 +1,38 @@
+{% macro coin_nav(active) %}
+<nav class="coin-tabs" aria-label="铜币模块导航">
+  {% set items = [
+    ("today", "/coins/collection", "今日推荐"),
+    ("collection", "/coins/collections", "收藏"),
+    ("library", "/coins/info", "币库"),
+    ("explore", "/coins/explore", "候选池"),
+    ("auction", "/coins", "拍场"),
+  ] %}
+  {% for key, href, label in items %}
+  <a href="{{ href }}"{% if active == key %} class="is-active" aria-current="page"{% endif %}>{{ label }}</a>
+  {% endfor %}
+</nav>
+{% endmacro %}
+
+{% macro coin_head(title, subtitle="") %}
+<section class="coin-page-head">
+  <div>
+    <h1>{{ title }}</h1>
+    {% if subtitle %}<p class="coin-page-sub">{{ subtitle }}</p>{% endif %}
+  </div>
+  {% if caller is defined %}<div class="coin-page-actions">{{ caller() }}</div>{% endif %}
+</section>
+{% endmacro %}
+
+{% macro coin_collection_tabs(active) %}
+<nav class="coin-subtabs" aria-label="收藏子导航">
+  <a href="/coins/collections"{% if active == "collections" %} class="is-active" aria-current="page"{% endif %}>收藏系列</a>
+  <a href="/coins/grades"{% if active == "grades" %} class="is-active" aria-current="page"{% endif %}>品相台账</a>
+</nav>
+{% endmacro %}
+
+{% macro coin_library_tabs(active) %}
+<nav class="coin-subtabs" aria-label="币库子导航">
+  <a href="/coins/info"{% if active == "series" %} class="is-active" aria-current="page"{% endif %}>系列库</a>
+  <a href="/coins/manage"{% if active == "ingest" %} class="is-active" aria-current="page"{% endif %}>采集中心</a>
+</nav>
+{% endmacro %}

@@ -1,29 +1,12 @@
 {% extends "base.html" %}
 {% block title %}{{ page_title }} · deskhub{% endblock %}
 {% block content_class %} content-wide{% endblock %}
+{% from "coins/_macros.html" import coin_nav, coin_head with context %}
 
 {% block content %}
-<section class="digest-head">
-  <h1>探索候选池</h1>
-  <p class="digest-meta">
-    {{ candidates|length }} 个候选{% if filters_active %}（共 {{ total }} 个）{% endif %} · 目录扫描得到的外部铜币 · 忽略的不再显示
-  </p>
-</section>
-
-<nav class="coin-tabs">
-  <a href="/coins">拍卖</a>
-  <a href="/coins/collection">收藏画像</a>
-  <a href="/coins/collections">系列映射</a>
-  <a href="/coins/grades">品相录入</a>
-  <a href="/coins/info">信息</a>
-  <a href="/coins/manage">采集管理</a>
-  <a class="is-active" href="/coins/explore">候选池</a>
-</nav>
-
-<p class="notice">
-  跑 <code>python -m app.cli coins-explore</code> 扫描 Numista 目录。采纳后系列会写入本地库，
-  在「信息」与「采集管理」页可见；忽略后从本页隐藏。
-</p>
+{{ coin_nav("explore") }}
+{% set subtitle = candidates|length ~ " 个候选" ~ ("（共 " ~ total ~ " 个）" if filters_active else "") ~ " · 目录扫描得到的外部铜币 · 忽略的不再显示" %}
+{{ coin_head("候选池", subtitle) }}
 
 <form class="coin-member-add" method="get" action="/coins/explore">
   <label class="field">国家
@@ -55,84 +38,71 @@
 </form>
 
 {% if candidates %}
-<div class="table-wrap">
-  <table class="sources-table coin-explore-table">
-    <thead>
-      <tr>
-        <th class="nowrap">Numista ID</th>
-        <th class="nowrap">图片</th>
-        <th class="nowrap">国家</th>
-        <th class="nowrap">执政者</th>
-        <th class="nowrap">面值</th>
-        <th class="nowrap">年份</th>
-        <th class="nowrap">规格</th>
-        <th class="nowrap">核实时间</th>
-        <th class="nowrap">状态</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for item in candidates %}
-      <tr>
-        <td class="nowrap">
-          <a href="/coins/series/{{ item.numista_id }}">{{ item.numista_id }}</a>
-        </td>
-        <td>
-          <div class="coin-explore-imgs">
-            {% for side, label in [('obverse', '正'), ('reverse', '反')] %}
-              {% if item['has_' ~ side ~ '_image'] %}
-              <img class="coin-explore-img coin-zoom" src="/coins/series/{{ item.numista_id }}/image/{{ side }}"
-                   alt="{{ label }}面" loading="lazy">
-              {% elif item[side ~ '_picture'] %}
-              <a class="coin-explore-img coin-explore-img-empty" href="{{ item[side ~ '_picture'] }}"
-                 target="_blank" rel="noreferrer" title="查看{{ label }}面原图">{{ label }}</a>
-              {% else %}
-              <span class="coin-explore-img coin-explore-img-empty">{{ label }}</span>
-              {% endif %}
-            {% endfor %}
-          </div>
-        </td>
-        <td class="nowrap">{{ item.issuer or '—' }}</td>
-        <td class="nowrap">{{ item.ruler or '—' }}</td>
-        <td class="nowrap">{{ item.denomination or '—' }}</td>
-        <td class="nowrap">
-          {% if item.min_year is not none and item.max_year is not none %}
-          {{ item.min_year }}{% if item.max_year != item.min_year %}–{{ item.max_year }}{% endif %}
-          {% else %}—{% endif %}
-        </td>
-        <td class="coin-explore-spec">
-          <span>{{ item.composition or '—' }}</span>
-          <small>
-            {% if item.size_mm is not none %}⌀ {{ item.size_mm }} mm{% endif %}
-            {% if item.weight_g is not none %} · {{ item.weight_g }} g{% endif %}
-            {% if item.shape %} · {{ item.shape }}{% endif %}
-          </small>
-        </td>
-        <td class="nowrap">{{ item.verified_at | local_time }}</td>
-        <td class="nowrap">
-          <form class="coin-status-form" method="post" action="/coins/explore/status"
-                data-current="{{ item.status }}">
-            <input type="hidden" name="numista_id" value="{{ item.numista_id }}">
-            <div class="coin-status-group" role="group" aria-label="候选状态">
-              {% for status in statuses %}
-              <label class="coin-status-option{% if item.status == status %} is-active{% endif %}">
-                <input type="radio" name="status" value="{{ status }}"
-                       {% if item.status == status %}checked{% endif %}>
-                {{ status_labels[status] }}
-              </label>
-              {% endfor %}
-            </div>
-            <button class="btn btn-primary coin-status-save" type="submit" hidden>保存</button>
-          </form>
-        </td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+<div class="coin-candidate-list">
+  {% for item in candidates %}
+  <div class="coin-candidate-card">
+    <div class="coin-candidate-main">
+      <div class="coin-explore-imgs">
+        {% for side, label in [('obverse', '正'), ('reverse', '反')] %}
+          {% if item['has_' ~ side ~ '_image'] %}
+          <img class="coin-explore-img coin-zoom" src="/coins/series/{{ item.numista_id }}/image/{{ side }}"
+               alt="{{ label }}面" loading="lazy">
+          {% elif item[side ~ '_picture'] %}
+          <a class="coin-explore-img coin-explore-img-empty" href="{{ item[side ~ '_picture'] }}"
+             target="_blank" rel="noreferrer" title="查看{{ label }}面原图">{{ label }}</a>
+          {% else %}
+          <span class="coin-explore-img coin-explore-img-empty">{{ label }}</span>
+          {% endif %}
+        {% endfor %}
+      </div>
+      <div class="coin-candidate-meta">
+        <a class="coin-candidate-title" href="/coins/series/{{ item.numista_id }}">
+          {{ item.issuer or '—' }} · {{ item.ruler or '—' }} · {{ item.denomination or '—' }}
+        </a>
+        <p class="coin-candidate-line">
+          Numista #{{ item.numista_id }}
+          {%- if item.min_year is not none and item.max_year is not none %} · {{ item.min_year }}{% if item.max_year != item.min_year %}–{{ item.max_year }}{% endif %}{% endif %}
+          {%- if item.composition %} · {{ item.composition }}{% endif %}
+          {%- if item.size_mm is not none %} · ⌀ {{ item.size_mm }} mm{% endif %}
+          {%- if item.weight_g is not none %} · {{ item.weight_g }} g{% endif %}
+          {%- if item.shape %} · {{ item.shape }}{% endif %}
+        </p>
+        <p class="coin-candidate-line">核实时间：{{ item.verified_at | local_time }}</p>
+        <p class="coin-candidate-tags">
+          <span class="coin-series-tag {% if item.status == 'adopted' %}{% else %}coin-series-tag-off{% endif %}">{{ status_labels[item.status] }}</span>
+        </p>
+      </div>
+    </div>
+
+    <div class="coin-candidate-actions">
+      <form class="coin-status-form" method="post" action="/coins/explore/status"
+            data-current="{{ item.status }}">
+        <input type="hidden" name="numista_id" value="{{ item.numista_id }}">
+        <div class="coin-status-group" role="group" aria-label="候选状态">
+          {% for status in statuses %}
+          <label class="coin-status-option{% if item.status == status %} is-active{% endif %}">
+            <input type="radio" name="status" value="{{ status }}"
+                   {% if item.status == status %}checked{% endif %}>
+            {{ status_labels[status] }}
+          </label>
+          {% endfor %}
+        </div>
+        <button class="btn btn-primary coin-status-save" type="submit" hidden>保存</button>
+      </form>
+      <form method="post" action="/coins/explore/status">
+        <input type="hidden" name="numista_id" value="{{ item.numista_id }}">
+        <input type="hidden" name="status" value="adopted">
+        <input type="hidden" name="next" value="/coins/manage">
+        <button class="btn btn-primary" type="submit">采纳并去补数据</button>
+      </form>
+    </div>
+  </div>
+  {% endfor %}
 </div>
 {% else %}
 <div class="empty">
   候选池还是空的。先跑 <code>python -m app.cli coins-explore</code>，
-  前提是收藏画像里已有带尺寸的收藏系列。
+  前提是收藏里已有带尺寸的收藏系列。
 </div>
 {% endif %}
 {% endblock %}

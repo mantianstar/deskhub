@@ -1,28 +1,36 @@
 {% extends "base.html" %}
-{% block title %}铜币拍卖 · deskhub{% endblock %}
+{% block title %}拍场 · deskhub{% endblock %}
+{% block content_class %} content-wide{% endblock %}
+{% from "coins/_macros.html" import coin_nav, coin_head with context %}
 
 {% block content %}
-<section class="digest-head">
-  <h1>铜币拍卖</h1>
-  <p class="digest-meta">
-    共 {{ cards|length }} 个命中专场
-    {%- if summary.last_ok_at %} · 数据更新至 {{ summary.last_ok_at | local_time }}{% endif %}
-    · <a href="/coins/profile">画像</a>
-    · <a href="/coins/collection">收藏画像</a>
-    · <a href="/coins/collections">系列映射</a>
-    · <a href="/coins/grades">品相录入</a>
-    · <a href="/coins/info">信息</a>
-    · <a href="/coins/manage">采集管理</a>
-  </p>
+{{ coin_nav("auction") }}
+{% set subtitle = "共 " ~ card_total ~ " 个专场" %}
+{% if summary.last_ok_at %}{% set subtitle = subtitle ~ " · 数据更新至 " ~ (summary.last_ok_at | local_time) %}{% endif %}
+{% call coin_head("拍场", subtitle) %}
   <form method="post" action="/coins/refresh">
-    <button class="btn" type="submit">刷新采集</button>
+    <button class="btn" type="submit">刷新今日拍品</button>
   </form>
-</section>
+{% endcall %}
 
 <form class="search-form" method="get" action="/coins">
   <div class="search-row search-row-labeled">
     <label class="field">拍卖截止日期
       <input type="date" name="auction_date" value="{{ auction_date }}">
+    </label>
+    <label class="field">是否推荐
+      <select name="rec">
+        <option value="all"{% if filter_rec == 'all' %} selected{% endif %}>全部</option>
+        <option value="yes"{% if filter_rec == 'yes' %} selected{% endif %}>是</option>
+        <option value="no"{% if filter_rec == 'no' %} selected{% endif %}>否</option>
+      </select>
+    </label>
+    <label class="field">推荐类型
+      <select name="type">
+        <option value="all"{% if filter_match_type == 'all' %} selected{% endif %}>全部</option>
+        <option value="precise"{% if filter_match_type == 'precise' %} selected{% endif %}>精准匹配</option>
+        <option value="similar"{% if filter_match_type == 'similar' %} selected{% endif %}>相似推荐</option>
+      </select>
     </label>
     <button class="btn btn-primary" type="submit">查询</button>
   </div>
@@ -55,15 +63,37 @@
       <span>实时拍卖</span>
       <span>共 {{ card.lot_total if card.lot_total is not none else '—' }} 件拍品</span>
       <span>{{ card.view_count or 0 }} 人次围观</span>
-      <span class="coin-hit">命中 {{ card.recommended_count }} 件</span>
+      <span class="coin-hit">精准 {{ card.precise_count }} 件</span>
+      {% if card.similar_count %}<span class="coin-hit">相似 {{ card.similar_count }} 件</span>{% endif %}
     </div>
   </a>
   {% endfor %}
+  {% if pager.total_pages > 1 %}
+  <nav class="pager">
+    {% if pager.prev_url %}
+    <a class="btn" href="{{ pager.prev_url }}">上一页</a>
+    {% else %}
+    <span class="btn btn-disabled">上一页</span>
+    {% endif %}
+    <span class="pager-meta">第 {{ pager.page }} / {{ pager.total_pages }} 页</span>
+    {% if pager.next_url %}
+    <a class="btn" href="{{ pager.next_url }}">下一页</a>
+    {% else %}
+    <span class="btn btn-disabled">下一页</span>
+    {% endif %}
+  </nav>
+  {% endif %}
 {% else %}
 <div class="empty">
+  {% if filter_rec == 'all' %}
+  {{ auction_date }} 暂无拍场数据。
+  {% elif filter_rec == 'no' %}
+  {{ auction_date }} 没有未匹配的专场。
+  {% else %}
   {{ auction_date }} 没有与你画像匹配的专场。<br>
   先跑一次采集：<code>python -m app.cli coins-fetch</code>；
   画像可用 <code>python -m app.cli coins-parse-orders</code> 生成。
+  {% endif %}
 </div>
 {% endif %}
 {% endblock %}

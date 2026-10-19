@@ -42,13 +42,14 @@
 | `/sources` | `app/routers/sources.py` | `sources.html` |
 | `/control` | `app/routers/control.py` | `control.html` |
 | `/funds` | `app/routers/placeholders.py` | `placeholder.html` |
-| `/coins`、`/coins/session/{id}` | `app/routers/coins.py` | `coins/sessions.html`、`coins/session.html` |
-| `/coins/profile` | 同上 | `coins/profile.html`（偏好标签） |
-| `/coins/manage`、`/coins/info`、`/coins/series/{id}` | 同上 | `coins/manage.html`、`coins/info.html`、`coins/series.html` |
-| `/coins/explore` | 同上 | `coins/explore.html`（探索候选池） |
-| `/coins/grades` | 同上 | `coins/grades.html`（品相录入） |
-| `/coins/collection` | 同上 | `coins/collection.html`（收藏画像 + 三层推荐） |
-| `/coins/collections` | 同上 | `coins/collections.html`（收藏系列映射） |
+| `/coins`、`/coins/session/{id}` | `app/routers/coins.py` | `coins/sessions.html`、`coins/session.html`（拍场） |
+| `/coins/manage`、`/coins/info`、`/coins/series/{id}` | 同上 | `coins/manage.html`（采集中心）、`coins/info.html`（币库）、`coins/series.html`（系列详情） |
+| `/coins/explore` | 同上 | `coins/explore.html`（候选池） |
+| `/coins/grades` | 同上 | `coins/grades.html`（品相台账） |
+| `/coins/collection` | 同上 | `coins/collection.html`（今日推荐：精准匹配 + 相似推荐 + 拍场角标） |
+| `/coins/collections` | 同上 | `coins/collections.html`（收藏系列） |
+
+> 旧版标签画像页面 `/coins/profile` 已移除；`coin_profile_tags` 数据与“未配置收藏系列时回退标签画像”的后端逻辑保留。
 
 ## 3. 铜币数据链路
 

@@ -22,6 +22,7 @@ from app.coins.numista import NumistaError
 from app.coins.numista_web import NumistaPageError
 from app.main import app as fastapi_app
 from app.models import (
+    CoinExploreCandidate,
     CoinIssue,
     CoinIssueValues,
     CoinLot,
@@ -159,11 +160,157 @@ def test_sessions_page_shows_only_sessions_with_hits(web):
     assert "10月8日 星期四 15:25" in page.text  # 站点原文时间
     assert "共 50 件拍品" in page.text
     assert "79 人次围观" in page.text
-    assert "命中 1 件" in page.text
+    assert "精准 1 件" in page.text
     assert f'href="/coins/session/{session_id}"' in page.text
     assert page.text.count("coin-thumb") >= 4  # 4 张商品图
     assert 'class="coin-thumb coin-zoom"' in page.text  # 点击可放大
     assert 'id="coin-lightbox"' in page.text
+
+
+def test_sessions_page_filters_recommendation_and_type(web):
+    """是否推荐默认只看推荐；全部展示无匹配专场；推荐类型可筛精准 / 相似。"""
+    session_id = _seed_session()
+    other_id = repository.upsert_coin_session(
+        CoinSession(
+            id=None,
+            mxiqi_id="all-session",
+            shop_id=None,
+            title="一个无关专场",
+            status="running",
+            auction_at=_today_auction_at(),
+            auction_at_raw=None,
+            deposit=None,
+            lot_total=1,
+            view_count=0,
+            cover_urls=[],
+            fetched_at=repository.utcnow(),
+        )
+    )
+
+    page = web.get("/coins")
+    assert '<option value="yes" selected>是</option>' in page.text
+    assert "一个无关专场" not in page.text
+
+    page = web.get("/coins?rec=all")
+    assert "一个无关专场" in page.text
+    assert f'href="/coins/session/{other_id}"' in page.text
+
+    page = web.get("/coins?rec=no")
+    assert "一个无关专场" in page.text
+    assert f'href="/coins/session/{session_id}"' not in page.text
+
+    page = web.get("/coins?type=similar")
+    assert f'href="/coins/session/{session_id}"' not in page.text
+
+    page = web.get("/coins?type=precise")
+    assert f'href="/coins/session/{session_id}"' in page.text
+
+
+def test_sessions_page_paginates(web):
+    """专场列表 12 个/页，避免一次性渲染过多卡片。"""
+    for index in range(13):
+        session_id = repository.upsert_coin_session(
+            CoinSession(
+                id=None,
+                mxiqi_id=f"paged-session-{index}",
+                shop_id=None,
+                title=f"分页专场 {index:02d}",
+                status="running",
+                auction_at=_today_auction_at(),
+                auction_at_raw=None,
+                deposit=None,
+                lot_total=1,
+                view_count=0,
+                cover_urls=[],
+                fetched_at=repository.utcnow(),
+            )
+        )
+        repository.upsert_coin_lot(
+            CoinLot(
+                id=None,
+                session_id=session_id,
+                mxiqi_id=f"paged-lot-{index}",
+                lot_no="1",
+                title=f"推荐拍品 {index:02d}",
+                start_price=1.0,
+                current_price=0.0,
+                image_urls=[],
+                tags={},
+                match_score=1.0,
+                is_recommended=True,
+                fetched_at=repository.utcnow(),
+            )
+        )
+
+    page = web.get("/coins")
+    assert "共 13 个专场" in page.text
+    assert "第 1 / 2 页" in page.text
+
+    page = web.get("/coins?page=2")
+    assert "第 2 / 2 页" in page.text
+
+
+def test_session_page_paginates_other_lots(web):
+    """拍品页只分页「其他拍品」，精准 / 相似推荐始终完整展示。"""
+    session_id = _seed_session()
+    now = repository.utcnow()
+    for index in range(21):
+        repository.upsert_coin_lot(
+            CoinLot(
+                id=None,
+                session_id=session_id,
+                mxiqi_id=f"other-lot-{index}",
+                lot_no=str(index + 1),
+                title=f"其他拍品 {index:02d}",
+                start_price=1.0,
+                current_price=0.0,
+                image_urls=[],
+                tags={},
+                match_score=0.0,
+                is_recommended=False,
+                fetched_at=now,
+            )
+        )
+
+    page = web.get(f"/coins/session/{session_id}")
+    assert 'class="coin-section-count">22 件' in page.text
+    assert "第 1 / 2 页" in page.text
+
+    page = web.get(f"/coins/session/{session_id}?page=2")
+    assert "第 2 / 2 页" in page.text
+    assert "精准推荐 1 件" in page.text
+
+
+def test_session_page_orders_lots_by_number(web):
+    """Lot 号按数字排序（Lot.12 在 Lot.119 之前），不是字符串序。"""
+    session_id = _seed_session()
+    now = repository.utcnow()
+    for lot_no in ("Lot.119", "Lot.12", "Lot.2"):
+        repository.upsert_coin_lot(
+            CoinLot(
+                id=None,
+                session_id=session_id,
+                mxiqi_id=f"order-lot-{lot_no}",
+                lot_no=lot_no,
+                title=f"拍品 {lot_no}",
+                start_price=1.0,
+                current_price=0.0,
+                image_urls=[],
+                tags={},
+                match_score=0.0,
+                is_recommended=False,
+                fetched_at=now,
+            )
+        )
+
+    detail = repository.get_coin_session_detail(session_id)
+    assert [lot.lot_no for lot in detail.lots] == [
+        "Lot.1",
+        "Lot.2",
+        "Lot.9",
+        "Lot.12",
+        "Lot.119",
+    ]
 
 
 def test_sessions_page_filters_by_auction_date_defaults_today(web):
@@ -200,7 +347,7 @@ def test_session_page_renders_shop_header_and_recommended_lots(web):
     assert "认证" in page.text and "2年店铺" in page.text
     assert "押金 ¥10" in page.text
     assert "共 50 件" in page.text
-    assert "推荐 1 件" in page.text
+    assert "精准推荐 1 件" in page.text
     assert "79 人次围观" in page.text
     # 拍品字段
     assert "东印度公司1808年硬币" in page.text
@@ -210,8 +357,12 @@ def test_session_page_renders_shop_header_and_recommended_lots(web):
     assert "12–30 元" in page.text
     assert "参考 5 条成交" in page.text
     assert "东印度 1808 硬币" in page.text
-    # 未命中的拍品不出现
-    assert "某无关的纪念章" not in page.text
+    # 拍品分三组：精准推荐 + 相似推荐 + 其他拍品（未命中也展示）
+    assert "精准推荐" in page.text
+    assert "相似推荐" in page.text
+    assert "相似推荐 0 件" in page.text
+    assert "其他拍品" in page.text
+    assert "某无关的纪念章" in page.text
     # 最多 3 张图
     assert page.text.count("coin-lot-img") >= 3
     assert 'class="coin-lot-img coin-zoom"' in page.text  # 点击可放大
@@ -265,56 +416,12 @@ def test_session_page_shows_no_sample_marker(web):
     assert "无成交样本，不报价" in page.text
 
 
-# ---------------------------------------------------------------- 画像页与编辑
+# ---------------------------------------------------------------- 旧版标签画像已移除
 
 
-def test_profile_page_lists_tags(web):
-    repository.upsert_coin_tag("country", "英国", 1.0, 12)
-    repository.upsert_coin_tag("denomination", "一分", 0.6, 7)
-
-    page = web.get("/coins/profile")
-    assert page.status_code == 200
-    assert "英国" in page.text
-    assert "一分" in page.text
-    assert "国家/地区" in page.text
-
-
-def test_profile_toggle_weight_add_delete(web):
-    repository.upsert_coin_tag("country", "英国", 1.0, 12)
-    tag = repository.list_coin_profile_tags()[0]
-
-    assert web.post(f"/coins/profile/{tag.id}/toggle", follow_redirects=False).status_code == 302
-    assert repository.get_coin_tag(tag.id).enabled is False
-
-    assert (
-        web.post(
-            f"/coins/profile/{tag.id}/weight", data={"weight": "0.3"}, follow_redirects=False
-        ).status_code
-        == 302
-    )
-    assert repository.get_coin_tag(tag.id).weight == 0.3
-
-    add = web.post(
-        "/coins/profile/add",
-        data={"dimension": "condition", "value": "原光"},
-        follow_redirects=False,
-    )
-    assert add.status_code == 302
-    assert any(t.value == "原光" for t in repository.list_coin_profile_tags())
-
-    assert web.post(f"/coins/profile/{tag.id}/delete", follow_redirects=False).status_code == 302
-    assert repository.get_coin_tag(tag.id) is None
-
-
-def test_profile_add_rejects_bad_dimension_and_unknown_tag(web):
-    assert (
-        web.post("/coins/profile/add", data={"dimension": "nope", "value": "x"}).status_code == 400
-    )
-    assert (
-        web.post("/coins/profile/add", data={"dimension": "country", "value": "  "}).status_code
-        == 400
-    )
-    assert web.post("/coins/profile/999999/toggle", follow_redirects=False).status_code == 404
+def test_legacy_profile_page_removed(web):
+    """旧版标签画像页面已按 P0 重构移除；后端标签与兜底逻辑保留。"""
+    assert web.get("/coins/profile").status_code == 404
 
 
 # ---------------------------------------------------------------- 参考库：查询 / 详情 / 采集管理（M14）
@@ -493,6 +600,11 @@ def test_series_page_merges_year_info_and_values(web):
     assert "2 个年份 · 2 个版别" in page.text
     assert "KM#790,Sp#3961" in page.text
     assert "Royal Mint" in page.text
+    # ②③④ 动作条 + 回跳到本系列详情
+    assert "② 获取年份信息" in page.text
+    assert "③ 获取年份估值" in page.text
+    assert "④ 下载图片" in page.text
+    assert 'name="return_to" value="/coins/series/670"' in page.text
     # 合并后的列：厂标（年份后）/ 目录号（UNC 后）/ 备注（目录号后）
     for header in ("厂标", "发行量", "UNC", "目录号", "备注", "稀有度"):
         assert header in page.text
@@ -547,6 +659,39 @@ def test_series_page_image_click_zoom_markup(web, tmp_path, monkeypatch):
     page = web.get("/coins/series/670")
     assert 'class="coin-zoom"' in page.text
     assert 'id="coin-lightbox"' in page.text
+
+
+def test_series_page_candidate_banner_and_adopt(web):
+    """未采纳候选：显示横幅 + 采纳按钮（回跳本页），不显示补数据动作条。"""
+    now = repository.utcnow()
+    payload = {
+        "numista_id": 999001,
+        "title": "候选系列",
+        "issuer": "法国",
+        "denomination": "10 分",
+        "min_year": 1900,
+        "max_year": 1901,
+    }
+    repository.upsert_coin_explore_candidate(
+        CoinExploreCandidate(
+            id=None,
+            numista_id=999001,
+            seed_key="seed",
+            seed_name="法国 · 10 分",
+            size_diff=0.0,
+            status="candidate",
+            payload=payload,
+            payload_cn=payload,
+            issues=[],
+            verified_at=now,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    page = web.get("/coins/series/999001")
+    assert "来自候选池，尚未采纳" in page.text
+    assert 'name="next" value="/coins/series/999001"' in page.text
+    assert 'action="/coins/manage/fetch-issues"' not in page.text
 
 
 def test_series_page_404_for_unknown(web):
@@ -1112,9 +1257,43 @@ def test_grades_page_lists_combos_with_dropdown(web):
     # 删除走页内二次确认
     assert "'/coins/grades/delete'" in page.text
     assert "确认删除" in page.text
+    # 派生列「所属收藏系列」（不落库）
+    assert "所属收藏系列" in page.text
     # 展示的是统一后的值
     assert "<td>1 分</td>" in page.text
     assert "<td>新西兰</td>" in page.text
+
+
+def test_grades_page_derives_collection_series(web):
+    """按国家 + 面值把组合归到收藏系列；匹配不上显示「—」。"""
+    _seed_orders()
+    repository.upsert_coin_collection_series(
+        collection_key="uk-1c",
+        name="英国 · 1 分",
+        country="英国",
+        ruler=None,
+        denomination="1分",
+    )
+    page = web.get("/coins/grades")
+    assert "英国 · 1 分" in page.text
+    assert page.text.count("coin-grade-collection") == 3
+
+
+def test_series_action_redirects_back_to_series(web, monkeypatch):
+    """②③④ 带 return_to 时回系列详情，而不是回采集中心。"""
+    _seed_series()
+
+    async def fake_collect_issues(*_args, **_kwargs):
+        return (None, [])
+
+    monkeypatch.setattr(coins_numista, "collect_issues", fake_collect_issues)
+    resp = web.post(
+        "/coins/manage/fetch-issues",
+        data={"series_id": "670", "return_to": "/coins/series/670"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 302
+    assert resp.headers["location"] == "/coins/series/670"
 
 
 def test_grades_page_filters_by_grade(web):

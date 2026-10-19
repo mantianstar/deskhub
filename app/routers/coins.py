@@ -11,7 +11,7 @@ import logging
 from datetime import datetime
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, Form, Request
+from fastapi import APIRouter, Form, Query, Request
 from fastapi.responses import FileResponse
 from starlette.responses import Response
 
@@ -26,10 +26,8 @@ from app.coins import recommend as coins_recommend
 from app.coins.numista import ISSUER_CODES, NumistaError
 from app.coins.numista_web import NumistaPageError
 from app.models import (
-    COIN_DIMENSION_LABELS,
     COIN_EXPLORE_STATUS_LABELS,
     COIN_EXPLORE_STATUSES,
-    COIN_PROFILE_DIMENSIONS,
     COIN_PURCHASE_GRADES,
     COIN_SESSION_STATUS_LABELS,
     CoinCollectionSeries,
@@ -41,8 +39,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# 维度 / 状态的中文名放在 models 里（CLI 也要用，避免 CLI 反过来 import router）
-DIMENSION_LABELS = COIN_DIMENSION_LABELS
+# 状态的中文名放在 models 里（CLI 也要用，避免 CLI 反过来 import router）
 SESSION_STATUS_LABELS = COIN_SESSION_STATUS_LABELS
 
 # 手工触发的采集任务：留强引用，避免被 GC（Python 的标准做法）
@@ -59,31 +56,126 @@ def format_price(value: float | None) -> str:
 
 
 templates.env.filters["price"] = format_price
-templates.env.globals["coin_dimension_labels"] = DIMENSION_LABELS
 templates.env.globals["coin_session_status_labels"] = SESSION_STATUS_LABELS
 
 
 # ---------------------------------------------------------------- 第一页：专场列表
 
 
+def _recommendation_sessions(
+    items: list,
+) -> tuple[dict[int, set[int]], dict[int, set[int]]]:
+    """推荐项 → 各专场的精准 / 相似匹配拍品 id（精准优先，相似不重复计数）。"""
+    precise: dict[int, set[int]] = {}
+    similar: dict[int, set[int]] = {}
+    for item in items:
+        bucket = precise if item.priority in (1, 2) else similar
+        for lot in item.matched_lots:
+            if lot.id is None:
+                continue
+            bucket.setdefault(lot.session_id, set()).add(lot.id)
+    for session_id, lot_ids in similar.items():
+        precise_ids = precise.get(session_id)
+        if precise_ids:
+            lot_ids -= precise_ids
+    return precise, similar
+
+
 @router.get("/coins")
-def sessions_page(request: Request, auction_date: str = "") -> Response:
-    """专场列表：按拍卖截止日期筛选，默认今日（业务时区）。"""
+def sessions_page(
+    request: Request,
+    auction_date: str = "",
+    rec: str = "yes",
+    match_type: str = Query("all", alias="type"),
+    page: str = "",
+) -> Response:
+    """专场列表：按拍卖截止日期 + 是否推荐 / 推荐类型筛选，默认今日的推荐专场。"""
     cfg = config.get()
     try:
         selected_day = datetime.strptime(auction_date, "%Y-%m-%d").date()
     except ValueError:
         selected_day = datetime.now(cfg.app.tz).date()
+    rec = rec if rec in ("all", "yes", "no") else "yes"
+    match_type = match_type if match_type in ("all", "precise", "similar") else "all"
     start, end = repository.day_bounds_utc(cfg.app.tz, selected_day)
-    cards = repository.list_coin_session_cards(day_bounds=(start, end))
+    cards = repository.list_coin_session_cards(
+        day_bounds=(start, end), only_recommended=False
+    )
+    _, items = coins_recommend.load_recommendations(cfg, day=selected_day)
+    precise_by_session, similar_by_session = _recommendation_sessions(items)
+    if (
+        selected_day == datetime.now(cfg.app.tz).date()
+        and not precise_by_session
+        and not similar_by_session
+    ):
+        # 命中标记可能停在上一轮采集：打开拍场页时按当前画像重算当日匹配
+        coins_recommend.rematch_today(cfg)
+        cards = repository.list_coin_session_cards(
+            day_bounds=(start, end), only_recommended=False
+        )
+        _, items = coins_recommend.load_recommendations(cfg, day=selected_day)
+        precise_by_session, similar_by_session = _recommendation_sessions(items)
+
+    has_items = bool(items)
+    for card in cards:
+        if has_items:
+            card.precise_count = len(precise_by_session.get(card.session_id, set()))
+            card.similar_count = len(similar_by_session.get(card.session_id, set()))
+        else:
+            # 未配置收藏画像时沿用入库的标签匹配结果
+            card.precise_count = card.recommended_count
+            card.similar_count = 0
+    if rec == "yes":
+        cards = [card for card in cards if card.precise_count or card.similar_count]
+    elif rec == "no":
+        cards = [card for card in cards if not (card.precise_count or card.similar_count)]
+    if match_type == "precise":
+        cards = [card for card in cards if card.precise_count]
+    elif match_type == "similar":
+        cards = [card for card in cards if card.similar_count]
+
+    card_total = len(cards)
+    paged_cards, page_no, total_pages = _paginate(
+        cards, page, COIN_SESSION_PAGE_SIZE
+    )
+    pager = {
+        "page": page_no,
+        "total_pages": total_pages,
+        "prev_url": _query_url(
+            "/coins",
+            {
+                "auction_date": selected_day.isoformat(),
+                "rec": rec,
+                "type": match_type,
+                "page": page_no - 1,
+            },
+        )
+        if page_no > 1
+        else "",
+        "next_url": _query_url(
+            "/coins",
+            {
+                "auction_date": selected_day.isoformat(),
+                "rec": rec,
+                "type": match_type,
+                "page": page_no + 1,
+            },
+        )
+        if page_no < total_pages
+        else "",
+    }
     return templates.TemplateResponse(
         request,
         "coins/sessions.html",
         {
             "request": request,
-            "page_title": "铜币拍卖",
-            "cards": cards,
+            "page_title": "拍场",
+            "cards": paged_cards,
+            "card_total": card_total,
+            "pager": pager,
             "auction_date": selected_day.isoformat(),
+            "filter_rec": rec,
+            "filter_match_type": match_type,
             "summary": repository.coin_fetch_summary(),
         },
     )
@@ -93,7 +185,7 @@ def sessions_page(request: Request, auction_date: str = "") -> Response:
 
 
 @router.get("/coins/session/{session_id}")
-def session_page(request: Request, session_id: int) -> Response:
+def session_page(request: Request, session_id: int, page: str = "") -> Response:
     detail = repository.get_coin_session_detail(session_id)
     if detail is None:
         return templates.TemplateResponse(
@@ -106,6 +198,40 @@ def session_page(request: Request, session_id: int) -> Response:
             },
             status_code=404,
         )
+    precise_reasons, similar_reasons = _lot_recommendations(detail)
+    precise_lots = [
+        (lot, precise_reasons[lot.lot_id])
+        for lot in detail.lots
+        if lot.lot_id in precise_reasons
+    ]
+    similar_lots = [
+        (lot, similar_reasons[lot.lot_id])
+        for lot in detail.lots
+        if lot.lot_id in similar_reasons
+    ]
+    other_lots = [
+        lot
+        for lot in detail.lots
+        if lot.lot_id not in precise_reasons and lot.lot_id not in similar_reasons
+    ]
+    other_total = len(other_lots)
+    paged_other, other_page, other_pages = _paginate(
+        other_lots, page, COIN_OTHER_LOT_PAGE_SIZE
+    )
+    other_pager = {
+        "page": other_page,
+        "total_pages": other_pages,
+        "prev_url": _query_url(
+            f"/coins/session/{session_id}", {"page": other_page - 1}
+        )
+        if other_page > 1
+        else "",
+        "next_url": _query_url(
+            f"/coins/session/{session_id}", {"page": other_page + 1}
+        )
+        if other_page < other_pages
+        else "",
+    }
     return templates.TemplateResponse(
         request,
         "coins/session.html",
@@ -113,76 +239,51 @@ def session_page(request: Request, session_id: int) -> Response:
             "request": request,
             "page_title": detail.title,
             "detail": detail,
+            "precise_lots": precise_lots,
+            "similar_lots": similar_lots,
+            "other_lots": paged_other,
+            "other_total": other_total,
+            "other_pager": other_pager,
         },
     )
 
 
-# ---------------------------------------------------------------- 画像：查看与编辑
+def _lot_recommendations(detail) -> tuple[dict[int, str], dict[int, str]]:
+    """拍品 → 精准 / 相似推荐的推荐原因；精准优先，相似不重复计数。"""
+    cfg = config.get()
+    moment = repository.parse_dt(detail.auction_at)
+    day = moment.astimezone(cfg.app.tz).date() if moment is not None else None
+    _, items = coins_recommend.load_recommendations(cfg, day=day)
+    if not items:
+        # 未配置收藏画像时沿用入库的标签匹配结果，全部视为精准推荐
+        return {lot.lot_id: "" for lot in detail.lots if lot.is_recommended}, {}
 
-
-@router.get("/coins/profile")
-def profile_page(request: Request) -> Response:
-    tags = repository.list_coin_profile_tags()
-    grouped = [
-        (dimension, DIMENSION_LABELS.get(dimension, dimension), [t for t in tags if t.dimension == dimension])
-        for dimension in COIN_PROFILE_DIMENSIONS
-    ]
-    return templates.TemplateResponse(
-        request,
-        "coins/profile.html",
-        {
-            "request": request,
-            "page_title": "铜币画像",
-            "grouped": grouped,
-            "tag_total": len(tags),
-            "order_total": repository.count_coin_orders(),
-            "dimensions": COIN_PROFILE_DIMENSIONS,
-        },
+    precise: dict[int, tuple[tuple[int, float], str]] = {}
+    similar: dict[int, tuple[tuple[int, float], str]] = {}
+    for item in items:
+        bucket = precise if item.priority in (1, 2) else similar
+        rank = (item.priority, -item.score)
+        for lot in detail.lots:
+            if not coins_recommend.lot_matches(item, lot):
+                continue
+            current = bucket.get(lot.lot_id)
+            if current is None or rank < current[0]:
+                bucket[lot.lot_id] = (rank, item.reason)
+    for lot_id in precise:
+        similar.pop(lot_id, None)
+    return (
+        {lot_id: value[1] for lot_id, value in precise.items()},
+        {lot_id: value[1] for lot_id, value in similar.items()},
     )
-
-
-@router.post("/coins/profile/{tag_id}/toggle")
-def toggle_tag(tag_id: int) -> Response:
-    tag = repository.get_coin_tag(tag_id)
-    if tag is None:
-        return Response(status_code=404)
-    repository.set_coin_tag_enabled(tag_id, not tag.enabled)
-    return _redirect("/coins/profile")
-
-
-@router.post("/coins/profile/{tag_id}/weight")
-def update_weight(tag_id: int, weight: float = Form(...)) -> Response:
-    if repository.get_coin_tag(tag_id) is None:
-        return Response(status_code=404)
-    repository.set_coin_tag_weight(tag_id, max(0.0, weight))
-    return _redirect("/coins/profile")
-
-
-@router.post("/coins/profile/{tag_id}/delete")
-def delete_tag(tag_id: int) -> Response:
-    if not repository.delete_coin_tag(tag_id):
-        return Response(status_code=404)
-    return _redirect("/coins/profile")
-
-
-@router.post("/coins/profile/add")
-def add_tag(
-    dimension: str = Form(...),
-    value: str = Form(...),
-    weight: float = Form(1.0),
-    note: str = Form(""),
-) -> Response:
-    if dimension not in COIN_PROFILE_DIMENSIONS:
-        return Response(status_code=400)
-    trimmed = value.strip()
-    if not trimmed:
-        return Response(status_code=400)
-    repository.add_coin_tag(dimension, trimmed, max(0.0, weight), note.strip() or None)
-    return _redirect("/coins/profile")
 
 
 def _redirect(path: str) -> Response:
     return Response(status_code=302, headers={"Location": path})
+
+
+def _return_target(raw: str, fallback: str) -> str:
+    """只接受铜币模块内的回跳地址，其余回落到默认页。"""
+    return raw if raw.startswith("/coins/") else fallback
 
 
 async def _run_coins(cfg: config.Config) -> None:
@@ -255,7 +356,7 @@ def _render_manage(
         "coins/manage.html",
         {
             "request": request,
-            "page_title": "铜币采集管理",
+            "page_title": "采集中心",
             "countries": sorted(ISSUER_CODES),
             "country": country,
             "year": year,
@@ -301,7 +402,7 @@ def info_page(
         "coins/info.html",
         {
             "request": request,
-            "page_title": "铜币信息",
+            "page_title": "币库",
             "countries": repository.list_coin_series_countries(cn=True),
             "country": country,
             "year": year,
@@ -321,6 +422,7 @@ def info_page(
                 for item in series_list
             },
             "issue_stats": repository.coin_series_issue_stats(cn=True),
+            "value_counts": repository.coin_series_value_counts(),
             "total_series": repository.count_coin_series(cn=True),
         },
     )
@@ -333,6 +435,7 @@ def series_page(request: Request, numista_id: int) -> Response:
     尚未采纳的候选（只存在于候选池）也走这里：用候选保存的详情渲染，避免跳去 Numista 站点。
     """
     series = repository.get_coin_series(numista_id, cn=True)
+    is_candidate = series is None
     if series is not None:
         issues = repository.list_coin_issues(series.id, cn=True)
         values = {v.numista_id: v for v in repository.list_coin_issue_values(numista_id)}
@@ -366,6 +469,8 @@ def series_page(request: Request, numista_id: int) -> Response:
             "page_title": f"铜币系列 {series.title or numista_id}",
             "series": series,
             "rows": rows,
+            "is_candidate": is_candidate,
+            "return_to": f"/coins/series/{numista_id}",
             # 年份数 ≠ 版别数：一个年份可有多个版别（厂标 / 变体 / 精制），故分别给出
             "year_total": len({issue.year for issue in issues if issue.year is not None}),
             "issue_total": len(issues),
@@ -449,6 +554,7 @@ async def fetch_issues(
     year: str = Form(""),
     denomination: str = Form(""),
     composition: str = Form(""),
+    return_to: str = Form(""),
 ) -> Response:
     """按钮 2：按系列号取该系列全部年份的单版（同步等待，失败就地提示）。"""
     try:
@@ -456,7 +562,9 @@ async def fetch_issues(
     except NumistaError as exc:
         logger.warning("获取单版失败：%s", exc)
         return _render_manage(request, country, year, denomination, composition, str(exc))
-    return _redirect(_manage_url(country, year, denomination, composition))
+    return _redirect(
+        _return_target(return_to, _manage_url(country, year, denomination, composition))
+    )
 
 
 @router.post("/coins/manage/fetch-values")
@@ -467,6 +575,7 @@ async def fetch_values(
     year: str = Form(""),
     denomination: str = Form(""),
     composition: str = Form(""),
+    return_to: str = Form(""),
 ) -> Response:
     """按钮 3：按系列号取类型页各品相估值 + Frequency（按钮 2 的延伸，同步等待，失败就地提示）。
 
@@ -478,7 +587,9 @@ async def fetch_values(
     except NumistaPageError as exc:
         logger.warning("获取估值失败：%s", exc)
         return _render_manage(request, country, year, denomination, composition, str(exc))
-    return _redirect(_manage_url(country, year, denomination, composition))
+    return _redirect(
+        _return_target(return_to, _manage_url(country, year, denomination, composition))
+    )
 
 
 @router.post("/coins/manage/download-images")
@@ -489,6 +600,7 @@ async def download_images(
     year: str = Form(""),
     denomination: str = Form(""),
     composition: str = Form(""),
+    return_to: str = Form(""),
 ) -> Response:
     """按钮 4：按系列号把正 / 反图缓存到本地（同步等待，失败就地提示）。
 
@@ -500,7 +612,9 @@ async def download_images(
     except NumistaPageError as exc:
         logger.warning("下载图片失败：%s", exc)
         return _render_manage(request, country, year, denomination, composition, str(exc))
-    return _redirect(_manage_url(country, year, denomination, composition))
+    return _redirect(
+        _return_target(return_to, _manage_url(country, year, denomination, composition))
+    )
 
 
 # ---------------------------------------------------------------- 历史购买品相录入（spec §14.16）
@@ -523,6 +637,31 @@ def _normalize_grade(country: str, year: str, denomination: str) -> tuple[str, s
     )
 
 
+def _attach_collection_names(combos) -> None:
+    """给每行补「所属收藏系列」（派生展示，不落库）：按国家 + 面值宽松匹配。"""
+    collections = repository.list_coin_collection_series()
+    if not collections:
+        return
+
+    def same_identity(value: str, target: str) -> bool:
+        return bool(value and target) and (
+            textmatch.contains(value, target) or textmatch.contains(target, value)
+        )
+
+    for combo in combos:
+        country = coins_grades.normalize_country(combo.country)
+        denomination = coins_grades.normalize_denomination(combo.denomination)
+        names = [
+            collection.name
+            for collection in collections
+            if same_identity(coins_grades.normalize_country(collection.country), country)
+            and same_identity(
+                coins_grades.normalize_denomination(collection.denomination), denomination
+            )
+        ]
+        combo.collection_name = "、".join(dict.fromkeys(names))
+
+
 @router.get("/coins/grades")
 def grades_page(
     request: Request,
@@ -542,12 +681,13 @@ def grades_page(
         denomination=denomination or None,
         grade=grade or None,
     )
+    _attach_collection_names(combos)
     return templates.TemplateResponse(
         request,
         "coins/grades.html",
         {
             "request": request,
-            "page_title": "铜币品相录入",
+            "page_title": "品相台账",
             "country": country,
             "year": year,
             "denomination": denomination,
@@ -568,6 +708,7 @@ def add_grade(
     year: str = Form(...),
     denomination: str = Form(...),
     grade: str = Form(""),
+    next: str = Form(""),
 ) -> Response:
     """手工新增一条历史订单里没有的组合（国家 + 年份 + 面值 + 品相四项必填）。"""
     key_country, key_era, key_denomination = _normalize_grade(country, year, denomination)
@@ -576,7 +717,7 @@ def add_grade(
     if grade not in COIN_PURCHASE_GRADES:
         return Response(status_code=400)
     repository.upsert_coin_purchase_grade(key_country, key_era, key_denomination, grade)
-    return _redirect("/coins/grades")
+    return _redirect(next if next.startswith("/coins/") else "/coins/grades")
 
 
 @router.post("/coins/grades/delete")
@@ -655,6 +796,11 @@ COIN_RECOMMEND_PAGE_SIZE = 20
 COIN_PROFILE_PAGE_SIZE = 10
 COIN_MEMBER_CANDIDATE_LIMIT = 50
 COIN_REASON_LABELS = {1: "稀缺年份", 2: "差品升级", 3: "相似推荐"}
+# 推荐原因筛选只管精准匹配（P1/P2）；相似推荐（P3）常驻展示
+COIN_REASON_FILTER_LABELS = {1: "稀缺年份", 2: "差品升级"}
+COIN_RAIL_SESSION_LIMIT = 6
+COIN_SESSION_PAGE_SIZE = 12
+COIN_OTHER_LOT_PAGE_SIZE = 20
 
 
 def _page_number(raw: str, total_pages: int) -> int:
@@ -860,7 +1006,7 @@ def explore_page(
         "coins/explore.html",
         {
             "request": request,
-            "page_title": "探索候选池",
+            "page_title": "候选池",
             "candidates": candidates,
             "total": total,
             "countries": countries,
@@ -878,7 +1024,7 @@ def explore_page(
 
 @router.post("/coins/explore/status")
 def update_explore_status(
-    numista_id: int = Form(...), status: str = Form(...)
+    numista_id: int = Form(...), status: str = Form(...), next: str = Form("")
 ) -> Response:
     """保存候选状态；采纳时同时写入本地系列表（信息页 / 采集管理页可见）。"""
     if status not in COIN_EXPLORE_STATUSES:
@@ -887,7 +1033,8 @@ def update_explore_status(
         coins_explore.adopt_candidate(numista_id)
     else:
         repository.set_coin_explore_candidate_status(numista_id, status)
-    return _redirect("/coins/explore")
+    target = next if next.startswith("/coins/") else "/coins/explore"
+    return _redirect(target)
 
 
 @router.get("/coins/collection")
@@ -899,25 +1046,35 @@ def collection_page(
     reason: str = "",
     hit: str = "1",
 ) -> Response:
-    """收藏画像 + 三层优先级推荐合并表 + 当日拍品匹配结果。
+    """收藏画像 + 精准匹配 / 相似推荐分段展示 + 当日拍品匹配结果。
 
-    「是否命中」默认只看已命中（今日命中 > 0）；选「全部」时传 `hit=all`。
+    推荐原因只筛精准匹配（P1/P2）；相似推荐（P3）常驻展示，只跟着系列筛选。
+    「已命中」过滤精准匹配（含当日拍品）；「未命中」隐藏精准匹配。
     """
     cfg = config.get()
     profiles, items = coins_recommend.load_recommendations(cfg)
 
-    filtered = items
-    if series:
-        filtered = [item for item in filtered if item.collection.collection_key == series]
-    if reason in ("1", "2", "3"):
-        filtered = [item for item in filtered if str(item.priority) == reason]
-    if hit == "1":
-        filtered = [item for item in filtered if item.matched_lots]
-    elif hit == "0":
-        filtered = [item for item in filtered if not item.matched_lots]
+    def _apply_series(source: list) -> list:
+        if not series:
+            return source
+        return [item for item in source if item.collection.collection_key == series]
 
+    # 精准匹配 = P1 缺失年份 + P2 差品升级；相似推荐 = P3 跨系列兜底，不计入命中。
+    precise_items = [item for item in items if item.priority in (1, 2)]
+    similar_items = [item for item in items if item.priority == 3]
+    precise_view = _apply_series(precise_items)
+    # 推荐原因只控制精准匹配；相似推荐常驻展示，只跟系列筛选联动
+    if reason in ("1", "2"):
+        precise_view = [item for item in precise_view if str(item.priority) == reason]
+    similar_view = _apply_series(similar_items)
+    if hit == "1":
+        precise_view = [item for item in precise_view if item.matched_lots]
+    elif hit == "0":
+        precise_view = []
+
+    filtered_total = len(precise_view) + len(similar_view)
     paged_items, page_no, total_pages = _paginate(
-        filtered, page, COIN_RECOMMEND_PAGE_SIZE
+        precise_view, page, COIN_RECOMMEND_PAGE_SIZE
     )
     profile_items, profile_page, profile_total_pages = _paginate(
         profiles, ppage, COIN_PROFILE_PAGE_SIZE
@@ -973,20 +1130,104 @@ def collection_page(
         else "",
     }
 
+    today_lots = repository.list_coin_today_lots(cfg.app.tz)
+    today_sessions: dict[int, dict] = {}
+    for lot in today_lots:
+        session = today_sessions.setdefault(
+            lot.session_id,
+            {
+                "session_id": lot.session_id,
+                "session_title": lot.session_title,
+                "shop_name": lot.shop_name,
+                "auction_at": lot.auction_at,
+                "lot_count": 0,
+                "hit_count": 0,
+                "similar_count": 0,
+            },
+        )
+        session["lot_count"] += 1
+
+    precise_lot_ids: set[int] = set()
+    precise_shops: set[str] = set()
+    precise_seen: dict[int, set[int]] = {}
+    for item in precise_items:
+        for lot in item.matched_lots:
+            if lot.id is not None:
+                precise_lot_ids.add(lot.id)
+            precise_shops.add(lot.shop_name or "未知店铺")
+            session = today_sessions.get(lot.session_id)
+            if session is None or lot.id is None:
+                continue
+            seen = precise_seen.setdefault(lot.session_id, set())
+            if lot.id in seen:
+                continue
+            seen.add(lot.id)
+            session["hit_count"] += 1
+
+    similar_seen: dict[int, set[int]] = {}
+    similar_lot_ids: set[int] = set()
+    for item in similar_items:
+        for lot in item.matched_lots:
+            session = today_sessions.get(lot.session_id)
+            if session is None or lot.id is None or lot.id in precise_lot_ids:
+                continue
+            seen = similar_seen.setdefault(lot.session_id, set())
+            if lot.id in seen:
+                continue
+            seen.add(lot.id)
+            similar_lot_ids.add(lot.id)
+            session["similar_count"] += 1
+
+    # 右侧拍场：有精准匹配置顶 → 仅相似推荐居中 → 无关拍场垫底。
+    today_session_list = sorted(
+        today_sessions.values(),
+        key=lambda session: (
+            0 if session["hit_count"] else 1 if session["similar_count"] else 2,
+            -session["hit_count"],
+            -session["similar_count"],
+            session["auction_at"] or "",
+            session["session_id"],
+        ),
+    )
+    # 聚合面板只铺匹配场次，超出上限的与无关专场一起折叠为「其他专场」
+    rail_sessions = [
+        session
+        for session in today_session_list
+        if session["hit_count"] or session["similar_count"]
+    ][:COIN_RAIL_SESSION_LIMIT]
+    rail_ids = {session["session_id"] for session in rail_sessions}
+    other_sessions = [
+        session
+        for session in today_session_list
+        if session["session_id"] not in rail_ids
+    ]
+    other_session_total = len(other_sessions)
+    other_hit_total = sum(
+        session["hit_count"] + session["similar_count"] for session in other_sessions
+    )
+    matched_lot_total = len(precise_lot_ids)
+    matched_shop_total = len(precise_shops)
+    missing_year_total = sum(len(profile.missing_years) for profile in profiles)
+    upgrade_year_total = sum(len(profile.upgrade_years) for profile in profiles)
+
     return templates.TemplateResponse(
         request,
         "coins/collection.html",
         {
             "request": request,
-            "page_title": "收藏画像",
+            "page_title": "今日推荐",
             "profiles": profile_items,
             "profiles_total": len(profiles),
             "profile_pager": profile_pager,
-            "items": paged_items,
+            "precise_items": paged_items,
+            "precise_total": len(precise_view),
+            "similar_items": similar_view,
+            "similar_total": len(similar_view),
             "item_pager": item_pager,
             "item_total": len(items),
-            "filtered_total": len(filtered),
+            "filtered_total": filtered_total,
             "reason_labels": COIN_REASON_LABELS,
+            "reason_filter_labels": COIN_REASON_FILTER_LABELS,
             "collection_options": [
                 {"key": profile.collection.collection_key, "name": profile.collection.name}
                 for profile in profiles
@@ -995,7 +1236,18 @@ def collection_page(
             "filter_reason": reason,
             "filter_hit": hit,
             "min_results": cfg.coins.collection.min_results,
-            "today_lots": repository.list_coin_today_lots(cfg.app.tz),
+            "today_lots": today_lots,
+            "today_sessions": today_session_list,
+            "today_session_total": len(today_session_list),
+            "rail_sessions": rail_sessions,
+            "other_session_total": other_session_total,
+            "other_hit_total": other_hit_total,
+            "similar_lot_total": len(similar_lot_ids),
+            "today_date": datetime.now(cfg.app.tz).date().isoformat(),
+            "matched_lot_total": matched_lot_total,
+            "matched_shop_total": matched_shop_total,
+            "missing_year_total": missing_year_total,
+            "upgrade_year_total": upgrade_year_total,
         },
     )
 
@@ -1086,12 +1338,18 @@ def collections_page(
         else ""
     )
 
+    total_years = sum(len(profile.years) for profile in profiles)
+    owned_years = sum(len(profile.owned_years) for profile in profiles)
+    coverage_pct = round(owned_years / total_years * 100) if total_years else 0
+    missing_year_total = sum(len(profile.missing_years) for profile in profiles)
+    upgrade_year_total = sum(len(profile.upgrade_years) for profile in profiles)
+
     return templates.TemplateResponse(
         request,
         "coins/collections.html",
         {
             "request": request,
-            "page_title": "收藏系列映射",
+            "page_title": "收藏",
             "collections": paged_collections,
             "total_collections": len(collections),
             "total_members": len(members),
@@ -1106,6 +1364,10 @@ def collections_page(
             "series_candidates": series_candidates,
             "member_filters": member_filters,
             "owner_by_series": owner_by_series,
+            "coverage_pct": coverage_pct,
+            "missing_year_total": missing_year_total,
+            "upgrade_year_total": upgrade_year_total,
+            "grades": COIN_PURCHASE_GRADES,
         },
     )
 

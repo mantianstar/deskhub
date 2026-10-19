@@ -1,14 +1,17 @@
 {% extends "base.html" %}
 {% block title %}{{ page_title }} · deskhub{% endblock %}
+{% block content_class %} content-wide{% endblock %}
+{% from "coins/_macros.html" import coin_nav with context %}
 
 {% block content %}
+{{ coin_nav("auction") }}
 {% if not detail %}
 <div class="empty">
   这个专场不存在（可能已被清理）。<a href="/coins">返回铜币首页</a>
 </div>
 {% else %}
 
-<p class="crumb"><a href="/coins">← 铜币专场</a></p>
+<p class="crumb"><a href="/coins">← 返回拍场</a></p>
 
 <section class="coin-shop-head">
   {% if detail.shop and detail.shop.avatar_url %}
@@ -38,13 +41,15 @@
 <div class="coin-facts">
   <span class="coin-fact">押金 ¥{{ detail.deposit | price }}</span>
   <span class="coin-fact">共 {{ detail.lot_total if detail.lot_total is not none else '—' }} 件</span>
-  <span class="coin-fact coin-fact-hit">推荐 {{ detail.recommended_count }} 件</span>
+  <span class="coin-fact coin-fact-hit">精准推荐 {{ precise_lots|length }} 件</span>
+  <span class="coin-fact coin-fact-hit">相似推荐 {{ similar_lots|length }} 件</span>
   <span class="coin-fact">{{ detail.view_count or 0 }} 人次围观</span>
 </div>
 
-{% for lot in detail.lots %}
+{% macro lot_card(lot, reason=None, index=1) %}
 <section class="coin-lot">
-  <h3 class="coin-lot-title">{{ lot.lot_no or ('Lot.' ~ loop.index) }} {{ lot.title }}</h3>
+  <h3 class="coin-lot-title">{{ lot.lot_no or ('Lot.' ~ index) }} {{ lot.title }}</h3>
+  {% if reason %}<p class="coin-lot-reason">推荐原因：{{ reason }}</p>{% endif %}
 
   <div class="coin-lot-prices">
     <span>起价：<b>{{ lot.start_price | price }}</b> 元</span>
@@ -88,10 +93,42 @@
   </div>
   {% endif %}
 </section>
+{% endmacro %}
+
+<h2 class="coin-section-title">精准推荐 <span class="coin-section-count">{{ precise_lots | length }} 件</span></h2>
+{% for lot, reason in precise_lots %}
+{{ lot_card(lot, reason, loop.index) }}
+{% else %}
+<div class="empty">这个专场没有精准命中你画像的拍品。</div>
 {% endfor %}
 
-{% if not detail.lots %}
-<div class="empty">这个专场没有命中你画像的拍品。</div>
+<h2 class="coin-section-title">相似推荐 <span class="coin-section-count">{{ similar_lots | length }} 件</span></h2>
+{% for lot, reason in similar_lots %}
+{{ lot_card(lot, reason, loop.index) }}
+{% else %}
+<div class="empty">暂无相似推荐。</div>
+{% endfor %}
+
+{% if other_total %}
+<h2 class="coin-section-title">其他拍品 <span class="coin-section-count">{{ other_total }} 件</span></h2>
+{% for lot in other_lots %}
+{{ lot_card(lot, None, loop.index) }}
+{% endfor %}
+{% if other_pager.total_pages > 1 %}
+<nav class="pager">
+  {% if other_pager.prev_url %}
+  <a class="btn" href="{{ other_pager.prev_url }}">上一页</a>
+  {% else %}
+  <span class="btn btn-disabled">上一页</span>
+  {% endif %}
+  <span class="pager-meta">第 {{ other_pager.page }} / {{ other_pager.total_pages }} 页</span>
+  {% if other_pager.next_url %}
+  <a class="btn" href="{{ other_pager.next_url }}">下一页</a>
+  {% else %}
+  <span class="btn btn-disabled">下一页</span>
+  {% endif %}
+</nav>
+{% endif %}
 {% endif %}
 
 {% endif %}

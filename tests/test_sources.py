@@ -177,19 +177,21 @@ def test_coins_page_is_a_real_module_not_placeholder(web):
     """铜币 2026-10-09 升级为正式模块：`/coins` 渲染专场列表，不再是「未启用」占位页。"""
     page = web.get("/coins")
     assert page.status_code == 200
-    assert "铜币拍卖" in page.text
+    assert "拍场" in page.text
     assert "未启用" not in page.text
-
-
-def test_coins_profile_page_renders(web):
-    page = web.get("/coins/profile")
-    assert page.status_code == 200
-    assert "铜币画像" in page.text
 
 
 def test_all_nav_links_resolve(web):
     """导航栏 7 个入口点了都不 404（M5-5）。"""
-    links = ["/", "/m/agent", "/m/bigdata", "/search", "/sources", "/funds", "/coins"]
+    links = [
+        "/",
+        "/m/agent",
+        "/m/bigdata",
+        "/search",
+        "/sources",
+        "/funds",
+        "/coins/collection",
+    ]
 
     home = web.get("/")
     assert home.status_code == 200
