@@ -86,6 +86,82 @@ def test_parse_type_page_without_table_returns_empty():
     assert info.rows == [] and info.currency is None
 
 
+# ---------------------------------------------------------------- 目录列表页（候选池）
+
+# 真实页面切片（2026-10-18 抓的 South Africa / Spain 两条，结构原样保留）
+CATALOGUE_HTML = """
+<div class="catalogue_navigation">126 results found.</div>
+<div class="catalogue_search_results">
+  <header id="e_afrique_du_sud"><h2>South Africa • Pound (1825-1961)</h2>
+    <p>1 Pound = 20 Shillings</p>
+  </header>
+  <div class="resultat_recherche">
+    <div class="photo_avers"><a href="/6699"><img src="https://en.numista.com/photos/1130-180.jpg" alt="obverse"></a></div>
+    <div class="photo_revers"><a href="/6699"><img src="https://en.numista.com/photos/1131-180.jpg" alt="reverse"></a></div>
+    <div class="description_piece">
+      <strong><a href="/6699">
+        1 Penny - George VI (SOUTH AFRICA - SUID AFRIKA)<br>
+        1948-1950 </a></strong>
+      <br>
+      <em>Coins › Standard circulation coins</em><br>
+      Bronze • 9.45&nbsp;g • ⌀&nbsp;31.0&nbsp;mm<br>
+      KM# 34.1, Hern# S108-110, N# 6699 </div>
+  </div>
+  <header id="e_espagne"><h2>Spain • Real (1497-1864)</h2></header>
+  <div class="resultat_recherche">
+    <div class="photo_avers"><a href="/7199"><img src="https://en.numista.com/photos/740-180.jpg" alt="obverse"></a></div>
+    <div class="photo_revers"><a href="/7199"><img src="https://en.numista.com/photos/741-180.jpg" alt="reverse"></a></div>
+    <div class="description_piece">
+      <strong><a href="/7199">
+        5 Centimos de Escudo - Isabella II<br>
+        1865-1868 </a></strong>
+      <br>
+      <em>Coins › Standard circulation coins</em><br>
+      Bronze • 12.5&nbsp;g • ⌀&nbsp;32&nbsp;mm<br>
+      KM# 605, N# 7199 </div>
+  </div>
+</div>
+"""
+
+
+def test_parse_catalogue_index_reads_total_and_items():
+    page = numista_web.parse_catalogue_index(CATALOGUE_HTML)
+
+    assert page.total == 126
+    assert [item.numista_id for item in page.items] == [6699, 7199]
+
+    first = page.items[0]
+    assert first.title == "1 Penny - George VI (SOUTH AFRICA - SUID AFRIKA)"
+    assert (first.min_year, first.max_year) == (1948, 1950)
+    assert first.issuer == "South Africa"  # 取自分组头，不是国旗图上的统治者
+    assert first.composition == "Bronze"
+    assert (first.weight_g, first.size_mm) == (9.45, 31.0)
+    assert first.catalog_no == "KM# 34.1, Hern# S108-110, N# 6699"
+    assert first.obverse_picture.endswith("1130-180.jpg")
+    assert page.items[1].issuer == "Spain"
+
+
+def test_parse_catalogue_index_empty_result():
+    page = numista_web.parse_catalogue_index("<div>0 results found.</div>")
+
+    assert page.total == 0 and page.items == []
+
+
+def test_catalogue_url_uses_configured_filters():
+    filters = config_module.ExploreCatalogueConfig(
+        collectible_type=7,
+        year="1900-1950",
+        composition_id=3,
+        diameter_mm="25-30",
+        per_page=100,
+    )
+    url = numista_web.catalogue_url(filters, page=2)
+
+    assert "st=7" in url and "a=1900-1950" in url
+    assert "m=3" in url and "t=25-30" in url
+    assert "p=2" in url and "q=100" in url
+
+
 # ---------------------------------------------------------------- 落库（桩掉取页）
 
 

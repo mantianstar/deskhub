@@ -1,12 +1,15 @@
-"""Numista 类型页（网页表格）—— 各品相估值 + Frequency（spec §14.13 / plan §18.13.2）。
+"""Numista 网页取数 —— 类型页（估值 + Frequency）与目录筛选列表页（候选池）。
 
-为什么走页面而不是接口：`GET /types/{id}/issues` 只有
+类型页部分（spec §14.13 / plan §18.13.2）：为什么走页面而不是接口：`GET /types/{id}/issues` 只有
 `id / year / gregorian_year / mintage / comment / mint_letter / references / marks` ——
 **既没有**各品相估值，**也没有** Frequency。这两列只出现在类型页的表格里
 （`en.numista.com/{type_id}`）。Frequency 的口径（页面原文）：
 
     Frequencies show the percentage of Numista users who own each year or variety
     among all the users who own this coin.
+
+目录列表页部分（spec §14.17.4）：`/catalogue/index.php` 支持年份 / 材质 / 直径等服务端筛选，
+列表里直接带材质、重量、直径，比接口 `?q=` 的模糊搜索更准，也不用逐条取详情再过滤。
 
 站点事实（2026-10-14 实测，反直觉处必须记下）：
 
@@ -32,19 +35,23 @@
 
 from __future__ import annotations
 
+import html as htmllib
 import logging
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlencode
 
 from app import repository
-from app.config import PROJECT_ROOT, Config
+from app.config import PROJECT_ROOT, Config, ExploreCatalogueConfig
 from app.models import CoinIssueValues
 
 logger = logging.getLogger(__name__)
 
 # 类型页（系列详情页）；也是落库时 `series_numista_id` 的来源
 TYPE_PAGE_URL = "https://en.numista.com/{type_id}"
+# 目录筛选列表页（候选池）：筛选参数见 `ExploreCatalogueConfig`
+CATALOGUE_INDEX_URL = "https://en.numista.com/catalogue/index.php"
 
 # 页面列名（`data-grade` 是大写，存库列是 `value_*` 小写）
 GRADES = ("G", "VG", "F", "VF", "XF", "AU", "UNC")
@@ -66,9 +73,22 @@ _CHALLENGE = "challenge-platform"
 # 数字里可能夹的空白（含 &nbsp; 与窄空格）与千分位
 _BLANKS = str.maketrans("", "", " \xa0\u202f\u2009,")
 
+# 目录列表页标记（2026-10-18 实测；改版时改这一处）
+_CAT_ITEM = '<div class="resultat_recherche">'
+_CAT_CONTAINER = "div.catalogue_search_results"
+_CAT_TOTAL = re.compile(r"([\d,]+)\s+results found")
+_CAT_ANCHOR = re.compile(r'<strong><a href="/(\d+)"\s*>(.*?)</a></strong>', re.S)
+_CAT_GROUP = re.compile(r"<header[^>]*>\s*<h2[^>]*>(.*?)</h2>", re.S)
+_CAT_SPEC = re.compile(r"<em>.*?</em>.*?<br>\s*(.*?)<br>", re.S)
+_CAT_REF = re.compile(r"<br>\s*([^<]*#[^<]*)</div>", re.S)
+_CAT_OBVERSE = re.compile(r'class="photo_avers".*?<img src="([^"]+)"', re.S)
+_CAT_REVERSE = re.compile(r'class="photo_revers".*?<img src="([^"]+)"', re.S)
+_CAT_WEIGHT = re.compile(r"([\d.]+)\s*g\b")
+_CAT_SIZE = re.compile(r"⌀\s*([\d.]+)\s*mm")
+
 
 class NumistaPageError(RuntimeError):
-    """类型页取数异常：挂不上 CDP 浏览器 / 卡在 Cloudflare / 结构变了。"""
+    """网页取数异常：挂不上 CDP 浏览器 / 卡在 Cloudflare / 结构变了。"""
 
 
 @dataclass(frozen=True)
@@ -93,6 +113,32 @@ class TypePageInfo:
 
     currency: str | None
     rows: list[IssueValueInfo]
+
+
+@dataclass(frozen=True)
+class CatalogueItem:
+    """目录列表页的一条结果（筛选已由服务端完成，这里只做解析）。"""
+
+    numista_id: int
+    title: str | None
+    issuer: str | None
+    year_text: str | None
+    min_year: int | None
+    max_year: int | None
+    composition: str | None
+    weight_g: float | None
+    size_mm: float | None
+    catalog_no: str | None
+    obverse_picture: str | None
+    reverse_picture: str | None
+
+
+@dataclass(frozen=True)
+class CataloguePage:
+    """一页（或合并后）的目录结果：总条数 + 每条。"""
+
+    total: int
+    items: list[CatalogueItem]
 
 
 # ---------------------------------------------------------------- 纯函数：解析
@@ -155,6 +201,108 @@ def parse_type_page(html: str) -> TypePageInfo:
     return TypePageInfo(
         currency=currency_match.group(1).upper() if currency_match else None, rows=rows
     )
+
+
+# ---------------------------------------------------------------- 纯函数：目录列表页
+
+
+def _plain_text(fragment: str) -> str:
+    """HTML 片段 → 纯文本（去标签、解实体、压空白）。"""
+    fragment = re.sub(r"<!--.*?-->", " ", fragment, flags=re.S)
+    fragment = re.sub(r"<br\s*/?>", "\n", fragment, flags=re.I)
+    fragment = re.sub(r"<[^>]+>", " ", fragment)
+    return re.sub(r"\s+", " ", htmllib.unescape(fragment)).strip()
+
+
+def catalogue_url(filters: ExploreCatalogueConfig, *, page: int = 1) -> str:
+    """按筛选配置拼目录列表页 URL。
+
+    参数名就是站点筛选表单里的 `name`：`st` 类别、`a` 年份、`m` 材质、`t` 直径、
+    `p` 页码、`q` 每页条数；其余保持空串，与站点生成的 URL 一致。
+    """
+    params = {
+        "r": "",
+        "st": filters.collectible_type,
+        "cat": "y",
+        "im1": "",
+        "im2": "",
+        "ru": "",
+        "ie": "",
+        "no": "",
+        "v": "",
+        "cu": "",
+        "a": filters.year,
+        "dg": "",
+        "i": "",
+        "b": "",
+        "m": filters.composition_id,
+        "f": "",
+        "t": filters.diameter_mm,
+        "t2": "",
+        "w": "",
+        "mt": "",
+        "u": "",
+        "c": "",
+        "wi": "",
+        "sw": "",
+        "p": page,
+        "q": filters.per_page,
+    }
+    return f"{CATALOGUE_INDEX_URL}?{urlencode(params)}"
+
+
+def parse_catalogue_index(html: str) -> CataloguePage:
+    """目录列表页 HTML → （总条数, 每条）。
+
+    发行方在分组头 `<header><h2>South Africa • Pound (1825-1961)</h2>` 里，
+    单条结果自身没有国家字段，所以要按页面顺序继承最近一次分组头。
+    """
+    total_match = _CAT_TOTAL.search(html)
+    total = int(total_match.group(1).replace(",", "")) if total_match else 0
+
+    parts = re.split(f"({re.escape(_CAT_ITEM)})", html)
+    items: list[CatalogueItem] = []
+    issuer: str | None = None
+    for index, part in enumerate(parts):
+        headers = list(_CAT_GROUP.finditer(part))
+        if headers:
+            group = _plain_text(headers[-1].group(1))
+            issuer = group.split("•")[0].strip() or None
+        if part != _CAT_ITEM or index + 1 >= len(parts):
+            continue
+
+        chunk = parts[index + 1]
+        anchor = _CAT_ANCHOR.search(chunk)
+        if anchor is None:  # 结构变了 → 跳过这一条，不臆造
+            continue
+        head, _, tail = anchor.group(2).partition("<br>")
+        year_text = _plain_text(tail)
+        years = [int(value) for value in re.findall(r"\d{3,4}", year_text)]
+        spec_match = _CAT_SPEC.search(chunk)
+        spec = _plain_text(spec_match.group(1)) if spec_match else ""
+        weight_match = _CAT_WEIGHT.search(spec)
+        size_match = _CAT_SIZE.search(spec)
+        ref_match = _CAT_REF.search(chunk)
+        obverse = _CAT_OBVERSE.search(chunk)
+        reverse = _CAT_REVERSE.search(chunk)
+
+        items.append(
+            CatalogueItem(
+                numista_id=int(anchor.group(1)),
+                title=_plain_text(head) or None,
+                issuer=issuer,
+                year_text=year_text or None,
+                min_year=years[0] if years else None,
+                max_year=years[-1] if years else None,
+                composition=(spec.split("•")[0].strip() or None) if spec else None,
+                weight_g=_number(weight_match.group(1)) if weight_match else None,
+                size_mm=_number(size_match.group(1)) if size_match else None,
+                catalog_no=_plain_text(ref_match.group(1)) if ref_match else None,
+                obverse_picture=obverse.group(1) if obverse else None,
+                reverse_picture=reverse.group(1) if reverse else None,
+            )
+        )
+    return CataloguePage(total=total, items=items)
 
 
 # ---------------------------------------------------------------- 浏览器取页（CDP）
@@ -225,6 +373,83 @@ async def fetch_type_page(
             return await _wait_for_table(page, timeout_seconds)
         finally:
             await page.close()
+
+
+async def _wait_for_catalogue(page, timeout_seconds: int) -> str:
+    """等目录结果容器出现；`0 results found` 也算成功（空结果不是错误）。"""
+    try:
+        await page.wait_for_selector(_CAT_CONTAINER, timeout=timeout_seconds * 1000)
+    except Exception:
+        pass
+
+    try:
+        html = await page.content()
+    except Exception:
+        html = ""
+    if "results found" in html:
+        return html
+    hint = (
+        "；页面停在 Cloudflare 校验页（换一个「非自动化」启动的 Chrome 再试）"
+        if _CHALLENGE in html
+        else ""
+    )
+    raise NumistaPageError(f"等目录页结果超时 {timeout_seconds}s{hint}")
+
+
+async def fetch_catalogue_page(
+    config: Config, *, page_no: int = 1, cdp_url: str | None = None
+) -> str:
+    """按配置里的筛选条件打开目录列表页，返回渲染后的 HTML。
+
+    同样只走 `connect_over_cdp`（见 `fetch_type_page` 的站点事实）。
+    """
+    try:
+        from playwright.async_api import async_playwright
+    except ImportError as exc:  # pragma: no cover - 只在没装依赖时走到
+        raise NumistaPageError(
+            "取 Numista 页面需要 playwright（pip install -r requirements.txt）"
+        ) from exc
+
+    url = catalogue_url(config.coins.collection.explore_catalogue, page=page_no)
+    timeout_seconds = config.coins.numista.timeout_seconds
+    async with async_playwright() as playwright:
+        try:
+            browser = await playwright.chromium.connect_over_cdp(
+                cdp_url or config.coins.numista.cdp_url
+            )
+        except Exception as exc:
+            raise NumistaPageError(
+                _cdp_hint(cdp_url or config.coins.numista.cdp_url, exc)
+            ) from exc
+
+        contexts = browser.contexts
+        context = contexts[0] if contexts else await browser.new_context()
+        page = await context.new_page()
+        try:
+            await page.goto(url, wait_until="domcontentloaded", timeout=timeout_seconds * 1000)
+            return await _wait_for_catalogue(page, timeout_seconds)
+        finally:
+            await page.close()
+
+
+async def load_catalogue_index(
+    config: Config, *, cdp_url: str | None = None
+) -> CataloguePage:
+    """按配置筛选并翻页取完目录结果（每页条数见 `explore_catalogue.per_page`）。"""
+    items: list[CatalogueItem] = []
+    total = 0
+    page_no = 1
+    while page_no <= 20:  # 防止筛选条件被改得过宽时无限翻页
+        parsed = parse_catalogue_index(
+            await fetch_catalogue_page(config, page_no=page_no, cdp_url=cdp_url)
+        )
+        total = parsed.total
+        items.extend(parsed.items)
+        if not parsed.items or len(items) >= total:
+            break
+        page_no += 1
+    logger.info("Numista 目录：筛选后 %d 条，取到 %d 条", total, len(items))
+    return CataloguePage(total=total, items=items)
 
 
 # ---------------------------------------------------------------- 采集编排（落库）
@@ -352,23 +577,32 @@ async def _fetch_bytes_via_cdp(
 async def download_series_images(
     config: Config, *, numista_id: int, cdp_url: str | None = None
 ) -> dict[str, Path]:
-    """把某系列的正 / 反图下载到 `data/coin_images/`，返回 `{side: 本地路径}`。
+    """把某系列（或候选）的正 / 反图下载到 `data/coin_images/`，返回 `{side: 本地路径}`。
 
-    需要本机开着带调试端口的 Chrome（与 `collect_issue_values` 同一条链路），
-    所以**不进每日调度**，也不在网页上触发 —— 手工按需跑 `coins-images`。
+    需要本机开着带调试端口的 Chrome（与 `collect_issue_values` 同一条链路）。
+    本地没有系列时回退到候选池保存的图片地址（候选池扫描会自动调用）。
     """
     series = repository.get_coin_series(numista_id)
-    if series is None:
-        raise NumistaPageError(
-            f"本地没有系列 {numista_id}；先用 coins-series / coins-issues 把它采回来"
+    if series is not None:
+        pictures = (series.obverse_picture, series.reverse_picture)
+    else:
+        candidate = repository.get_coin_explore_candidate(numista_id)
+        if candidate is None:
+            raise NumistaPageError(
+                f"本地没有系列或候选 {numista_id}；"
+                "先用 coins-series / coins-issues / coins-explore 把它采回来"
+            )
+        pictures = (
+            candidate.payload.get("obverse_picture"),
+            candidate.payload.get("reverse_picture"),
         )
     wanted = {
         side: url
-        for side, url in (("obverse", series.obverse_picture), ("reverse", series.reverse_picture))
+        for side, url in (("obverse", pictures[0]), ("reverse", pictures[1]))
         if url
     }
     if not wanted:
-        raise NumistaPageError(f"系列 {numista_id} 没有图片地址，无法下载")
+        raise NumistaPageError(f"{numista_id} 没有图片地址，无法下载")
 
     payloads = await _fetch_bytes_via_cdp(
         cdp_url or config.coins.numista.cdp_url,
@@ -387,5 +621,7 @@ async def download_series_images(
                 stale.unlink(missing_ok=True)
         path.write_bytes(body)
         saved[side] = path
-    logger.info("Numista 图片：系列 %s 缓存 %s", numista_id, sorted(p.name for p in saved.values()))
+    logger.info(
+        "Numista 图片：系列/候选 %s 缓存 %s", numista_id, sorted(p.name for p in saved.values())
+    )
     return saved

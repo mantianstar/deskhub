@@ -18,6 +18,7 @@ from datetime import date
 from app import config, db, fetcher, llm, logging_setup, models, pipeline, repository, scorer
 from app.coins import numista as coins_numista
 from app.coins import numista_web as coins_numista_web
+from app.coins import explore as coins_explore
 from app.coins import pipeline as coins_pipeline
 from app.coins import profile as coins_profile
 from app.coins import translate_llm as coins_translate_llm
@@ -423,6 +424,33 @@ def cmd_coins_images(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_coins_explore(args: argparse.Namespace) -> int:
+    """扫描外部铜币目录，写入探索候选池（候选状态）。"""
+    cfg = _bootstrap()
+    result = asyncio.run(coins_explore.scan_candidates(cfg, limit=args.limit))
+    print(
+        f"候选池扫描完成：目录 {result.listed} 条 · 取详情 {result.details} 个 · "
+        f"入池 {result.stored} 个"
+    )
+    candidates = repository.list_coin_explore_candidates()
+    rows = [
+        (
+            str(item.numista_id),
+            item.seed_name or "",
+            f"{item.size_diff:.2f}" if item.size_diff is not None else "",
+            str(item.payload_cn.get("title") or ""),
+            str(item.payload_cn.get("composition") or ""),
+            str(item.payload_cn.get("size_mm") or ""),
+        )
+        for item in candidates
+    ]
+    if rows:
+        _print_table(("系列号", "来源种子", "尺寸差", "名称", "材质", "尺寸"), rows)
+    print(f"\n候选池现有 {len(candidates)} 条（忽略的不计）")
+    _print_numista_quota(cfg)
+    return 0
+
+
 def cmd_coins_translate(args: argparse.Namespace) -> int:
     """用大模型重翻已入库系列的描述 / 备注 / 名称（读英文表 → 覆盖中文表）。
 
@@ -573,6 +601,14 @@ def _build_parser() -> argparse.ArgumentParser:
         "--cdp", default=None, help="CDP 地址，默认取 config 的 coins.numista.cdp_url"
     )
     coins_images.set_defaults(func=cmd_coins_images)
+
+    coins_explore_parser = subparsers.add_parser(
+        "coins-explore", help="扫描外部铜币目录，写入探索候选池（默认候选状态）"
+    )
+    coins_explore_parser.add_argument(
+        "--limit", type=int, default=None, help="单轮最多取几个候选的详情（默认取配置）"
+    )
+    coins_explore_parser.set_defaults(func=cmd_coins_explore)
 
     coins_translate = subparsers.add_parser(
         "coins-translate",

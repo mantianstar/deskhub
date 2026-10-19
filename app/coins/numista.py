@@ -468,14 +468,28 @@ class NumistaClient:
         repository.record_api_call(PROVIDER)
         return data
 
-    async def search_type_ids(self, *, issuer: str, year: int, denomination: str) -> list[int]:
+    async def search_type_ids(
+        self,
+        *,
+        issuer: str | None = None,
+        year: int | None = None,
+        denomination: str | None = None,
+    ) -> list[int]:
         """搜索系列号。
 
         实测参数是 `q` + `issuer` + `year`（`min_year`/`max_year` 会被忽略）。
+        `issuer` / `year` 可省略：候选池扫描只按面值关键词全局搜。
         """
-        data = await self._get(
-            "/types", {"q": denomination, "issuer": issuer, "year": year}
-        )
+        params = {
+            key: value
+            for key, value in (
+                ("q", denomination),
+                ("issuer", issuer),
+                ("year", year),
+            )
+            if value is not None
+        }
+        data = await self._get("/types", params)
         types = data.get("types") if isinstance(data, dict) else None
         return [
             int(item["id"])
@@ -595,6 +609,10 @@ async def _cn_series_info(
         except llm.LLMError as exc:
             logger.warning("系列 %s 描述/备注大模型翻译失败，回退内置词表：%s", info.numista_id, exc)
         else:
+            # 国家 / 执政者 / 面值优先用词表：词表已译出中文时忽略大模型（避免「8 Doubles → 8 双倍」这类过度意译）
+            for field in ("issuer", "ruler", "denomination"):
+                if getattr(cn, field) != getattr(info, field):
+                    texts.pop(field, None)
             cn = replace(cn, **texts)
     return translate.strip_html_texts(cn)
 

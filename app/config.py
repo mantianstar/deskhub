@@ -133,6 +133,22 @@ class CoinNumistaConfig:
 
 
 @dataclass(frozen=True)
+class ExploreCatalogueConfig:
+    """探索候选池的目录筛选（Numista catalogue/index.php 的查询参数）。
+
+    这些值就是实际拼进 URL 的参数，后续换筛选条件只改 `config.yaml` 里的对应项：
+    `collectible_type` → `st`（1 = Standard circulation coins）、`year` → `a`、
+    `composition_id` → `m`（5 = Bronze）、`diameter_mm` → `t`、`per_page` → `q`。
+    """
+
+    collectible_type: int = 1
+    year: str = "1800-2026"
+    composition_id: int = 5
+    diameter_mm: str = "28-33"
+    per_page: int = 200
+
+
+@dataclass(frozen=True)
 class CoinCollectionConfig:
     """收藏画像与三层推荐的口径（spec §14.17）。"""
 
@@ -144,6 +160,10 @@ class CoinCollectionConfig:
     top_upgrades_per_series: int = 3
     # 面值层级（跨系列相似推荐用）：同一组里的面值视为同一层级
     denomination_tiers: tuple[tuple[str, ...], ...] = ()
+    # 目录扫描（候选池）：尺寸差容差、单轮最多取几个候选详情、目录筛选参数
+    explore_size_tolerance_mm: float = 2.0
+    explore_max_details: int = 10
+    explore_catalogue: ExploreCatalogueConfig = ExploreCatalogueConfig()
 
 
 @dataclass(frozen=True)
@@ -410,6 +430,9 @@ def _parse_coins(raw: dict[str, Any]) -> CoinsConfig:
     collection = section.get("collection") or {}
     if not isinstance(collection, dict):
         raise ConfigError(f"{where}.collection：必须是对象")
+    catalogue = collection.get("explore_catalogue") or {}
+    if not isinstance(catalogue, dict):
+        raise ConfigError(f"{where}.collection.explore_catalogue：必须是对象")
     raw_tiers = collection.get("denomination_tiers") or []
     if not isinstance(raw_tiers, list) or any(not isinstance(tier, list) for tier in raw_tiers):
         raise ConfigError(f"{where}.collection.denomination_tiers：必须是二维列表")
@@ -470,6 +493,41 @@ def _parse_coins(raw: dict[str, Any]) -> CoinsConfig:
                 collection, "top_upgrades_per_series", 3, f"{where}.collection", minimum=1
             ),
             denomination_tiers=tuple(tiers),
+            explore_size_tolerance_mm=_opt_float(
+                collection, "explore_size_tolerance_mm", 2.0, f"{where}.collection"
+            ),
+            explore_max_details=_opt_int(
+                collection, "explore_max_details", 10, f"{where}.collection", minimum=1
+            ),
+            explore_catalogue=ExploreCatalogueConfig(
+                collectible_type=_opt_int(
+                    catalogue,
+                    "collectible_type",
+                    1,
+                    f"{where}.collection.explore_catalogue",
+                    minimum=1,
+                ),
+                year=_opt_str(
+                    catalogue, "year", "1800-2026", f"{where}.collection.explore_catalogue"
+                ),
+                composition_id=_opt_int(
+                    catalogue,
+                    "composition_id",
+                    5,
+                    f"{where}.collection.explore_catalogue",
+                    minimum=1,
+                ),
+                diameter_mm=_opt_str(
+                    catalogue, "diameter_mm", "28-33", f"{where}.collection.explore_catalogue"
+                ),
+                per_page=_opt_int(
+                    catalogue,
+                    "per_page",
+                    200,
+                    f"{where}.collection.explore_catalogue",
+                    minimum=1,
+                ),
+            ),
         ),
     )
 

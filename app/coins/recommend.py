@@ -349,10 +349,14 @@ def build_recommendations(
                 seen.add(key)
 
     candidates.sort(key=lambda entry: (entry[0], entry[1], entry[2].collection.name, entry[2].year))
+    # 补位只看第三层新增条数：前两层可能已有很多推荐项，但匹配条数不足时仍需要 P3 兜底
+    base_count = search_results if search_results is not None else len(items)
+    added = 0
     for _, _, item in candidates:
-        if len(items) >= min_results:
+        if base_count + added >= min_results:
             break
         items.append(item)
+        added += 1
     return items
 
 

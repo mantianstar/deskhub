@@ -664,11 +664,12 @@ CREATE TABLE IF NOT EXISTS coin_collection_series_members (
 
 | 文件 | 职责 |
 |---|---|
-| `app/coins/collection.py` | 纯函数 + 组装：尺寸分档、Bronze/Copper 过滤、精制过滤、年份规格聚合、已有/缺失/升级年份、未映射系列自动成组 |
+| `app/coins/collection.py` | 纯函数 + 组装：尺寸分档、Bronze/Copper 过滤、精制过滤、年份规格聚合、已有/缺失/升级年份 |
+| `app/coins/explore.py` | 探索候选池：种子提取、Numista 目录扫描、材质 / 尺寸过滤、候选 CRUD 适配、采纳落库、P3 画像 |
 | `app/coins/recommend.py` | 三层推荐排序、日本年号翻译、面值写法变体、当日拍品匹配、`rematch_all` |
-| `app/repository.py` | 收藏系列 / 成员 CRUD、`list_coin_today_lots`（按 `coin_sessions.auction_at` 取当日） |
-| `app/routers/coins.py` | `/coins/collection`、`/coins/collections` 及映射维护 POST |
-| `app/config.py` | `coins.collection`：`min_results` / `rarity_floor` / `top_upgrades_per_series` / `denomination_tiers` |
+| `app/repository.py` | 收藏系列 / 成员 CRUD、候选池 CRUD、`list_coin_today_lots`（按 `coin_sessions.auction_at` 取当日） |
+| `app/routers/coins.py` | `/coins/collection`、`/coins/collections`、`/coins/explore` 及映射 / 候选状态 POST |
+| `app/config.py` | `coins.collection`：`min_results` / `rarity_floor` / `top_upgrades_per_series` / `denomination_tiers` / `explore_*` |
 
 **画像算法**
 
@@ -685,7 +686,7 @@ CREATE TABLE IF NOT EXISTS coin_collection_series_members (
   `scarcity_weight = 1 / max(rarity, rarity_floor)`，无 rarity 时 1.0。
 - P2：`XF/VF × 1/max(rarity, floor)`，每系列取前 `top_upgrades_per_series`。
 - P3：仅当前两层与当日拍品的**匹配条数** < `min_results`（没有当日拍品时按推荐项数兜底）；
-  候选来自 `load_explore_profiles()`（未映射青铜/铜系列按同国家 + 同执政者 + 同面值 + 尺寸差 ≤ 2mm 自动成组），
+  候选来自 `load_explore_profiles()` → `explore.load_candidate_profiles()`（候选池状态为候选 / 采纳，忽略除外），
   取候选的缺失年份；按尺寸差升序、`-rarity` 升序。
 - 匹配：拍品标题需同时命中 `country`、任一年份写法、任一面值写法；日本年号由
   `ruler` / 系列名 / `gregorian_year` 定位，输出 `明治6年` / `明治六年`。
@@ -702,6 +703,9 @@ CREATE TABLE IF NOT EXISTS coin_collection_series_members (
 - `/coins/collection`：优先级规则说明 + 三层推荐合并表（一个年份一行，含推荐原因 / 今日命中，可按系列 / 推荐原因 / 是否命中筛选，是否命中默认「已命中」）+ 收藏系列画像卡片。
 - `/coins/collections`：新建收藏系列表单 + 每个系列的成员表 / 加入 series / 删除系列；
   series 候选只列 Bronze/Copper，按国家 + 执政者 + 面值筛选（默认取收藏系列自身的值）。
+- `/coins/explore`：候选池列表（Numista ID / 正反图 / 国家 / 执政者 / 面值 / 年份 / 规格 / 核实时间 / 状态），
+  可按国家 + 执政者 + 面值逐级筛选（下拉只列当前范围内的值）；正反图点击用灯箱放大；
+  每行状态下拉「候选 / 采纳 / 忽略」+ 保存；采纳写 `coin_series[_cn]` 与年份，忽略后列表隐藏。
 - 子导航在 `sessions/info/manage/grades/profile.html` 补「收藏画像」「系列映射」。
 
 **测试（`tests/test_coins_collection.py`）**
@@ -715,6 +719,7 @@ CREATE TABLE IF NOT EXISTS coin_collection_series_members (
 | P1 | 首/末年位置权重 1.5；稀缺权重 1/rarity |
 | P2 | 只取 `差`；每系列最多 3 个 |
 | 年号 | `明治6年` / `明治六年` / `1873`；标题 `明治六年二钱` 能命中 |
-| P3 | 前两层不足时用未映射相似系列补齐 |
+| P3 | 前两层不足时用候选池画像补齐 |
+| 候选池 | 忽略后列表隐藏且重扫不复活；材质 / 尺寸容差过滤；采纳后信息页与采集管理页可见 |
 | 映射表 | 收藏系列 CRUD、成员增删 |
 | 页面 | 新建 → 映射 → 两个页面 200 且渲染名称/年份；推荐表按系列 / 推荐原因 / 是否命中筛选；候选默认取系列执政者、可切「全部」；空库空态 200 |

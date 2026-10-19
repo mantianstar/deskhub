@@ -229,6 +229,7 @@ def build_profile(
         missing_years=missing,
         upgrade_years=upgrade,
         year_specs=specs_by_year,
+        size_mm=size_mm,
         size_band=size_band(size_mm),
     )
 
@@ -306,80 +307,11 @@ def load_profiles() -> list[CoinCollectionProfile]:
     )
 
 
-def _cluster_by_size(series_list: list[CoinSeries], max_diff: float = 2.0) -> list[list[CoinSeries]]:
-    """按尺寸差 ≤ max_diff 聚成一组（无尺寸的单独成组）。"""
-    sized = sorted(
-        (series for series in series_list if series.size_mm is not None),
-        key=lambda series: (series.size_mm, series.numista_id),
-    )
-    unsized = [series for series in series_list if series.size_mm is None]
-    clusters: list[list[CoinSeries]] = []
-    for series in sized:
-        if clusters and series.size_mm - clusters[-1][-1].size_mm <= max_diff:
-            clusters[-1].append(series)
-        else:
-            clusters.append([series])
-    clusters.extend([series] for series in unsized)
-    return clusters
-
-
-def _explore_collection(cluster: list[CoinSeries]) -> CoinCollectionSeries:
-    ids = sorted(series.numista_id for series in cluster)
-    first = cluster[0]
-    sizes = [series.size_mm for series in cluster if series.size_mm is not None]
-    size_mm = round(statistics.median(sizes), 2) if sizes else None
-    now = repository.utcnow()
-    return CoinCollectionSeries(
-        id=None,
-        collection_key=f"explore:{ids[0]}-{ids[-1]}",
-        name=" · ".join(
-            part for part in (first.issuer, first.ruler or "-", first.denomination) if part
-        ),
-        country=first.issuer or "",
-        ruler=first.ruler,
-        denomination=first.denomination or "",
-        size_mm=size_mm,
-        size_band=size_band(size_mm),
-        created_at=now,
-        updated_at=now,
-    )
-
-
 def load_explore_profiles() -> list[CoinCollectionProfile]:
-    """未被手工映射的青铜/铜系列：按「同国家 + 同执政者 + 同面值 + 尺寸差 ≤ 2mm」自动成组。
+    """第三层「跨系列相似推荐」的探索画像：来自候选池（候选 + 采纳，忽略除外）。
 
-    只用于第三层「跨系列相似推荐」——这些系列不在收藏画像里，但可以作为探索目标。
+    候选池由 `app/coins/explore.py` 扫描外部铜币目录产生（spec §14.17.6）。
     """
-    mapped = {member.numista_series_id for member in repository.list_coin_collection_members()}
-    series_cn = [series for series in repository.list_coin_series(cn=True)]
-    candidates = [
-        series
-        for series in series_cn
-        if series.numista_id not in mapped and is_bronze_or_copper(series.composition)
-    ]
-    if not candidates:
-        return []
+    from app.coins import explore
 
-    grouped: dict[tuple[str, str, str], list[CoinSeries]] = defaultdict(list)
-    for series in candidates:
-        grouped[
-            (series.issuer or "", series.ruler or "", series.denomination or "")
-        ].append(series)
-
-    issues_by_series, values_by_series = _load_issue_data(candidates)
-    orders = repository.list_coin_orders()
-    grades = repository.list_coin_purchase_grades()
-    profiles: list[CoinCollectionProfile] = []
-    for group in grouped.values():
-        for cluster in _cluster_by_size(group):
-            profile = build_profile(
-                _explore_collection(cluster),
-                cluster,
-                issues_by_series=issues_by_series,
-                values_by_series=values_by_series,
-                orders=orders,
-                grades=grades,
-            )
-            if profile.years:
-                profiles.append(profile)
-    return profiles
+    return explore.load_candidate_profiles()

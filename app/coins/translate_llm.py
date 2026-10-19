@@ -3,7 +3,8 @@
 分工（两套并存，各管一段）：
 
 - **枚举类字段**（大类 / 形状 / 材质 / 币边 / 国家 / 执政者 / 面值 / 造币厂）→ 内置词表
-  （`app/coins/translate.py`）——一次性映射、离线精确、零成本，也是采集时「按面值 / 材质过滤」的依据。
+  （`app/coins/translate.py`）——一次性映射、离线精确、零成本，也是采集时「按面值 / 材质过滤」的依据；
+  词表没命中的国家 / 执政者 / 面值也会交大模型兜底（词表已译出时以词表为准）。
 - **自由长文本**（系列名称 `title`、正/背面描述、系列备注 `comments`、单版备注 `comment`）→ **大模型翻译** ——
   词表只能做术语替换，长句会中英混排（如 `Melbourne & 悉尼 Mints - Dot below bottom 卷轴`），读者体验差。
 
@@ -33,11 +34,22 @@ from app.models import CoinSeries
 logger = logging.getLogger(__name__)
 
 # 交给大模型的字段（其余字段仍走词表）
-SERIES_TEXT_FIELDS = ("title", "obverse_desc", "reverse_desc", "comments")
+SERIES_TEXT_FIELDS = (
+    "title",
+    "issuer",
+    "ruler",
+    "denomination",
+    "obverse_desc",
+    "reverse_desc",
+    "comments",
+)
 ISSUE_TEXT_FIELDS = ("comment",)
 
 _FIELD_LABELS = {
     "title": "系列名称",
+    "issuer": "国家 / 发行方",
+    "ruler": "执政者",
+    "denomination": "面值",
     "obverse_desc": "正面描述",
     "reverse_desc": "背面描述",
     "comments": "系列备注",

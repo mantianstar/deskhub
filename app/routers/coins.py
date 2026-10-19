@@ -17,6 +17,7 @@ from starlette.responses import Response
 
 from app import config, repository, textmatch
 from app.coins import collection as coins_collection
+from app.coins import explore as coins_explore
 from app.coins import grades as coins_grades
 from app.coins import numista as coins_numista
 from app.coins import numista_web as coins_numista_web
@@ -26,6 +27,8 @@ from app.coins.numista import ISSUER_CODES, NumistaError
 from app.coins.numista_web import NumistaPageError
 from app.models import (
     COIN_DIMENSION_LABELS,
+    COIN_EXPLORE_STATUS_LABELS,
+    COIN_EXPLORE_STATUSES,
     COIN_PROFILE_DIMENSIONS,
     COIN_PURCHASE_GRADES,
     COIN_SESSION_STATUS_LABELS,
@@ -325,19 +328,36 @@ def info_page(
 
 @router.get("/coins/series/{numista_id}")
 def series_page(request: Request, numista_id: int) -> Response:
-    """系列详情：系列信息 + 各年份信息表 + 各年份估值表（估值只读展示）。"""
+    """系列详情：系列信息 + 各年份信息表 + 各年份估值表（估值只读展示）。
+
+    尚未采纳的候选（只存在于候选池）也走这里：用候选保存的详情渲染，避免跳去 Numista 站点。
+    """
     series = repository.get_coin_series(numista_id, cn=True)
-    if series is None:
-        return templates.TemplateResponse(
-            request,
-            "coins/series.html",
-            {"request": request, "page_title": "系列不存在", "series": None},
-            status_code=404,
-        )
-    issues = repository.list_coin_issues(series.id, cn=True)
-    values = {v.numista_id: v for v in repository.list_coin_issue_values(numista_id)}
-    rows = [(issue, values.get(issue.numista_id)) for issue in issues]
-    currency = next((v.currency for v in values.values() if v.currency), None)
+    if series is not None:
+        issues = repository.list_coin_issues(series.id, cn=True)
+        values = {v.numista_id: v for v in repository.list_coin_issue_values(numista_id)}
+        rows = [(issue, values.get(issue.numista_id)) for issue in issues]
+        currency = next((v.currency for v in values.values() if v.currency), None)
+    else:
+        candidate = repository.get_coin_explore_candidate(numista_id)
+        if candidate is None:
+            return templates.TemplateResponse(
+                request,
+                "coins/series.html",
+                {"request": request, "page_title": "系列不存在", "series": None},
+                status_code=404,
+            )
+        now = repository.utcnow()
+        series = coins_explore._series_from_payload(candidate.payload_cn, now)
+        issues = [
+            coins_explore._issue_from_payload(item, 0, now)
+            for item in candidate.issues
+            if item.get("numista_id") is not None
+        ]
+        rows = [(issue, None) for issue in issues]
+        values = {}
+        currency = None
+
     return templates.TemplateResponse(
         request,
         "coins/series.html",
@@ -772,6 +792,104 @@ def _member_filters(
     }
 
 
+def _explore_options(rows: list[dict[str, object]], key: str) -> list[str]:
+    """筛选下拉的取值：去掉空值、按中文原样去重排序。"""
+    values = {
+        str(row[key]).strip() for row in rows if row.get(key) and str(row[key]).strip()
+    }
+    return sorted(values)
+
+
+@router.get("/coins/explore")
+def explore_page(
+    request: Request,
+    country: str = "",
+    ruler: str = "",
+    denomination: str = "",
+) -> Response:
+    """探索候选池：目录扫描得到的外部铜币系列（忽略的不再显示），可按国家 / 执政者 / 面值筛选。"""
+    rows = []
+    for candidate in repository.list_coin_explore_candidates():
+        info = candidate.payload_cn
+        rows.append(
+            {
+                "numista_id": candidate.numista_id,
+                "verified_at": candidate.verified_at,
+                "issuer": info.get("issuer"),
+                "ruler": info.get("ruler"),
+                "denomination": info.get("denomination"),
+                "min_year": info.get("min_year"),
+                "max_year": info.get("max_year"),
+                "composition": info.get("composition"),
+                "shape": info.get("shape"),
+                "size_mm": info.get("size_mm"),
+                "weight_g": info.get("weight_g"),
+                "status": candidate.status,
+                "obverse_picture": info.get("obverse_picture"),
+                "reverse_picture": info.get("reverse_picture"),
+                # Numista 图不允许跨站引用：只有本地缓存过的才直接 <img>
+                "has_obverse_image": coins_numista_web.cached_image(
+                    candidate.numista_id, "obverse"
+                )
+                is not None,
+                "has_reverse_image": coins_numista_web.cached_image(
+                    candidate.numista_id, "reverse"
+                )
+                is not None,
+            }
+        )
+
+    total = len(rows)
+    countries = _explore_options(rows, "issuer")
+    selected_country = country if country in countries else ""
+    in_country = [row for row in rows if not selected_country or row["issuer"] == selected_country]
+    # 下拉逐级收窄：选定国家后只列该国的执政者，再按执政者收窄面值
+    rulers = _explore_options(in_country, "ruler")
+    selected_ruler = ruler if ruler in rulers else ""
+    in_scope = [row for row in in_country if not selected_ruler or row["ruler"] == selected_ruler]
+    denominations = _explore_options(in_scope, "denomination")
+    selected_denomination = denomination if denomination in denominations else ""
+    candidates = [
+        row
+        for row in in_scope
+        if not selected_denomination or row["denomination"] == selected_denomination
+    ]
+    filters_active = bool(selected_country or selected_ruler or selected_denomination)
+    return templates.TemplateResponse(
+        request,
+        "coins/explore.html",
+        {
+            "request": request,
+            "page_title": "探索候选池",
+            "candidates": candidates,
+            "total": total,
+            "countries": countries,
+            "country": selected_country,
+            "rulers": rulers,
+            "ruler": selected_ruler,
+            "denominations": denominations,
+            "denomination": selected_denomination,
+            "filters_active": filters_active,
+            "statuses": COIN_EXPLORE_STATUSES,
+            "status_labels": COIN_EXPLORE_STATUS_LABELS,
+        },
+    )
+
+
+@router.post("/coins/explore/status")
+def update_explore_status(
+    numista_id: int = Form(...), status: str = Form(...)
+) -> Response:
+    """保存候选状态；采纳时同时写入本地系列表（信息页 / 采集管理页可见）。"""
+    if status not in COIN_EXPLORE_STATUSES:
+        return _redirect("/coins/explore")
+    if status == "adopted":
+        coins_explore.adopt_candidate(numista_id)
+    else:
+        repository.set_coin_explore_candidate_status(numista_id, status)
+    return _redirect("/coins/explore")
+
+
 @router.get("/coins/collection")
 def collection_page(
     request: Request,
@@ -876,6 +994,7 @@ def collection_page(
             "filter_series": series,
             "filter_reason": reason,
             "filter_hit": hit,
+            "min_results": cfg.coins.collection.min_results,
             "today_lots": repository.list_coin_today_lots(cfg.app.tz),
         },
     )

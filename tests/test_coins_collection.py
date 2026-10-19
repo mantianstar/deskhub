@@ -6,15 +6,19 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 from fastapi.testclient import TestClient
 
 from app import config, db, repository
-from app.coins import collection, recommend
+from app.coins import collection, explore, recommend
+from app.coins.numista import SeriesInfo
 from app.main import app as fastapi_app
 from app.models import (
     CoinCollectionProfile,
     CoinCollectionSeries,
+    CoinExploreCandidate,
     CoinIssue,
     CoinIssueValues,
     CoinLot,
@@ -183,6 +187,7 @@ def _profile(
         missing_years=[year for year in year_list if year not in owned_list],
         upgrade_years=upgrade or [],
         year_specs=specs or {year: [CoinYearSpec(year, year, 1, 1000, 0.3, size_mm, 9.4, 10.0, 20.0, "CNY", False)] for year in year_list},
+        size_mm=size_mm,
         size_band=band,
     )
 
@@ -392,6 +397,34 @@ def test_priority_three_only_when_first_two_are_insufficient():
     # 前两层只有 1 条 → 触发第三层补到 3 条
     assert len(items) == 3
     assert any(item.priority == 3 for item in items)
+
+
+def test_priority_three_tops_up_when_items_enough_but_matches_short():
+    primary = _profile(
+        key="uk-victoria-penny",
+        years=[1860, 1861, 1862, 1863, 1864, 1865],
+        owned=[],
+        specs={
+            year: [CoinYearSpec(year, year, 1, 1000, 0.3, 31.0, 9.4, 10.0, 20.0, "CNY", False)]
+            for year in [1860, 1861, 1862, 1863, 1864, 1865]
+        },
+    )
+    similar = _profile(
+        key="uk-victoria-halfpenny",
+        denomination="半 便士",
+        size_mm=30.5,
+        years=[1880, 1881, 1882, 1883],
+        owned=[1880],
+    )
+
+    items = recommend.build_recommendations(
+        [primary], explore_profiles=[similar], search_results=0, min_results=3
+    )
+
+    # 前两层已有 6 条推荐但当日命中 0 条 → 第三层按缺口补 3 条
+    threes = [item for item in items if item.priority == 3]
+    assert len(threes) == 3
+    assert len([item for item in items if item.priority == 1]) == 6
 
 
 def test_lot_matching_handles_arabic_and_chinese_year_forms():
@@ -688,3 +721,226 @@ def test_web_fixture_uses_empty_db(web):
     """页面在空库下也要 200（没有收藏系列时给空态）。"""
     assert web.get("/coins/collection").status_code == 200
     assert web.get("/coins/collections").status_code == 200
+    assert web.get("/coins/explore").status_code == 200
+
+
+# ---------------------------------------------------------------- 探索候选池（spec §14.17.6）
+
+
+def _explore_candidate(
+    numista_id: int,
+    *,
+    composition: str = "青铜",
+    size_mm: float = 31.0,
+    years: tuple[int, ...] = (1900, 1901),
+    title: str = "法国 · 10 分",
+) -> CoinExploreCandidate:
+    now = repository.utcnow()
+    payload = {
+        "numista_id": numista_id,
+        "title": title,
+        "url": None,
+        "object_type": "标准流通币",
+        "issuer": "法国",
+        "min_year": years[0],
+        "max_year": years[-1],
+        "ruler": "第三共和国",
+        "denomination": "1 便士",
+        "size_mm": size_mm,
+        "weight_g": 10.0,
+        "thickness_mm": None,
+        "shape": "圆形",
+        "composition": composition,
+        "edge": None,
+        "obverse_desc": None,
+        "obverse_lettering": None,
+        "obverse_picture": None,
+        "reverse_desc": None,
+        "reverse_lettering": None,
+        "reverse_picture": None,
+        "catalog_no": None,
+        "comments": None,
+        "mints": [],
+    }
+    issues = [
+        {
+            "numista_id": numista_id * 100 + index,
+            "series_numista_id": numista_id,
+            "year": year,
+            "gregorian_year": year,
+            "mint": None,
+            "mint_mark": None,
+            "variety": None,
+            "comment": None,
+            "mintage": 1000,
+            "size_mm": size_mm,
+            "weight_g": 10.0,
+            "thickness_mm": None,
+            "edge": None,
+            "is_proof": False,
+            "is_essai": False,
+            "picture": None,
+            "catalog_no": None,
+        }
+        for index, year in enumerate(years)
+    ]
+    return CoinExploreCandidate(
+        id=None,
+        numista_id=numista_id,
+        seed_key="uk-victoria-penny",
+        seed_name="英国 · 维多利亚 · 1 便士",
+        size_diff=0.0,
+        status="candidate",
+        payload=payload,
+        payload_cn=payload,
+        issues=issues,
+        verified_at=now,
+        created_at=now,
+        updated_at=now,
+    )
+
+
+def test_explore_candidate_status_ignored_is_hidden_and_not_resurrected(temp_db):
+    repository.upsert_coin_explore_candidate(_explore_candidate(990001))
+    assert [item.numista_id for item in repository.list_coin_explore_candidates()] == [990001]
+
+    assert repository.set_coin_explore_candidate_status(990001, "ignored")
+    assert repository.list_coin_explore_candidates() == []
+    assert repository.list_coin_explore_candidates(include_ignored=True)[0].status == "ignored"
+
+    # 重新扫描不应把忽略过的候选复活
+    repository.upsert_coin_explore_candidate(_explore_candidate(990001))
+    assert repository.list_coin_explore_candidates() == []
+
+
+def test_build_seeds_uses_profile_size_when_collection_size_missing():
+    """映射行没填 size_mm 时，种子要用画像从成员系列算出的尺寸（否则永远 0 个种子）。"""
+    profile = _profile(size_mm=31.0)
+    profile = replace(profile, collection=replace(profile.collection, size_mm=None))
+
+    seeds = explore.build_seeds([profile])
+
+    assert [(seed.name, seed.size_mm) for seed in seeds] == [
+        ("英国 · 维多利亚 · 1 便士", 31.0)
+    ]
+
+
+def test_match_seed_requires_copper_and_size_tolerance():
+    seed = explore.ExploreSeed(key="k", name="n", query="penny", size_mm=31.0)
+    info = SeriesInfo(
+        numista_id=1,
+        title=None,
+        url=None,
+        object_type=None,
+        issuer=None,
+        min_year=None,
+        max_year=None,
+        ruler=None,
+        denomination=None,
+        size_mm=32.5,
+        weight_g=None,
+        thickness_mm=None,
+        shape=None,
+        composition="Bronze",
+        edge=None,
+        obverse_desc=None,
+        obverse_lettering=None,
+        obverse_picture=None,
+        reverse_desc=None,
+        reverse_lettering=None,
+        reverse_picture=None,
+        catalog_no=None,
+        comments=None,
+        mints=[],
+    )
+    matched = explore.match_seed(info, [seed], 2.0)
+    assert matched is not None and matched[1] == pytest.approx(1.5)
+    assert explore.match_seed(info, [seed], 1.0) is None
+    assert (
+        explore.match_seed(
+            SeriesInfo(**{**info.__dict__, "composition": "Copper-nickel"}), [seed], 5.0
+        )
+        is None
+    )
+
+
+def test_explore_profiles_feed_priority_three(temp_db):
+    repository.upsert_coin_explore_candidate(_explore_candidate(990002))
+    candidate_profiles = collection.load_explore_profiles()
+    assert len(candidate_profiles) == 1
+    assert candidate_profiles[0].missing_years == [1900, 1901]
+
+    primary = _profile(years=[1860], owned=[])
+    items = recommend.build_recommendations(
+        [primary],
+        explore_profiles=candidate_profiles,
+        search_results=0,
+        min_results=5,
+    )
+    assert any(item.priority == 3 for item in items)
+
+
+def test_explore_page_adopt_and_ignore(web):
+    repository.upsert_coin_explore_candidate(_explore_candidate(990003))
+    repository.upsert_coin_explore_candidate(
+        _explore_candidate(990004, title="法国 · 20 分")
+    )
+
+    page = web.get("/coins/explore")
+    assert page.status_code == 200
+    assert "990003" in page.text and "990004" in page.text
+    assert "来源种子" not in page.text and "系列名称" not in page.text
+    assert 'href="/coins/series/990003"' in page.text
+    assert "法国" in page.text and "第三共和国" in page.text and "1 便士" in page.text
+    assert "1900" in page.text and "1901" in page.text
+    assert "coin-status-option is-active" in page.text
+    assert "保存" in page.text
+
+    # 未采纳的候选也能在本地看详情（不跳 Numista 站点）
+    detail = web.get("/coins/series/990004")
+    assert detail.status_code == 200
+    assert "法国" in detail.text and "第三共和国" in detail.text
+
+    response = web.post(
+        "/coins/explore/status",
+        data={"numista_id": 990003, "status": "adopted"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 302
+    assert repository.get_coin_series(990003, cn=True) is not None
+    assert repository.list_coin_issues(repository.get_coin_series(990003).id)
+
+    assert "990003" in web.get("/coins/info").text
+    assert "990003" in web.get("/coins/manage").text
+
+    web.post("/coins/explore/status", data={"numista_id": 990004, "status": "ignored"})
+    page = web.get("/coins/explore")
+    assert "990004" not in page.text
+
+
+def test_explore_page_filters_by_country_ruler_denomination(web):
+    repository.upsert_coin_explore_candidate(_explore_candidate(990005))
+    uk = _explore_candidate(990006, title="英国 · 1 便士")
+    uk.payload_cn.update(issuer="英国", ruler="维多利亚", denomination="1 便士")
+    repository.upsert_coin_explore_candidate(uk)
+
+    page = web.get("/coins/explore")
+    assert "990005" in page.text and "990006" in page.text
+    assert '<option value="英国"' in page.text and '<option value="法国"' in page.text
+
+    # 选国家后，执政者下拉只剩该国的值，列表也只剩该国候选
+    page = web.get("/coins/explore", params={"country": "英国"})
+    assert "990006" in page.text and "990005" not in page.text
+    assert "第三共和国" not in page.text
+    assert '<option value="英国" selected>' in page.text
+    assert '<option value="维多利亚">' in page.text
+
+    page = web.get(
+        "/coins/explore",
+        params={"country": "英国", "ruler": "维多利亚", "denomination": "1 便士"},
+    )
+    assert "990006" in page.text and "990005" not in page.text
+    assert "重置" in page.text
+
+    page = web.get("/coins/explore", params={"country": "法国"})
+    assert "990005" in page.text and "990006" not in page.text

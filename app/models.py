@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-SCHEMA_VERSION = "9"
+SCHEMA_VERSION = "10"
 
 # 所有时间列存 UTC ISO8601 字符串（SQLite 无原生时间类型）
 DDL = """
@@ -345,6 +345,25 @@ CREATE TABLE IF NOT EXISTS coin_collection_series_members (
 );
 CREATE INDEX IF NOT EXISTS idx_coin_collection_members
   ON coin_collection_series_members(collection_id);
+
+-- 跨系列探索候选池（spec §14.17.6）：扫描 Numista 目录得到的外部铜币系列。
+-- 采纳前只存在这张表里，不写 coin_series，避免污染信息页 / 采集管理页。
+CREATE TABLE IF NOT EXISTS coin_explore_candidates (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  numista_id  INTEGER NOT NULL UNIQUE,     -- Numista 系列号
+  seed_key    TEXT,                        -- 来源种子：收藏系列的 collection_key
+  seed_name   TEXT,                        -- 来源种子展示名（国家 · 执政者 · 面值）
+  size_diff   REAL,                        -- 与来源种子的尺寸差（mm）
+  status      TEXT    NOT NULL,            -- candidate / adopted / ignored
+  payload     TEXT    NOT NULL,            -- SeriesInfo JSON（英文）
+  payload_cn  TEXT    NOT NULL,            -- SeriesInfo JSON（中文，页面与采纳用）
+  issues      TEXT    NOT NULL,            -- IssueInfo JSON 数组（P3 缺失年份用）
+  verified_at TEXT    NOT NULL,
+  created_at  TEXT    NOT NULL,
+  updated_at  TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_coin_explore_status
+  ON coin_explore_candidates(status);
 
 -- ============ 功能开关（管理页 /control）============
 -- 控制「各类任务是否自动执行」：关掉后每天 08:00 的定时任务不再跑它。
@@ -688,6 +707,32 @@ class CoinIssueValues:
     fetched_at: str
 
 
+COIN_EXPLORE_STATUSES = ("candidate", "adopted", "ignored")
+COIN_EXPLORE_STATUS_LABELS = {
+    "candidate": "候选",
+    "adopted": "采纳",
+    "ignored": "忽略",
+}
+
+
+@dataclass
+class CoinExploreCandidate:
+    """跨系列探索候选（spec §14.17.6）。payload 保存 Numista 系列详情，采纳时才写入 coin_series。"""
+
+    id: int | None
+    numista_id: int
+    seed_key: str | None
+    seed_name: str | None
+    size_diff: float | None
+    status: str
+    payload: dict[str, object]
+    payload_cn: dict[str, object]
+    issues: list[dict[str, object]]
+    verified_at: str
+    created_at: str
+    updated_at: str
+
+
 @dataclass(frozen=True)
 class CoinSeriesIssueStats:
     """某系列已采集单版的统计：**不同年份数** + **版别（单版）数**。
@@ -826,6 +871,7 @@ class CoinCollectionProfile:
     missing_years: list[int]
     upgrade_years: list[int]
     year_specs: dict[int, list[CoinYearSpec]]
+    size_mm: float | None
     size_band: str | None
 
     def year_specs_dict(self) -> dict[str, list[dict]]:

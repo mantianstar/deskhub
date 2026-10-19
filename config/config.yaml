@@ -73,6 +73,15 @@ coins:
     # 面值层级：同一组里的面值视为同一层级（跨系列相似推荐用）
     denomination_tiers:
       - ["penny", "便士", "10 centimes", "10 分"]
+    # 候选池扫描：从收藏画像的尺寸出发，用目录页筛选外部铜币（参数即 Numista URL 参数）
+    explore_size_tolerance_mm: 2.0        # 与种子系列尺寸差 ≤ 此值才入候选池
+    explore_max_details: 10               # 单轮最多取几个候选的详情（每个详情另取一次年份）
+    explore_catalogue:                    # 目录筛选（后续换条件只改这里）
+      collectible_type: 1                 # st：1 = Standard circulation coins
+      year: "1800-2026"                   # a：年份区间
+      composition_id: 5                   # m：5 = Bronze
+      diameter_mm: "28-33"                # t：长度或直径（mm）
+      per_page: 200                       # q：每页条数（10/20/50/100/200）
   # Numista 目录接口（铜币参考库：按国家/年份/面值查系列，按系列号查全部单版）
   # API Key 只写环境变量名，真实值放 .env（见 .env.example）
   numista:

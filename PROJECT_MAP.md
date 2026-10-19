@@ -45,6 +45,7 @@
 | `/coins`、`/coins/session/{id}` | `app/routers/coins.py` | `coins/sessions.html`、`coins/session.html` |
 | `/coins/profile` | 同上 | `coins/profile.html`（偏好标签） |
 | `/coins/manage`、`/coins/info`、`/coins/series/{id}` | 同上 | `coins/manage.html`、`coins/info.html`、`coins/series.html` |
+| `/coins/explore` | 同上 | `coins/explore.html`（探索候选池） |
 | `/coins/grades` | 同上 | `coins/grades.html`（品相录入） |
 | `/coins/collection` | 同上 | `coins/collection.html`（收藏画像 + 三层推荐） |
 | `/coins/collections` | 同上 | `coins/collections.html`（收藏系列映射） |
@@ -61,13 +62,14 @@ Numista 类型页（估值 / 稀有度）────────┘            
 | 模块 | 关键函数 |
 |---|---|
 | `app/coins/collection.py` | `build_year_specs`、`build_profile(s)`、`load_profiles`、`load_explore_profiles` |
+| `app/coins/explore.py` | `build_seeds`、`match_seed`、`scan_candidates`、`load_candidate_profiles`、`adopt_candidate` |
 | `app/coins/recommend.py` | `build_recommendations`、`year_labels`、`match_lots`、`load_recommendations` |
 | `app/coins/matcher.py` | `match_lot`、`rematch_all` |
 | `app/coins/profile.py` | `read_orders`、`parse_extraction`、`rebuild_profile` |
 | `app/coins/grades.py` | `normalize_country/year/denomination`、`build_combos` |
 | `app/coins/gapi.py` | `MxiqiGapi`、`card_from_auction`、`detail_from_payload` |
 | `app/coins/numista.py` | `NumistaClient`、`series_from_type`、`issue_from_issue` |
-| `app/coins/numista_web.py` | `parse_type_page` |
+| `app/coins/numista_web.py` | `parse_type_page`、`parse_catalogue_index`、`load_catalogue_index` |
 | `app/coins/pipeline.py` | 每日采集编排 |
 | `app/coins/pricing.py` | `summarize` |
 
@@ -78,7 +80,7 @@ Numista 类型页（估值 / 稀有度）────────┘            
 | 知识聚合 | `sources`、`items`、`item_scores`、`fetch_runs` |
 | 铜币拍卖 | `coin_shops`、`coin_sessions`、`coin_lots`、`coin_price_refs`、`coin_fetch_runs`、`coin_api_usage` |
 | Numista | `coin_series(_cn)`、`coin_issues(_cn)`、`coin_issue_values` |
-| 收藏 | `coin_orders`、`coin_purchase_grades`、`coin_profile_tags`、`coin_collection_series(_members)` |
+| 收藏 | `coin_orders`、`coin_purchase_grades`、`coin_profile_tags`、`coin_collection_series(_members)`、`coin_explore_candidates` |
 | 系统 | `schema_meta`、`feature_switches` |
 
 ## 5. 测试地图

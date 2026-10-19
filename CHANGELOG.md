@@ -10,6 +10,116 @@
 
 ---
 
+## v1.22 — 2026-10-18 候选池筛选与图片放大
+
+**起因**：候选池只能整表浏览，想按国家 / 执政者 / 面值收窄时要靠肉眼找；正反图只有 40px 缩略图。
+
+**改了什么**
+
+- `/coins/explore` 增加国家 / 执政者 / 面值三个下拉筛选（GET 参数），下拉逐级收窄：
+  选定国家后只列该国的执政者，再按执政者收窄面值；带「重置」。
+- 正反图加 `coin-zoom`，复用站点已有的灯箱点击放大。
+
+**验证**：新增 `test_explore_page_filters_by_country_ruler_denomination`；`pytest tests -q` 全量通过。
+
+**受影响**：`app/routers/coins.py`、`app/templates/coins/explore.html`、`app/static/style.css`、
+`spec/coins.md` §14.17.6、`plan/coins.md`。
+
+---
+
+## v1.21 — 2026-10-18 候选池中文与图片
+
+**起因**：候选池与候选详情的国家 / 面值仍是英文（词表未收录）；图片只给原图链接、不显示；
+状态列的保存按钮仍然可见。
+
+**改了什么**
+
+- 候选扫描改用与正式采集相同的翻译链路：词表 + 大模型兜底；`issuer / ruler / denomination`
+  纳入大模型字段，但词表已译出时以词表为准（避免「8 Doubles → 8 双倍」）。
+- 补齐候选里出现的国家（根西 / 泽西 / 法属印度支那等）与面值单位词表。
+- `download_series_images` 支持候选；扫描入库后自动缓存正 / 反图，页面按本地缓存渲染。
+- 保存按钮加 `[hidden] { display: none !important }`，默认不显示，切换状态后才出现。
+
+**验证**：现有 10 个候选全部转为中文并缓存 20 张图；`/coins/explore` 渲染 20 个 `<img>`、0 个占位；
+候选详情页 200 且为中文；`pytest tests -q` 全量通过。
+
+**受影响**：`app/coins/explore.py`、`app/coins/numista.py`、`app/coins/numista_web.py`、
+`app/coins/translate.py`、`app/coins/translate_llm.py`、`app/static/style.css`、`spec/coins.md` §14.17.4。
+
+---
+
+## v1.20 — 2026-10-18 候选池列表改版
+
+**起因**：候选池页面列太多、表格被撑开；「来源种子 / 尺寸差」已与目录筛选无关；
+状态用下拉 + 固定保存按钮操作繁琐；系列链接还跳 Numista 外站。
+
+**改了什么**
+
+- 移除来源种子、尺寸差、系列名称列；新增正反图（第二列）、国家、面值、年份；
+  执政者放在国家与面值之间；材质 / 形状 / 尺寸 / 重量合并为「规格」列。
+- Numista ID 改链本地系列详情；未采纳的候选也由 `series_page` 用候选详情渲染。
+- 状态改为分段控制器（候选 / 采纳 / 忽略），当前项高亮，切换后才显示保存按钮。
+
+**验证**：`tests/test_coins_collection.py` 24 项通过（含候选详情本地渲染、新列与分段控件断言）；
+`pytest tests -q` 全量通过。
+
+**受影响**：`app/templates/coins/explore.html`、`app/routers/coins.py`、`app/static/style.css`、`spec/coins.md` §14.17.6。
+
+---
+
+## v1.19 — 2026-10-18 修复候选池扫描恒为 0 条
+
+**起因**：`coins-explore` 输出「目录 0 条」，原因是 13 个收藏画像的 `size_mm` 都是 `None`：
+映射行没手填尺寸，而画像实际尺寸是由成员系列算出的中位数，却没有暴露出来。
+
+**改了什么**
+
+- `CoinCollectionProfile` 增加 `size_mm`（`build_profile` 用 `_collection_size` 填充）。
+- `explore.build_seeds` 改读画像的 `size_mm`，不再读映射行的手填字段。
+
+**验证**：种子从 0 变 13（30.8 / 31.0 mm）；实跑 `coins-explore`：目录 126 条 → 取详情 10 个 → 入池 10 个；
+`pytest tests -q` 全量通过。
+
+**受影响**：`app/models.py`、`app/coins/collection.py`、`app/coins/explore.py`。
+
+---
+
+## v1.18 — 2026-10-18 探索候选池改走目录筛选页
+
+**起因**：接口 `/types?q=` 只做关键词模糊搜索，没有年份 / 材质 / 直径筛选，候选池要先取详情再本地过滤，
+既不准也多耗接口额度。
+
+**改了什么**
+
+- 候选池扫描改为抓 Numista 目录列表页（`/catalogue/index.php`）的服务端筛选结果，
+  列表已带材质 / 重量 / 直径，先本地过滤再取详情。
+- 筛选参数落到 `config.yaml` → `coins.collection.explore_catalogue`
+  （`collectible_type` / `year` / `composition_id` / `diameter_mm` / `per_page`），后续换条件只改配置。
+- `numista_web.py` 新增 `catalogue_url` / `parse_catalogue_index` / `load_catalogue_index`；
+  移除不再使用的 `explore_per_query`。
+
+**验证**：`pytest tests -q` 全量通过；新增目录页解析与 URL 参数测试。
+
+**受影响**：`spec/coins.md` §14.17.4、`config/config.yaml`、`app/coins/explore.py`。
+
+---
+
+## v1.17 — 2026-10-18 探索候选池：从目录扫描外部相似尺寸铜币
+
+**起因**：P3 原来只从「未映射」series 取候选，而这些 series 实际都是已关注的系列，无法探索新币。
+
+**改了什么**
+
+- 新增 `coin_explore_candidates`（schema v10）与 `app/coins/explore.py`：按收藏画像面值扫描 Numista，
+  本地按铜 / 青铜 + 尺寸差 ≤ 2mm 过滤后入池，候选详情与年份一起保存。
+- 新增 `/coins/explore` 候选池页：状态「候选 / 采纳 / 忽略」，采纳写入本地系列表（信息页 / 采集管理页可见），
+  忽略后隐藏；重新扫描保留已有状态。
+- P3 数据源改为候选池（候选 + 采纳）；新增 CLI `coins-explore`。
+
+**验证**：`tests/test_coins_collection.py` 23 项通过（含候选状态、忽略隐藏、采纳落库、P3 取候选）。
+
+---
+
 ## v1.16 — 2026-10-18 收藏画像年份规格字典补备注与行底色
 
 **起因**：年份规格字典看不到单版备注；缺失和需升级的年份混在表格里，翻表时不易分辨。

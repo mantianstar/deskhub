@@ -27,6 +27,7 @@ FORWARD_ADDITIVE_UPGRADES = {
     ("5", "6"),
     ("6", "7"),
     ("8", "9"),
+    ("9", "10"),
 }
 
 _db_path: Path | None = None

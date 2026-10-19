@@ -17,6 +17,7 @@ from app.config import SourceConfig
 from app.models import (
     CoinCollectionMember,
     CoinCollectionSeries,
+    CoinExploreCandidate,
     CoinFetchRun,
     CoinIssue,
     CoinIssueValues,
@@ -930,6 +931,91 @@ def delete_coin_collection_member(member_id: int) -> bool:
     with db.connect() as conn, conn:
         cursor = conn.execute(
             "DELETE FROM coin_collection_series_members WHERE id = ?", (member_id,)
+        )
+    return cursor.rowcount > 0
+
+
+def _row_to_explore_candidate(row: sqlite3.Row) -> CoinExploreCandidate:
+    return CoinExploreCandidate(
+        id=row["id"],
+        numista_id=row["numista_id"],
+        seed_key=row["seed_key"],
+        seed_name=row["seed_name"],
+        size_diff=row["size_diff"],
+        status=row["status"],
+        payload=json.loads(row["payload"]),
+        payload_cn=json.loads(row["payload_cn"]),
+        issues=json.loads(row["issues"]),
+        verified_at=row["verified_at"],
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
+
+
+def upsert_coin_explore_candidate(candidate: CoinExploreCandidate) -> int:
+    """按 numista_id 写入候选；**不改已有 status**（忽略过的不会被重新扫描复活）。"""
+    now = utcnow()
+    with db.connect() as conn, conn:
+        conn.execute(
+            """
+            INSERT INTO coin_explore_candidates
+                (numista_id, seed_key, seed_name, size_diff, status, payload, payload_cn,
+                 issues, verified_at, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(numista_id) DO UPDATE SET
+                seed_key    = excluded.seed_key,
+                seed_name   = excluded.seed_name,
+                size_diff   = excluded.size_diff,
+                payload     = excluded.payload,
+                payload_cn  = excluded.payload_cn,
+                issues      = excluded.issues,
+                verified_at = excluded.verified_at,
+                updated_at  = excluded.updated_at
+            """,
+            (
+                candidate.numista_id,
+                candidate.seed_key,
+                candidate.seed_name,
+                candidate.size_diff,
+                candidate.status,
+                _dump(candidate.payload),
+                _dump(candidate.payload_cn),
+                _dump(candidate.issues),
+                candidate.verified_at,
+                now,
+                now,
+            ),
+        )
+        row = conn.execute(
+            "SELECT id FROM coin_explore_candidates WHERE numista_id = ?",
+            (candidate.numista_id,),
+        ).fetchone()
+    return int(row["id"])
+
+
+def list_coin_explore_candidates(*, include_ignored: bool = False) -> list[CoinExploreCandidate]:
+    sql = "SELECT * FROM coin_explore_candidates"
+    if not include_ignored:
+        sql += " WHERE status <> 'ignored'"
+    sql += " ORDER BY CASE status WHEN 'candidate' THEN 0 ELSE 1 END, size_diff, numista_id"
+    with db.connect() as conn:
+        rows = conn.execute(sql).fetchall()
+    return [_row_to_explore_candidate(row) for row in rows]
+
+
+def get_coin_explore_candidate(numista_id: int) -> CoinExploreCandidate | None:
+    with db.connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM coin_explore_candidates WHERE numista_id = ?", (numista_id,)
+        ).fetchone()
+    return _row_to_explore_candidate(row) if row else None
+
+
+def set_coin_explore_candidate_status(numista_id: int, status: str) -> bool:
+    with db.connect() as conn, conn:
+        cursor = conn.execute(
+            "UPDATE coin_explore_candidates SET status = ?, updated_at = ? WHERE numista_id = ?",
+            (status, utcnow(), numista_id),
         )
     return cursor.rowcount > 0
 

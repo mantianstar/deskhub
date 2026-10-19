@@ -460,8 +460,22 @@ Numista 单版接口只给 `year / mintage / comment / mint_letter / references 
 - 仅当前两层推荐与当日入库拍品的**匹配条数** < `min_results` 时触发（没有当日拍品时按推荐项数兜底判断）。
 - 相似度满足其一：同尺寸档位且尺寸差 ≤ 2mm；面值属于同一层级（配置
   `coins.collection.denomination_tiers`，如 Penny 与 10 centimes）；同执政者，或历史时期重叠 ≥ 50%。
-- 候选来自**未映射**的青铜 / 铜系列（自动成组），只取它们的缺失年份。
+- 候选来自**探索候选池**（`coin_explore_candidates` 中状态为「候选 / 采纳」的系列，忽略除外），
+  只取它们的缺失年份；候选池通过目录扫描产生，由 `/coins/explore` 管理。
 - 排序：尺寸差升序 → 稀有度降序。
+
+**探索候选池扫描（`python -m app.cli coins-explore`）**
+
+- 种子 = 收藏画像的尺寸；
+- 用目录列表页的服务端筛选拉候选（`/catalogue/index.php`，参数见
+  `coins.collection.explore_catalogue`：`collectible_type`（Standard circulation coins）、
+  `year`、`composition_id`（Bronze）、`diameter_mm`）；
+- 列表已带材质 / 重量 / 直径，先本地过滤：材质为铜 / 青铜、与种子尺寸差 ≤
+  `explore_size_tolerance_mm`、本地未采集过；
+- 合格项再取详情与年份，写入 `coin_explore_candidates`，状态默认「候选」；重新扫描保留已有状态，忽略的不复活；
+- 入库时同步做中文（词表 + 大模型兜底）并把正 / 反图缓存到 `data/coin_images/`；
+- 目录页有 Cloudflare 校验，需本机开着调试端口的 Chrome（与估值页同一条 CDP 链路）；
+- 采纳时把系列与年份写入 `coin_series[_cn]` / `coin_issues[_cn]`。
 
 ### 14.17.5 年份翻译与拍品匹配
 
@@ -478,9 +492,13 @@ Numista 单版接口只给 `year / mintage / comment / mint_letter / references 
 |---|---|---|
 | 收藏画像 | `/coins/collection` | 优先级规则说明置顶；三层推荐合并为一张表（一个年份一行，带表头与今日命中），可按系列 / 推荐原因 / 是否命中筛选（是否命中默认「已命中」），20 条/页；收藏系列画像摘要行 10 个/页，展开看年份 chips 与规格字典 |
 | 系列映射 | `/coins/collections` | 新建折叠；系列摘要 20 个/页；展开看成员（含年份范围）与增删；添加成员按国家 + 执政者 + 面值筛选（默认取收藏系列自身的值），候选下拉带年份范围 |
+| 探索候选池 | `/coins/explore` | 候选列表：Numista ID（链到本地系列详情）、正反图（点击放大）、国家、执政者、面值、年份、规格（材质 / 尺寸 / 重量 / 形状）、核实时间、状态分段控制器（候选 / 采纳 / 忽略，当前状态高亮，改动后才出现保存）；可按国家 + 执政者 + 面值逐级筛选（下拉只列当前范围内的值，可重置）；采纳写入本地系列表，忽略后隐藏；未采纳的候选也能在本地系列详情页查看 |
 
 配置（`config.yaml` → `coins.collection`）：`min_results`（默认 5）、`rarity_floor`（0.005）、
-`top_upgrades_per_series`（3）、`denomination_tiers`（面值层级）。
+`top_upgrades_per_series`（3）、`denomination_tiers`（面值层级）、
+`explore_size_tolerance_mm`（2.0）、`explore_max_details`（10）、
+`explore_catalogue`（目录筛选：`collectible_type`=1、`year`=1800-2026、`composition_id`=5、
+`diameter_mm`=28-33、`per_page`=200）。
 
 ### 14.17.7 验收
 
@@ -492,3 +510,5 @@ Numista 单版接口只给 `year / mintage / comment / mint_letter / references 
 6. 推荐项年份能翻译成 `明治6年` / `明治六年`，并能命中中文数字写法的拍品标题。
 7. 每日采集只抓当日截拍专场；非当日专场不新增、不参与推荐匹配。
 8. 页面 `/coins/collection`、`/coins/collections` 可正常渲染与维护映射。
+9. 候选池扫描按收藏画像的面值到 Numista 目录找铜 / 青铜系列；候选页采纳后信息页与采集管理页可见，
+   忽略后候选页不再显示。

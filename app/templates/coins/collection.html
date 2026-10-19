@@ -35,6 +35,7 @@
   <a href="/coins/grades">品相录入</a>
   <a href="/coins/info">信息</a>
   <a href="/coins/manage">采集管理</a>
+  <a href="/coins/explore">候选池</a>
 </nav>
 
 {% if not profiles %}
@@ -56,7 +57,7 @@
 <div class="coin-priority-rules">
   <p class="coin-section-note"><strong>优先级 1 · 稀缺年份</strong>：收藏位置权重 × 稀缺权重；首年 / 末年 / 执政者更替年权重 1.5</p>
   <p class="coin-section-note"><strong>优先级 2 · 差品升级</strong>：品相敏感度（XF / VF）× 稀有度；每个系列最多 3 个</p>
-  <p class="coin-section-note"><strong>优先级 3 · 相似推荐</strong>：仅当前两层不足时触发；尺寸差升序 → 稀有度降序</p>
+  <p class="coin-section-note"><strong>优先级 3 · 相似推荐</strong>：当日截拍拍品命中前两层 &lt; {{ min_results }} 条时触发；候选取未映射铜/青铜系列的缺失年份；尺寸差升序 → 稀有度降序</p>
 </div>
 
 <form class="search-form" method="get" action="/coins/collection">
