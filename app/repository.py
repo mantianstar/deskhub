@@ -1023,6 +1023,16 @@ def set_coin_explore_candidate_status(numista_id: int, status: str) -> bool:
 def list_coin_today_lots(tz: ZoneInfo, *, now: datetime | None = None) -> list[CoinTodayLot]:
     """当日截拍专场里的全部拍品（推荐匹配用）。"""
     start, end = local_day_bounds(tz, now=now)
+    return _list_coin_lots_between(start, end)
+
+
+def list_coin_lots_on_day(tz: ZoneInfo, day: date) -> list[CoinTodayLot]:
+    """指定业务日期截拍专场里的全部拍品（拍场页按日期筛选用）。"""
+    start, end = day_bounds_utc(tz, day)
+    return _list_coin_lots_between(start, end)
+
+
+def _list_coin_lots_between(start: str, end: str) -> list[CoinTodayLot]:
     with db.connect() as conn:
         rows = conn.execute(
             """
@@ -1264,6 +1274,17 @@ def update_coin_lot_match(lot_id: int, match_score: float, is_recommended: bool)
         )
 
 
+def update_coin_lot_matches(updates: list[tuple[int, float, bool]]) -> None:
+    """批量写回匹配结果（页面打开前重算当日匹配用，一次事务）。"""
+    if not updates:
+        return
+    with db.connect() as conn, conn:
+        conn.executemany(
+            "UPDATE coin_lots SET match_score = ?, is_recommended = ? WHERE id = ?",
+            [(score, int(flag), lot_id) for lot_id, score, flag in updates],
+        )
+
+
 def list_coin_lots_for_matching() -> list[CoinLot]:
     """全部拍品（含未推荐），供 matcher 重算匹配分。"""
     with db.connect() as conn:
@@ -1435,24 +1456,28 @@ def list_coin_session_cards(
     limit: int | None = None,
     *,
     day_bounds: tuple[str, str] | None = None,
+    only_recommended: bool = True,
 ) -> list[CoinSessionCard]:
-    """第一页：**只列出至少命中 1 条推荐拍品的专场**（spec §14.7「没有就不展示」）。
+    """第一页：默认只列出至少命中 1 条推荐拍品的专场（spec §14.7「没有就不展示」）。
 
-    未命中的专场仍全量入库，只是不在这里出现 —— 画像改动后可以重新匹配，不必重抓。
+    `only_recommended=False` 时返回当日全部专场，供拍场页「是否推荐=全部」使用。
+    未命中的专场仍全量入库，只是不默认出现 —— 画像改动后可以重新匹配，不必重抓。
     `day_bounds` 给定时只取截拍时间落在该 `[start, end)` 区间（UTC 存储格式）的专场。
     """
-    conditions = [
-        """(SELECT COUNT(*) FROM coin_lots l
-            WHERE l.session_id = s.id AND l.is_recommended = 1) > 0"""
-    ]
+    conditions: list[str] = []
+    if only_recommended:
+        conditions.append(
+            """(SELECT COUNT(*) FROM coin_lots l
+                WHERE l.session_id = s.id AND l.is_recommended = 1) > 0"""
+        )
     params: list[object] = []
     if day_bounds is not None:
         conditions.append("s.auction_at >= ? AND s.auction_at < ?")
         params.extend(day_bounds)
+    where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
     sql = (
         _SESSION_CARD_SQL
-        + " WHERE "
-        + " AND ".join(conditions)
+        + where
         + """
     ORDER BY (s.auction_at IS NULL), s.auction_at DESC, s.id DESC
     """
@@ -1510,15 +1535,16 @@ def get_coin_session_detail(session_id: int) -> CoinSessionDetail | None:
         lot_rows = conn.execute(
             """
             SELECT * FROM coin_lots
-            WHERE session_id = ? AND is_recommended = 1
-            ORDER BY match_score DESC, (lot_no IS NULL), lot_no, id
+            WHERE session_id = ?
+            ORDER BY is_recommended DESC, match_score DESC, (lot_no IS NULL),
+                     CAST(REPLACE(lot_no, 'Lot.', '') AS INTEGER), lot_no, id
             """,
             (session_id,),
         ).fetchall()
         ref_rows = conn.execute(
             """
             SELECT * FROM coin_price_refs
-            WHERE lot_id IN (SELECT id FROM coin_lots WHERE session_id = ? AND is_recommended = 1)
+            WHERE lot_id IN (SELECT id FROM coin_lots WHERE session_id = ?)
             """,
             (session_id,),
         ).fetchall()
@@ -1535,7 +1561,7 @@ def get_coin_session_detail(session_id: int) -> CoinSessionDetail | None:
         deposit=session["deposit"],
         lot_total=session["lot_total"],
         view_count=session["view_count"],
-        recommended_count=len(lots),
+        recommended_count=sum(1 for lot in lots if lot.is_recommended),
         shop=_row_to_coin_shop(shop_row) if shop_row else None,
         lots=lots,
     )
@@ -1556,6 +1582,7 @@ def _row_to_lot_card(row: sqlite3.Row, ref: sqlite3.Row | None) -> CoinLotCard:
         p25=ref["p25"] if ref else None,
         median=ref["median"] if ref else None,
         p75=ref["p75"] if ref else None,
+        is_recommended=bool(row["is_recommended"]),
     )
 
 

@@ -17,6 +17,7 @@ from __future__ import annotations
 import re
 import statistics
 from dataclasses import dataclass
+from datetime import date
 
 from app import repository, textmatch
 from app.coins import translate
@@ -93,16 +94,30 @@ def year_labels(profile: CoinCollectionProfile, year: int, spec: CoinYearSpec | 
     return list(dict.fromkeys(labels))
 
 
+# 站点标题里的音译写法与 Numista 中文词表不一致：两边都生成，避免漏匹配
+_DENOMINATION_ALIASES = {
+    "莱普塔": ("雷普塔",),
+    "雷普塔": ("莱普塔",),
+}
+
+
 def denomination_variants(denomination: str) -> list[str]:
     """面值写法：原样 / 去空格 / 阿拉伯数字转中文（2 钱 → 2钱 / 二钱）。"""
     text = (denomination or "").strip()
     if not text:
         return []
-    variants = [text, text.replace(" ", "")]
-    match = re.match(r"^(\d+)\s*(.*)$", text)
-    if match:
-        number, rest = int(match.group(1)), match.group(2).strip()
-        variants.append(f"{to_cn_numeral(number)}{rest}")
+    bases = [text]
+    for source, targets in _DENOMINATION_ALIASES.items():
+        for base in list(bases):
+            if source in base:
+                bases.extend(base.replace(source, target) for target in targets)
+    variants: list[str] = []
+    for base in dict.fromkeys(bases):
+        variants.extend([base, base.replace(" ", "")])
+        match = re.match(r"^(\d+)\s*(.*)$", base)
+        if match:
+            number, rest = int(match.group(1)), match.group(2).strip()
+            variants.append(f"{to_cn_numeral(number)}{rest}")
     return list(dict.fromkeys(variant for variant in variants if variant))
 
 
@@ -236,6 +251,7 @@ def build_recommendations(
     *,
     explore_profiles: list[CoinCollectionProfile] | None = None,
     search_results: int | None = None,
+    similar_lots: list[CoinTodayLot] | None = None,
     config: CoinCollectionConfig | None = None,
     rarity_floor: float = 0.005,
     min_results: int = 5,
@@ -246,6 +262,9 @@ def build_recommendations(
 
     `search_results` 是前两层与已入库拍品的匹配条数；传了它就按「搜索结果」判断是否触发 P3，
     不传时退化为按前两层推荐项数判断（纯函数测试用）。
+
+    `similar_lots` 给定时，P3 只保留**当日确有拍品命中**的候选，最多取 `min_results` 个；
+    这样相似推荐不会再出现「5 项目标 0 项命中」。
     """
     if config is not None:
         rarity_floor = config.rarity_floor
@@ -349,7 +368,19 @@ def build_recommendations(
                 seen.add(key)
 
     candidates.sort(key=lambda entry: (entry[0], entry[1], entry[2].collection.name, entry[2].year))
-    # 补位只看第三层新增条数：前两层可能已有很多推荐项，但匹配条数不足时仍需要 P3 兜底
+    if similar_lots is not None:
+        # 先匹配再取数：只保留当日有拍品命中的相似目标，最多 min_results 个
+        added = 0
+        for _, _, item in candidates:
+            if added >= min_results:
+                break
+            if not any(lot_matches(item, lot) for lot in similar_lots):
+                continue
+            items.append(item)
+            added += 1
+        return items
+
+    # 纯函数模式（没有拍品可匹配）：只看第三层新增条数补位
     base_count = search_results if search_results is not None else len(items)
     added = 0
     for _, _, item in candidates:
@@ -449,6 +480,7 @@ def rematch_all(
             active_profiles,
             explore_profiles=collection_module.load_explore_profiles(),
             search_results=len(base_matches),
+            similar_lots=today_lots,
             config=config.coins.collection,
         )
     matches = match_lots(active_items, today_lots)
@@ -469,13 +501,60 @@ def rematch_all(
     )
 
 
-def load_recommendations(config: Config) -> tuple[list[CoinCollectionProfile], list[CoinRecommendation]]:
+def rematch_today(config: Config) -> MatchRunResult:
+    """只重算当日截拍拍品的推荐位（页面打开前刷新，不必等每日采集任务）。"""
+    from app.coins import collection as collection_module
+
+    active_profiles = collection_module.load_profiles()
+    if not active_profiles:
+        return MatchRunResult(0, 0, 0, {})
+    today_lots = repository.list_coin_today_lots(config.app.tz)
+    base_items = build_recommendations(
+        active_profiles, explore_profiles=[], config=config.coins.collection
+    )
+    base_matches = match_lots(base_items, today_lots)
+    active_items = build_recommendations(
+        active_profiles,
+        explore_profiles=collection_module.load_explore_profiles(),
+        search_results=len(base_matches),
+        similar_lots=today_lots,
+        config=config.coins.collection,
+    )
+    matches = match_lots(active_items, today_lots)
+
+    updates: list[tuple[int, float, bool]] = []
+    keywords: dict[int, str] = {}
+    for lot in today_lots:
+        if lot.id is None:
+            continue
+        match = matches.get(lot.id)
+        updates.append((lot.id, match.score if match else 0.0, match is not None))
+        if match is not None:
+            keywords[lot.id] = match.keyword
+    repository.update_coin_lot_matches(updates)
+    return MatchRunResult(
+        len(today_lots),
+        len(matches),
+        len(active_items),
+        keywords,
+        profiles_total=len(active_profiles),
+    )
+
+
+def load_recommendations(
+    config: Config, *, day: date | None = None
+) -> tuple[list[CoinCollectionProfile], list[CoinRecommendation]]:
+    """加载画像与推荐项；`day` 给定时匹配该业务日期截拍的拍品（默认今天）。"""
     from app.coins import collection as collection_module
 
     profiles = collection_module.load_profiles()
     if not profiles:
         return [], []
-    lots = repository.list_coin_today_lots(config.app.tz)
+    lots = (
+        repository.list_coin_lots_on_day(config.app.tz, day)
+        if day is not None
+        else repository.list_coin_today_lots(config.app.tz)
+    )
     base_items = build_recommendations(
         profiles, explore_profiles=[], config=config.coins.collection
     )
@@ -484,6 +563,7 @@ def load_recommendations(config: Config) -> tuple[list[CoinCollectionProfile], l
         profiles,
         explore_profiles=collection_module.load_explore_profiles(),
         search_results=len(base_matches),
+        similar_lots=lots,
         config=config.coins.collection,
     )
     return profiles, attach_lots(items, lots)

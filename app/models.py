@@ -537,6 +537,8 @@ class CoinOrderCombo:
     denomination: str
     order_count: int
     grade: str | None
+    # 派生展示字段（不落库）：命中的收藏系列名，按国家 + 面值匹配
+    collection_name: str = ""
 
 
 @dataclass
@@ -761,6 +763,8 @@ class CoinSessionCard:
     shop_name: str | None
     shop_avatar: str | None
     recommended_count: int
+    precise_count: int = 0
+    similar_count: int = 0
 
 
 @dataclass
@@ -780,6 +784,7 @@ class CoinLotCard:
     p25: float | None
     median: float | None
     p75: float | None
+    is_recommended: bool = False
 
 
 @dataclass

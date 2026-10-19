@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import re
+from functools import lru_cache
 
 # 常见 Unicode 分数 → 英文词（Numista 用符号，用户习惯写词）
 _FRACTIONS = {
@@ -23,8 +24,9 @@ _FRACTIONS = {
 }
 
 
+@lru_cache(maxsize=16384)
 def normalize(text: str | None) -> str:
-    """归一化：去空白 + 转小写 + 展开分数符号。"""
+    """归一化：去空白 + 转小写 + 展开分数符号（纯函数，结果可缓存）。"""
     result = re.sub(r"\s+", "", text or "").lower()
     for symbol, word in _FRACTIONS.items():
         result = result.replace(symbol, word)

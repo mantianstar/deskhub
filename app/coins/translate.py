@@ -15,6 +15,7 @@ from __future__ import annotations
 import html
 import re
 from dataclasses import replace
+from functools import lru_cache
 from typing import TypeVar
 
 from app.models import CoinIssue, CoinSeries
@@ -335,8 +336,9 @@ _GLOSSARY_PATTERNS = tuple(
 )
 
 
+@lru_cache(maxsize=8192)
 def to_zh(text: str | None) -> str | None:
-    """按词表把英文替换成中文；未收录的片段保留英文原文。"""
+    """按词表把英文替换成中文；未收录的片段保留英文原文（纯函数，结果可缓存）。"""
     if not text:
         return text
     result = text

@@ -427,6 +427,49 @@ def test_priority_three_tops_up_when_items_enough_but_matches_short():
     assert len([item for item in items if item.priority == 1]) == 6
 
 
+def test_priority_three_returns_only_matched_targets_up_to_limit():
+    """给了当日拍品时，相似推荐只保留确实命中的目标，最多 min_results 个。"""
+    primary = _profile(
+        key="uk-victoria-penny",
+        years=[1860, 1861, 1862, 1863, 1864, 1865],
+        owned=[],
+    )
+    similar = _profile(
+        key="uk-victoria-halfpenny",
+        denomination="半 便士",
+        size_mm=30.5,
+        years=[1880, 1881, 1882, 1883, 1884, 1885],
+        owned=[],
+    )
+    lots = [
+        CoinTodayLot(
+            id=index + 1,
+            session_id=1,
+            title=f"英国 {year} 年 半 便士",
+            start_price=None,
+            current_price=None,
+            image_urls=[],
+            shop_name=None,
+            session_title="",
+            auction_at=None,
+        )
+        for index, year in enumerate([1880, 1881, 1882, 1883, 1884])
+    ]
+
+    items = recommend.build_recommendations(
+        [primary],
+        explore_profiles=[similar],
+        search_results=0,
+        similar_lots=lots,
+        min_results=5,
+    )
+
+    threes = [item for item in items if item.priority == 3]
+    assert len(threes) == 5
+    # 1885 没有对应拍品，不再作为相似推荐出现
+    assert {item.year for item in threes} == {1880, 1881, 1882, 1883, 1884}
+
+
 def test_lot_matching_handles_arabic_and_chinese_year_forms():
     profile = _profile(
         key="jp-meiji-2sen",
@@ -530,7 +573,8 @@ def test_collection_pages_create_map_and_render(web):
 
     page = web.get("/coins/collection")
     assert page.status_code == 200
-    assert "收藏画像" in page.text
+    assert "今日推荐" in page.text
+    assert "收藏画像摘要" in page.text
     assert "英国 · 维多利亚 · 1 便士" in page.text
     assert "1860" in page.text
     assert "币面有戳记" in page.text  # 年份规格字典的备注列
@@ -691,30 +735,265 @@ def test_collection_page_filters_series_reason_and_hit(web):
             fetched_at=repository.utcnow(),
         )
     )
+    other_session_id = repository.upsert_coin_session(
+        CoinSession(
+            id=None,
+            mxiqi_id="other-session",
+            shop_id=None,
+            title="无关专场",
+            status="预展",
+            auction_at=repository.utcnow(),
+            auction_at_raw=None,
+            deposit=None,
+            lot_total=1,
+            view_count=0,
+            cover_urls=[],
+            fetched_at=repository.utcnow(),
+        )
+    )
+    repository.upsert_coin_lot(
+        CoinLot(
+            id=None,
+            session_id=other_session_id,
+            mxiqi_id="other-lot",
+            lot_no="1",
+            title="某无关纪念章",
+            start_price=1.0,
+            current_price=2.0,
+            image_urls=[],
+            tags={},
+            match_score=0.0,
+            is_recommended=False,
+            fetched_at=repository.utcnow(),
+        )
+    )
 
     page = web.get("/coins/collection?series=uk-penny-filter&reason=1&hit=1")
     assert page.status_code == 200
-    assert 'coin-section-count">1 / 5 条</span>' in page.text
-    assert '<td class="nowrap">1800</td>' in page.text
-    assert '<td class="nowrap">1801</td>' not in page.text
+    assert "1 条推荐" in page.text
+    assert 'data-year="1800"' in page.text
+    assert 'data-year="1801"' not in page.text
+    # 今日推荐页要直接展示命中的店铺 / 拍品，而不是只给条数
+    assert "英国 1800 年 1 便士" in page.text
+    assert "今日拍场" in page.text
+    # 顶部指标只统计精准匹配；右侧聚合面板用高亮圆圈显示精准匹配件数
+    assert "精准匹配店铺" in page.text
+    assert "精准匹配拍品" in page.text
+    assert 'coin-rail-circle is-precise">1 件<' in page.text
+    # 圆圈在右侧居中，统计顺序为总件数 → 精准 → 相似
+    assert page.text.index("coin-rail-body") < page.text.index("coin-rail-circle")
+    assert "1 件 · 精准 1 · 相似 0" in page.text
+    # 未匹配场次折叠为「其他专场」，查看按钮跳当日全部拍场
+    assert "其他专场" in page.text
+    assert "1 场 · 0 件命中" in page.text
+    assert 'href="/coins?auction_date=' in page.text and "rec=all" in page.text
+    # 推荐模块标题按「国家 · 执政者 · 面值」；下拉不再有相似推荐
+    assert "<h3>英国 · 维多利亚 · 1 便士</h3>" in page.text
+    assert '<option value="3"' not in page.text
 
     page = web.get("/coins/collection?hit=0")
-    assert '<td class="nowrap">1800</td>' not in page.text
-    assert '<td class="nowrap">1801</td>' in page.text
+    # 「未命中」只看相似推荐，精准匹配整段隐藏
+    assert 'data-year="1800"' not in page.text
+    assert 'data-year="1801"' not in page.text
+    assert "暂无相似推荐" in page.text
 
     # 「是否命中」默认已命中；显式选「全部」才不过滤
     page = web.get("/coins/collection?series=uk-penny-filter")
     assert '<option value="1" selected>已命中' in page.text
-    assert '<td class="nowrap">1800</td>' in page.text
-    assert '<td class="nowrap">1801</td>' not in page.text
+    assert 'data-year="1800"' in page.text
+    assert 'data-year="1801"' not in page.text
 
     page = web.get("/coins/collection?series=uk-penny-filter&hit=all")
     assert '<option value="all" selected>全部</option>' in page.text
-    assert '<td class="nowrap">1800</td>' in page.text
-    assert '<td class="nowrap">1801</td>' in page.text
+    assert 'data-year="1800"' in page.text
+    assert 'data-year="1801"' in page.text
 
     page = web.get("/coins/collection?reason=2")
     assert "暂无推荐项" in page.text
+
+
+def test_collection_hit_filter_separates_precise_and_similar(web):
+    """相似推荐（P3）不计入命中；无论是否命中，相似推荐模块都常驻展示。"""
+    series_id = repository.upsert_coin_series_cn(
+        _series(902, min_year=1800, max_year=1804)
+    )
+    for year in range(1800, 1805):
+        repository.upsert_coin_issue_cn(_issue(11000 + year, series_id, year=year))
+    collection_id = repository.upsert_coin_collection_series(
+        collection_key="uk-penny-similar",
+        name="英国 · 维多利亚 · 1 便士",
+        country="英国",
+        ruler="维多利亚",
+        denomination="1 便士",
+        size_mm=31.0,
+        size_band="大",
+    )
+    repository.upsert_coin_collection_member(collection_id, 902, "英国 · 维多利亚 · 1 便士")
+    repository.upsert_coin_explore_candidate(_explore_candidate(990007))
+    session_id = repository.upsert_coin_session(
+        CoinSession(
+            id=None,
+            mxiqi_id="similar-session",
+            shop_id=None,
+            title="法国硬币专场",
+            status="预展",
+            auction_at=repository.utcnow(),
+            auction_at_raw=None,
+            deposit=None,
+            lot_total=1,
+            view_count=0,
+            cover_urls=[],
+            fetched_at=repository.utcnow(),
+        )
+    )
+    repository.upsert_coin_lot(
+        CoinLot(
+            id=None,
+            session_id=session_id,
+            mxiqi_id="similar-lot",
+            lot_no="1",
+            title="法国1900年1便士",
+            start_price=1.0,
+            current_price=2.0,
+            image_urls=[],
+            tags={},
+            match_score=0.0,
+            is_recommended=False,
+            fetched_at=repository.utcnow(),
+        )
+    )
+
+    page = web.get("/coins/collection?hit=1")
+    assert "今日暂无收藏系列命中" in page.text
+    # 只展示当日有拍品命中的相似目标；1901 没有拍品，不再出现
+    assert 'data-year="1900"' in page.text
+    assert 'data-year="1901"' not in page.text
+
+    page = web.get("/coins/collection?hit=0")
+    assert 'data-year="1900"' in page.text
+    assert 'data-year="1901"' not in page.text
+
+
+def test_collection_rail_counts_similar_matches_with_transliteration(web):
+    """站点写「雷普塔」、推荐词写「莱普塔」时也要匹配，并计入右侧相似角标。"""
+    series_id = repository.upsert_coin_series_cn(
+        _series(904, min_year=1800, max_year=1804)
+    )
+    for year in range(1800, 1805):
+        repository.upsert_coin_issue_cn(_issue(13000 + year, series_id, year=year))
+    collection_id = repository.upsert_coin_collection_series(
+        collection_key="uk-penny-similar-rail",
+        name="英国 · 维多利亚 · 1 便士",
+        country="英国",
+        ruler="维多利亚",
+        denomination="1 便士",
+        size_mm=31.0,
+        size_band="大",
+    )
+    repository.upsert_coin_collection_member(collection_id, 904, "英国 · 维多利亚 · 1 便士")
+    repository.upsert_coin_explore_candidate(
+        _explore_candidate(
+            990009,
+            issuer="希腊",
+            ruler="乔治一世",
+            denomination="10 莱普塔",
+            title="希腊 · 10 莱普塔",
+            years=(1869, 1870),
+        )
+    )
+    session_id = repository.upsert_coin_session(
+        CoinSession(
+            id=None,
+            mxiqi_id="similar-rail-session",
+            shop_id=None,
+            title="希腊专场",
+            status="预展",
+            auction_at=repository.utcnow(),
+            auction_at_raw=None,
+            deposit=None,
+            lot_total=1,
+            view_count=0,
+            cover_urls=[],
+            fetched_at=repository.utcnow(),
+        )
+    )
+    repository.upsert_coin_lot(
+        CoinLot(
+            id=None,
+            session_id=session_id,
+            mxiqi_id="similar-rail-lot",
+            lot_no="1",
+            title="希腊王国1869年10雷普塔(乔治一世第一版)",
+            start_price=1.0,
+            current_price=2.0,
+            image_urls=[],
+            tags={},
+            match_score=0.0,
+            is_recommended=False,
+            fetched_at=repository.utcnow(),
+        )
+    )
+
+    page = web.get("/coins/collection")
+    assert "希腊王国1869年10雷普塔" in page.text
+    assert 'coin-rail-circle is-similar">1 件<' in page.text
+    # 只展示当日有拍品命中的相似目标：1 项 1 件
+    assert "相似 1 项 · 命中 1 件" in page.text
+
+
+def test_sessions_page_rematches_today_before_listing(web):
+    """拍场页在没有命中专场时，按当前画像重算当日匹配后再展示。"""
+    series_id = repository.upsert_coin_series_cn(
+        _series(903, min_year=1800, max_year=1804)
+    )
+    for year in range(1800, 1805):
+        repository.upsert_coin_issue_cn(_issue(12000 + year, series_id, year=year))
+    collection_id = repository.upsert_coin_collection_series(
+        collection_key="uk-penny-rematch",
+        name="英国 · 维多利亚 · 1 便士",
+        country="英国",
+        ruler="维多利亚",
+        denomination="1 便士",
+        size_mm=31.0,
+        size_band="大",
+    )
+    repository.upsert_coin_collection_member(collection_id, 903, "英国 · 维多利亚 · 1 便士")
+
+    session_id = repository.upsert_coin_session(
+        CoinSession(
+            id=None,
+            mxiqi_id="rematch-session",
+            shop_id=None,
+            title="今日专场",
+            status="预展",
+            auction_at=repository.utcnow(),
+            auction_at_raw=None,
+            deposit=None,
+            lot_total=1,
+            view_count=0,
+            cover_urls=[],
+            fetched_at=repository.utcnow(),
+        )
+    )
+    repository.upsert_coin_lot(
+        CoinLot(
+            id=None,
+            session_id=session_id,
+            mxiqi_id="rematch-lot",
+            lot_no="1",
+            title="英国 1800 年 1 便士",
+            start_price=1.0,
+            current_price=2.0,
+            image_urls=[],
+            tags={},
+            match_score=0.0,
+            is_recommended=False,
+            fetched_at=repository.utcnow(),
+        )
+    )
+
+    page = web.get("/coins")
+    assert f'href="/coins/session/{session_id}"' in page.text
 
 
 def test_web_fixture_uses_empty_db(web):
@@ -734,6 +1013,9 @@ def _explore_candidate(
     size_mm: float = 31.0,
     years: tuple[int, ...] = (1900, 1901),
     title: str = "法国 · 10 分",
+    issuer: str = "法国",
+    ruler: str = "第三共和国",
+    denomination: str = "1 便士",
 ) -> CoinExploreCandidate:
     now = repository.utcnow()
     payload = {
@@ -741,11 +1023,11 @@ def _explore_candidate(
         "title": title,
         "url": None,
         "object_type": "标准流通币",
-        "issuer": "法国",
+        "issuer": issuer,
         "min_year": years[0],
         "max_year": years[-1],
-        "ruler": "第三共和国",
-        "denomination": "1 便士",
+        "ruler": ruler,
+        "denomination": denomination,
         "size_mm": size_mm,
         "weight_g": 10.0,
         "thickness_mm": None,
