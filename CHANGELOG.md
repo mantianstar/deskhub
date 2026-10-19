@@ -10,6 +10,153 @@
 
 ---
 
+## v1.31 — 2026-10-20 拍品页 Lot 号按数字排序
+
+**起因**：拍品页「其他拍品」按 `lot_no` 字符串排序，`Lot.12` 排到了 `Lot.119` 后面。
+
+**改了什么**：`get_coin_session_detail` 的排序键改为 `CAST(REPLACE(lot_no, 'Lot.', '') AS INTEGER)`，其余优先级（推荐、匹配分、空值、原文、id）不变。
+
+**验证**：`.venv/bin/python -m pytest tests -q` → 324 passed（新增 `test_session_page_orders_lots_by_number`）。
+
+**受影响**：`app/repository.py`、`tests/test_coins_pages.py`。
+
+---
+
+## v1.30 — 2026-10-19 相似推荐改为先匹配再取数
+
+**起因**：P3 先按相似度取 5 个候选年份，再与当日拍品匹配，实库出现「5 个相似目标、0 个命中」；用户要求最后展示的是实际匹配结果。
+
+**改了什么**
+
+- `build_recommendations` 新增 `similar_lots`：P3 候选先逐条与当日拍品匹配，只保留确有命中的目标，最多取 `min_results`（默认 5）个。
+- `load_recommendations` / `rematch_today` / `rematch_all` 都传入当日拍品，页面与入库推荐位口径一致。
+- 匹配不足 5 个时按实际命中数展示，不再用未命中目标凑数。
+- 实库 10-19 数据验证：P3 由 5 项降为 2 项（希腊 1869、东非 1943），2 项均有拍品命中。
+
+**验证**：`.venv/bin/python -m pytest tests -q` → 323 passed。
+
+**受影响**：`app/coins/recommend.py`、`tests/test_coins_collection.py`、`spec/coins.md` §14.17.3/§14.17.6、`plan/coins.md` §18.17。
+
+---
+
+## v1.29 — 2026-10-19 右侧拍场面板口径与布局
+
+**起因**：左侧相似推荐显示 5 项，右侧拍场只有 1 个圆圈，缺少「推荐项数 / 实际命中件数」的解释；圆圈在左侧，统计顺序也与预期不符。
+
+**改了什么**
+
+- 右侧面板标题下新增口径说明：「精准 X 项 · 命中 Y 件」「相似 X 项 · 命中 Y 件」；实库当前为相似 5 项、命中 1 件（其余 4 项目标当日无对应拍品，不是漏显示）。
+- 场次行：圆圈移到右侧并垂直居中，显示该场总匹配件数（精准 + 相似），例如「1 件」；统计顺序改为「总件数 → 精准 → 相似」。
+- 「其他专场」行按图片补成「N 场 · M 件命中」+ 圆形「查看」按钮。
+- 圆圈改为绿色系：精准用深绿高亮，相似用浅绿。
+
+**验证**：`.venv/bin/python -m pytest tests -q` → 322 passed。
+
+**受影响**：`app/routers/coins.py`、`app/templates/coins/collection.html`、`app/static/style.css`、`tests/test_coins_collection.py`、`spec/coins.md` §14.7/§14.17.6、`plan/coins.md` §18.17。
+
+---
+
+## v1.28 — 2026-10-19 相似推荐场次接通与拍场性能
+
+**起因**：今日推荐左侧有相似推荐，右侧拍场却没有对应场次；拍场「是否推荐」只有全部/推荐；拍场与拍品页一次加载 2800+ 拍品，推荐计算约 4 秒。
+
+**改了什么**
+
+- 面值音译双向展开（`莱普塔` ↔ `雷普塔`），站点写「10雷普塔」的拍品能命中推荐词「10 莱普塔」，右侧今日拍场显示相似场次。
+- `/coins`：「是否推荐」改为 全部 / 是 / 否，默认是；「否」只看没有精准 / 相似匹配的专场。
+- `/coins` 专场列表 12 个/页；`/coins/session/{id}` 其他拍品 20 件/页，精准 / 相似推荐保持完整展示。
+- `translate.to_zh`、`textmatch.normalize` 加 `lru_cache`；实库 2841 件当日拍品下，推荐加载由约 4s 降到约 0.6s（暖缓存约 0.2s），页面响应约 0.3s。
+
+**验证**：`.venv/bin/python -m pytest tests -q` → 322 passed。
+
+**受影响**：`app/routers/coins.py`、`app/coins/recommend.py`、`app/coins/translate.py`、`app/textmatch.py`、`app/templates/coins/sessions.html`、`session.html`、`tests/test_coins_collection.py`、`tests/test_coins_pages.py`、`spec/coins.md` §14.7/§14.17.5、`plan/coins.md` §18.8。
+
+---
+
+## v1.27 — 2026-10-19 今日推荐与拍场筛选 / 聚合面板
+
+**起因**：推荐原因筛选把相似推荐一起过滤掉，右侧拍场全量铺开过长；拍场页只能看有推荐的专场，拍品页也无法区分精准与相似命中。
+
+**改了什么**
+
+- `/coins/collection`：推荐原因下拉去掉「相似推荐」，只筛精准匹配；相似推荐模块常驻展示；推荐卡片标题改为「国家 · 执政者 · 面值」；右侧今日拍场改为聚合面板，高亮圆圈显示匹配件数，最多 6 场，其余折叠为「其他专场」+ 查看。
+- `/coins`：新增「是否推荐」（全部 / 推荐，默认推荐）与「推荐类型」（全部 / 精准匹配 / 相似推荐，默认全部）；卡片显示精准 / 相似件数；「其他专场」查看跳当日全部拍场。
+- `/coins/session/{id}`：「命中推荐」改为「精准推荐」，下方新增相似推荐模块；专场统计改为「精准推荐 X 件 · 相似推荐 X 件」。
+
+**验证**：`.venv/bin/python -m pytest tests -q` → 319 passed。
+
+**受影响**：`app/routers/coins.py`、`app/coins/recommend.py`、`app/repository.py`、`app/models.py`、`app/templates/coins/collection.html`、`sessions.html`、`session.html`、`app/static/style.css`、`tests/test_coins_collection.py`、`tests/test_coins_pages.py`、`spec/coins.md` §14.7/§14.17.6、`plan/coins.md` §18.8/§18.17。
+
+---
+
+## v1.26 — 2026-10-19 今日推荐拆分精准匹配 / 相似推荐
+
+**起因**：今日命中与相似推荐混在一张列表里，KPI 把 P3 也算作命中；右侧拍场全量铺开，长列表难扫。
+
+**改了什么**
+
+- `/coins/collection`：左侧拆成【精准匹配】（P1/P2，橙色高亮）与【相似推荐】（P3，灰色弱化）；顶部「精准匹配店铺 / 拍品」只统计 P1/P2 命中，相似推荐不计入。
+- 「是否命中」：已命中只看精准匹配，未命中只看相似推荐，全部两段同时展示；系列 / 推荐原因筛选对两段同时生效。
+- 右侧今日拍场按「精准匹配 > 相似推荐 > 无关」排序，显示 🎯匹配 X 件 / 💡相似 X 件角标；默认前 8 场，可展开并在右侧内部滚动。
+
+**验证**：`.venv/bin/python -m pytest tests -q` → 318 passed。
+
+**受影响**：`app/routers/coins.py`、`app/templates/coins/collection.html`、`app/static/style.css`、`tests/test_coins_collection.py`、`spec/coins.md` §14.7/§14.17.6、`plan/coins.md` §18.17。
+
+---
+
+## v1.25 — 2026-10-19 已命中口径与拍场自动重算
+
+**起因**：今日推荐的下拉把「已命中」写成「今日命中 > 0」，相似推荐没有命中拍品时被算作未命中；拍场页只在每日采集后更新命中标记，打开时可能整页为空。
+
+**改了什么**
+
+- `/coins/collection`：「是否命中」的「已命中」选项去掉「今日命中 > 0」后缀；跨系列相似（P3）推荐计入已命中，也不再显示「今日未命中」。
+- `/coins`：当天没有命中专场时，打开页面按当前画像重算当日匹配再展示，不再依赖上一轮采集留下的标记。
+
+**验证**：`.venv/bin/python -m pytest tests -q` → 318 passed。
+
+**受影响**：`app/routers/coins.py`、`app/coins/recommend.py`、`app/repository.py`、`app/templates/coins/collection.html`、`tests/test_coins_collection.py`、`spec/coins.md` §14.7/§14.17.6、`plan/coins.md` §18.17。
+
+---
+
+## v1.24 — 2026-10-19 铜币 P2/P3/P4 收尾
+
+**起因**：卡片化完成后，品相台账长表查 / 存不便且看不出归属；系列详情要补齐数据得绕回采集中心，未采纳候选没有明确出口；拍场详情只看命中拍品，未命中项无处可看。
+
+**改了什么**
+
+- 品相台账：查询表单 `sticky top` 吸顶、保存按钮 `sticky bottom` 吸底；新增派生列「所属收藏系列」（按国家 + 面值宽松匹配收藏系列，不落库）。
+- 系列详情：增加 ② 获取年份信息 / ③ 获取年份估值 / ④ 下载图片 动作条，带 `return_to` 回本页；未采纳候选显示「来自候选池，尚未采纳」横幅 + 采纳按钮（采纳后仍回本页）。
+- 拍场详情：拍品分「命中推荐 / 其他拍品」两组；命中项按三层推荐计算并显示推荐原因（缺失年份 / 差品升级 / 跨系列相似）。
+- 候选池「运行扫描」按钮（可选）未做：保留 CLI `python -m app.cli coins-explore` 提示。
+
+**验证**：`.venv/bin/python -m pytest tests -q` → 316 passed。
+
+**受影响**：`app/models.py`、`app/repository.py`、`app/routers/coins.py`、`app/templates/coins/{grades,series,session}.html`、`app/static/style.css`、`tests/test_coins_pages.py`、`spec/coins.md` §14.7/§14.14/§14.16、`plan/coins.md` §18.8/§18.14/§18.16、`tasks/coins.md`。
+
+---
+
+## v1.23 — 2026-10-19 铜币模块统一壳与今日推荐
+
+**起因**：铜币 10 个页面按技术管道切分，导航三套、宽度两档；今日推荐只显示命中条数，看不到店铺/拍品；旧版标签画像与收藏画像重名。
+
+**改了什么**
+
+- 新增 `coins/_macros.html`：5 个一级入口（今日推荐 / 收藏 / 币库 / 候选池 / 拍场）+ 收藏、币库子导航；所有铜币页统一页头与 1040px 宽度。
+- `/coins/collection` 改名「今日推荐」：4 个 KPI + 两栏布局（左侧推荐卡片、右侧今日拍场），命中店铺/拍品内联，
+  收藏画像摘要折叠；颜色沿用站点蓝色主色。移除重复的「推荐 N 条」标题与跳转行；样式表加版本号避免浏览器缓存旧 CSS。
+- 收藏页改为 KPI + 收藏卡片 + 覆盖进度 + 年份矩阵 + 品相面板；成员表与映射收进折叠区。
+- 币库改为系列卡片 + 状态 chip + 补全 / 详情；采集中心改为 4 步流水线；候选池改为候选卡片 + 采纳 CTA。
+- 删除旧版标签画像 `/coins/profile` 路由与模板；`coin_profile_tags` 与兜底匹配保留。
+- 顶部「铜币」入口改指 `/coins/collection`；`/coins` 仍是拍场。
+
+**验证**：`.venv/bin/python -m pytest tests/test_coins_pages.py tests/test_coins_collection.py tests/test_sources.py -q` → 89 passed。
+
+**受影响**：`app/routers/coins.py`、`app/templates/coins/*`、`app/static/style.css`、`app/templates/base.html`、`tests/*`、`PROJECT_MAP.md`、`spec/coins.md` §14.2/§14.7/§14.17.6、`plan/coins.md` §18.2/§18.4/§18.8/§18.11/§18.17、`tasks/coins.md`。
+
+---
+
 ## v1.22 — 2026-10-18 候选池筛选与图片放大
 
 **起因**：候选池只能整表浏览，想按国家 / 执政者 / 面值收窄时要靠肉眼找；正反图只有 40px 缩略图。

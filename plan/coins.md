@@ -40,8 +40,8 @@ app/
 │   ├── grades.py        # 历史购买品相录入：年份/面值按 Numista 口径统一 + 组合去重合并（§18.16）
 │   └── pipeline.py      # 拍卖管道：采集 → 匹配 → 定价 编排（调度器与 CLI 共用）
 ├── textmatch.py         # 面值/材质文本匹配（采集过滤与页面筛选共用，§18.13.3 / §18.14）
-├── routers/coins.py     # 拍卖页（/coins、/coins/session/{id}、/coins/profile）+ 参考库页（/coins/info、/coins/series/{id}、/coins/manage）+ 品相录入页（/coins/grades）
-└── templates/coins/     # sessions.html、session.html、profile.html、info.html、series.html、manage.html、grades.html
+├── routers/coins.py     # 拍场（/coins、/coins/session/{id}）+ 币库（/coins/info、/coins/series/{id}、/coins/manage）+ 收藏与今日推荐（/coins/collections、/coins/grades、/coins/collection、/coins/explore）
+└── templates/coins/     # sessions.html、session.html、info.html、series.html、manage.html、grades.html、collections.html、collection.html、explore.html
 config/config.yaml       # coins: 段（见 §18.10）
 data/
 └── orders.xlsx          # 画像输入（已存在）
@@ -66,7 +66,8 @@ data/
 2. 每行「宝贝名称」按 `batch_size` 分批送 LLM，抽 `{country, era, denomination, category, condition}`（复用 `app/llm.py`，prompt `prompt_version = coins-v1`，FakeClient 可注入）
 3. 写 `coin_orders`（幂等键 `(order_no, item_name)`）
 4. 按维度聚合频次 → `coin_profile_tags`（`weight = 频次`，可后续人工调）
-5. **首次需人工校对一遍再启用**（spec/coins.md §14.9）：`/coins/profile` 可启停 / 改权重 / 增删
+5. **首次需人工校对一遍再启用**（spec/coins.md §14.9）：旧版 `/coins/profile` 编辑页已于 2026-10-19 移除；
+   标签仍由 CLI 生成并入库，作为未建立收藏系列时的兜底画像
 6. 画像改动次日生效，不追溯改历史推荐（每天管道现取 `enabled=1` 的标签）
 
 ---
@@ -197,21 +198,24 @@ CREATE INDEX IF NOT EXISTS idx_coin_runs ON coin_fetch_runs(kind, started_at DES
 
 | 路由 | 方法 | 职责 | 模板 |
 |---|---|---|---|
-| `/coins` | GET | 专场列表（**仅**含推荐拍品的专场；按拍卖截止日期筛选，默认今日；空态提示） | `coins/sessions.html` |
-| `/coins/session/{id}` | GET | 单专场：店铺头 + 推荐拍品列表（id 不存在返回 404） | `coins/session.html` |
-| `/coins/profile` | GET | 画像标签列表（按维度分组） | `coins/profile.html` |
-| `/coins/profile/{id}/toggle` | POST | 启停标签 | — |
-| `/coins/profile/{id}/weight` | POST | 改权重 | — |
-| `/coins/profile/{id}/delete` | POST | 删标签 | — |
-| `/coins/profile/add` | POST | 手工增标签（维度非法 → 400） | — |
+| `/coins` | GET | 拍场：专场列表（按拍卖截止日期、是否推荐 全部/是/否、推荐类型筛选；默认今日 + 是；12 个/页；空态提示） | `coins/sessions.html` |
+| `/coins/session/{id}` | GET | 拍场详情：店铺头 + 拍品分「精准推荐 / 相似推荐 / 其他拍品」三组（推荐项带推荐原因，其他拍品 20 件/页；id 不存在返回 404） | `coins/session.html` |
 | `/coins/refresh` | POST | 手工触发一轮采集 + 查价（后台任务，302 回 `/coins`） | — |
+
+**性能**
+
+- `translate.to_zh` 与 `textmatch.normalize` 都是纯函数，统一加 `lru_cache`：当日 2800+ 拍品、
+  13 个收藏系列时，推荐加载从约 4s 降到约 0.6s（暖缓存约 0.2s）。
+- 面值音译差异（`莱普塔` / `雷普塔`）由 `denomination_variants` 双向展开，避免相似推荐与右侧拍场脱节。
 
 **模板约定**
 
 - 视觉参考 `data/shop.png`（专场卡：拍卖时间 / 专场名 / 店铺头像 / 4 图 / 拍品数 / 围观数）与 `data/item.png`（店铺头 + 拍品卡）。
 - 「推荐价」区块必须同时显示**区间 + 样本数 + 关键词**，可点开看命中的成交明细（`coin_price_refs.raw`），对应 spec/coins.md §14.6「可追溯」。
 - 沿用 [knowledge.md](./knowledge.md) §10 前端约定：Jinja2 + 少量原生 JS、无构建链、无 CDN。
-- 导航栏「铜币」为正式入口（`base.html`）；`/funds` 仍为占位。
+- 导航栏「铜币」为正式入口（`base.html`），指向 `/coins/collection`（今日推荐）；`/coins` 仍是拍场。
+- 铜币模块内统一使用 `coins/_macros.html` 的 5 个一级入口：今日推荐 / 收藏 / 币库 / 候选池 / 拍场。
+- 旧版标签画像页面 `/coins/profile` 已移除，`coin_profile_tags` 与兜底匹配保留。
 
 ---
 
@@ -289,7 +293,7 @@ coins:
 | 请求参数 | 断言 `list_sessions` 两个 mode 都请求、按 id 去重、滤掉公示；`search_sold` 的 body 是 `{"search_params":{"keywords":…,"status":2}}`；空关键词不发请求 |
 | 匹配 | 修饰词归一（「极美品 X」命中 X）、无命中不推荐、多命中按权重累加 |
 | 定价统计 | 样本 5 条 → 中位数/分位正确；样本 2 条 → 只给区间且标「样本不足」；0 条 → 不写点估计 |
-| 页面 | `TestClient` 渲染 `/coins`（空态 + 有数据两态）、`/coins/session/{id}`（店铺头字段齐全）、`/coins/profile` 增删改 |
+| 页面 | `TestClient` 渲染 `/coins`（空态 + 有数据两态）、`/coins/session/{id}`（店铺头字段齐全）；旧版 `/coins/profile` 已移除，断言 404 |
 
 > 画像的 LLM、麦稀奇的网络都不进测试；两者都用 fixture / FakeClient 挡在最外层。
 
@@ -393,12 +397,12 @@ coins:
 | 方法 | 路径 | 职责 | 同步 / 异步 | 模板 |
 |---|---|---|---|---|
 | GET | `/coins/info` | 查询页：国家 + 年份 + 面值 + 材质（均可选）→ 本地系列列表 | 同步 | `coins/info.html` |
-| GET | `/coins/series/{numista_id}` | 系列详情：系列信息 + **合并后的「各年份信息」表**（年份信息 + 估值同表）；不存在 404 | 同步 | `coins/series.html` |
+| GET | `/coins/series/{numista_id}` | 系列详情：系列信息 + **合并后的「各年份信息」表** + ②③④ 补数据动作条；未采纳候选用候选 payload 渲染并给采纳横幅；不存在 404 | 同步 | `coins/series.html` |
 | GET | `/coins/manage` | 管理页：两步表单 + 结果列表（结果按面值 / 材质本地筛选，含每系列已采「年份数 · 版别数」）+ 可选错误提示 | 同步 | `coins/manage.html` |
 | POST | `/coins/manage/fetch-series` | 按钮 1：`collect_series(country, year, denomination, composition)`——取详情后按**面值 / 材质精确过滤**（见 §18.13.3） | 同步 `await` | 302 → `/coins/manage?...` |
-| POST | `/coins/manage/fetch-issues` | 按钮 2：`collect_issues(series_id)` | 同步 `await` | 302 → `/coins/manage?...` |
-| POST | `/coins/manage/fetch-values` | 按钮 3：`numista_web.collect_issue_values(series_id)`（类型页 / CDP） | 同步 `await` | 302 → `/coins/manage?...` |
-| POST | `/coins/manage/download-images` | 按钮 4：`numista_web.download_series_images(numista_id=series_id)`（CDP 下载） | 同步 `await` | 302 → `/coins/manage?...` |
+| POST | `/coins/manage/fetch-issues` | 按钮 2：`collect_issues(series_id)`；可选 `return_to` 回跳 | 同步 `await` | 302 → `return_to` 或 `/coins/manage?...` |
+| POST | `/coins/manage/fetch-values` | 按钮 3：`numista_web.collect_issue_values(series_id)`（类型页 / CDP）；可选 `return_to` | 同步 `await` | 302 → `return_to` 或 `/coins/manage?...` |
+| POST | `/coins/manage/download-images` | 按钮 4：`numista_web.download_series_images(numista_id=series_id)`（CDP 下载）；可选 `return_to` | 同步 `await` | 302 → `return_to` 或 `/coins/manage?...` |
 
 **为什么按钮 3 / 4 也同步 + 就地提示**：它们**不走 Numista 接口、走类型页**（需用户自己开的调试端口 Chrome，见 §18.13.2 / §18.15），失败抛 `NumistaPageError`（`_cdp_hint` 已带「怎么开 Chrome」的指引）—— 与 `NumistaError` 一样用 `try/except` 就地渲染成页面提示，不吞进日志。
 
@@ -594,7 +598,7 @@ delete_coin_purchase_grade(country, era, denomination) -> bool     # 选「未�
 
 | 方法 | 路径 | 职责 | 模板 |
 |---|---|---|---|
-| GET | `/coins/grades` | `build_combos` + `filter_combos`（国家 / 年份 / 面值 / 品相，均可空）→ 组合表 | `coins/grades.html` |
+| GET | `/coins/grades` | `build_combos` + `filter_combos`（国家 / 年份 / 面值 / 品相，均可空）→ 组合表；每行补派生列「所属收藏系列」（按国家 + 面值匹配收藏系列，不落库） | `coins/grades.html` |
 | POST | `/coins/grades/add` | 手工新增一条组合（四项必填；统一后 upsert） | 302 → `/coins/grades` |
 | POST | `/coins/grades/delete` | 删整行：`order_ids_for_combo` 反查订单 → `delete_coin_orders` + `delete_coin_purchase_grade` | 302 → 回查询页（带原筛选条件） |
 | POST | `/coins/grades/save` | 保存整表：逐行 upsert / 删；键不完整或品相非法 → 400（整批不落库） | 302 → 回查询页（带原筛选条件） |
@@ -614,7 +618,8 @@ delete_coin_purchase_grade(country, era, denomination) -> bool     # 选「未�
 - 新建 `app/templates/coins/grades.html`：查询表单 + **新增组合表单**（国家 / 年份 / 面值 / 品相四项必填）+ 结果表（含**操作列：删除**）+
   底部「保存」；删按钮的二次确认写在 `{% block scripts %}` 的原生 JS 里；`digest-meta` 放同款子导航，
   并在 `sessions.html` / `info.html` / `manage.html` 的子导航里**补「品相录入」入口**。
-- `style.css` 末尾新增 `.coin-grade-table select`（行内下拉观感）、`.coin-grade-actions`（底部保存按钮）、
+- `style.css` 末尾新增 `.coin-grade-table select`（行内下拉观感）、`.coin-grade-actions`（底部保存按钮，`sticky bottom` 吸底）、
+  `.coin-filter-sticky`（查询表单 `sticky top` 吸顶）、`.coin-grade-collection`（派生列弱化显示）、
   `.coin-grade-del`（小号按钮）与 `.btn-danger`（二次确认态描红）；其余复用既有类。
 
 **测试**（`tests/test_coins_pages.py` 增量，沿用「测试不发真实网络请求」）
@@ -626,6 +631,7 @@ delete_coin_purchase_grade(country, era, denomination) -> bool     # 选「未�
 | 手工新增的组合 | 无订单也进列表，`order_count = 0` |
 | 筛选 | 国家 / 年份 / 面值 / 品相分别命中；输入 `1808年` 命中 `1808` |
 | 页面 | 组合数 = 结果表行数（隐藏键）；下拉含「未录入 / 好 / 普通 / 差」；查询表单含品相筛选；新增表单在页内；每行一个删按钮；删路径与「确认删除」在页内；展示统一后的值 |
+| 派生列 | 「所属收藏系列」按国家 + 面值匹配收藏系列；匹配不上显示「—」 |
 | 保存 | 302 回原筛选；统一后落库；重存不新增行；已录值回显 `selected` |
 | 清除 | 选「未录入」→ 删该组合、其余保留 |
 | 校验 | 品相非法 / 国家或年份为空 → 400，且**一行都不落库** |
@@ -700,13 +706,22 @@ CREATE TABLE IF NOT EXISTS coin_collection_series_members (
 
 **页面**
 
-- `/coins/collection`：优先级规则说明 + 三层推荐合并表（一个年份一行，含推荐原因 / 今日命中，可按系列 / 推荐原因 / 是否命中筛选，是否命中默认「已命中」）+ 收藏系列画像卡片。
-- `/coins/collections`：新建收藏系列表单 + 每个系列的成员表 / 加入 series / 删除系列；
+- `/coins/collection`：**今日推荐**——4 个 KPI（精准匹配店铺 / 精准匹配拍品只统计 P1+P2）+ 两栏布局：左侧分段
+  【精准匹配】（P1+P2，橙色高亮）与【相似推荐】（P3，灰色弱化；先与当日拍品匹配，只保留有命中的目标，
+  最多 5 项，一个年份一张，标题按「国家 · 执政者 · 面值」，含推荐原因 / 发行量 / 稀有度 /
+  尺寸重量 / VF-XF / 命中店铺与拍品）；
+  可按系列 / 推荐原因 / 是否命中筛选（推荐原因只控制精准匹配；已命中过滤精准匹配的当日命中，未命中隐藏精准匹配）；
+  右侧今日拍场为聚合面板，按「精准匹配 > 相似推荐 > 无关」排序：标题下显示精准 / 相似各自的推荐项数
+  与当日命中件数；每行右侧居中圆圈显示该场总匹配件数，统计顺序为总件数 → 精准 → 相似；最多 6 场，
+  其余折叠为「其他专场」（场次 · 命中件数）+ 查看（跳当日全部拍场）；卡片内直接列出店铺、拍品标题、当前价与专场链接；
+  收藏画像摘要折叠在页尾。颜色沿用站点 `--accent` 蓝色主色，精准匹配用橙色强调、相似推荐用灰色弱化。
+- `/coins/collections`：收藏系列——新建收藏系列表单 + 每个系列的成员表 / 加入 series / 删除系列；
   series 候选只列 Bronze/Copper，按国家 + 执政者 + 面值筛选（默认取收藏系列自身的值）。
 - `/coins/explore`：候选池列表（Numista ID / 正反图 / 国家 / 执政者 / 面值 / 年份 / 规格 / 核实时间 / 状态），
   可按国家 + 执政者 + 面值逐级筛选（下拉只列当前范围内的值）；正反图点击用灯箱放大；
   每行状态下拉「候选 / 采纳 / 忽略」+ 保存；采纳写 `coin_series[_cn]` 与年份，忽略后列表隐藏。
-- 子导航在 `sessions/info/manage/grades/profile.html` 补「收藏画像」「系列映射」。
+- 铜币模块统一使用 `coins/_macros.html`：5 个一级入口（今日推荐 / 收藏 / 币库 / 候选池 / 拍场），
+  收藏与币库各有子导航；旧版标签画像页面已移除。
 
 **测试（`tests/test_coins_collection.py`）**
 
