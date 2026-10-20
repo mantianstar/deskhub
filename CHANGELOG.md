@@ -10,6 +10,82 @@
 
 ---
 
+## v1.36 — 2026-10-20 拍品搜索：只搜今日及以后，卡片直达具体拍品
+
+**起因**：搜索结果里混着已过截拍日期的专场；点拍品卡只看得到拍场页顶部，还得自己翻找那件拍品。
+
+**改了什么**：`search_coin_lots` 增加截拍日期下限（业务时区今日零点），搜索页只返回今日或以后截拍的拍品；拍品卡链接带 `lot` 参数与 `#coin-lot-{id}` 锚点，拍场详情页按 `lot` 翻到该拍品所在页并定位锚点。
+
+**验证**：`.venv/bin/python -m pytest tests/test_coins_pages.py -q`（新增 `test_search_page_skips_sessions_ended_before_today`，并断言卡片链接与锚点）。
+
+**影响文件**：app/repository.py、app/coins/search.py、app/routers/coins.py、app/templates/coins/search.html、app/templates/coins/session.html、spec/coins.md §14.7、plan/coins.md §18.8
+
+---
+
+## v1.35 — 2026-10-20 拍品搜索：数字与中文按相邻短语匹配
+
+**起因**：搜「英国 1便士」会把 6 便士带出来——`1` 被当成前缀 `1*`，命中了标题 / 标签里的年份 `1901`。
+
+**改了什么**：`fts_query` 把含中文的词项整体作为相邻短语（`"1 便 士"`），数字不再用前缀；纯字母仍保留前缀匹配。
+
+**验证**：`.venv/bin/python -m pytest tests -q` → 329 passed（新增 `test_search_page_keeps_denomination_adjacent`）。
+
+**影响文件**：app/textmatch.py、plan/coins.md §18.8、tasks/coins.md M29
+
+---
+
+## v1.34 — 2026-10-20 拍场：全局拍品搜索
+
+**起因**：拍品散在各场次里，只能先翻专场再看拍品，想直接按年份 / 国家 / 材质找一件拍品很费劲。
+
+**改了什么**
+
+- 拍场页右上角（「刷新今日拍品」左侧）新增全局搜索框，结果落在 `/coins/search`。
+- 关键词匹配拍品名、年份、国家、材质，支持价格区间；默认只展示进行中 / 即将开始的拍场。
+- 结果为拍品卡：图片、拍品名、当前价、所属拍场、截拍时间；推荐命中带「🎯 精准匹配」/「相似推荐」标签，按 精准 > 相似 > 关注店铺 > 普通 排序。
+- 新增 FTS5 索引 `coin_lot_fts`（CJK 逐字分词），`schema_version` 11 → 12 回填存量拍品。
+
+**验证**：`.venv/bin/python -m pytest tests -q` → 328 passed（新增 2 条搜索页用例）。
+
+**影响文件**：spec/coins.md §14.7、plan/coins.md §18.7/§18.8、tasks/coins.md M29、PROJECT_MAP.md
+
+---
+
+## v1.33 — 2026-10-20 拍品页：搜索拍品 + 隐藏推荐模块
+
+**起因**：专场拍品多时，想按名字快速定位拍品，也希望能直接收起推荐区专心看其他拍品。
+
+**改了什么**
+
+- 概览行最右侧新增工具条：拍品搜索框 + 「隐藏推荐模块」复选框。
+- 搜索只匹配拍品编号 / 名称；输入即隐藏精准 / 相似推荐两组，命中拍品汇总到「搜索结果」组并实时刷新件数；清空恢复三段式布局。
+- 勾选「隐藏推荐模块」时不渲染精准 / 相似两组，其他拍品上移。
+- 推荐区被隐藏时，概览中的「精准推荐 N 件 / 相似推荐 N 件」置灰并加删除线。
+
+**验证**：`.venv/bin/python -m pytest tests -q` → 326 passed（新增 `test_session_page_has_lot_search_and_hide_rec_toggle`）。
+
+**受影响**：`app/templates/coins/session.html`、`app/static/style.css`、`tests/test_coins_pages.py`、`spec/coins.md` §14.7。
+
+---
+
+## v1.32 — 2026-10-20 关注店铺 + 拍场排序 / 筛选联动
+
+**起因**：希望把常看的店铺标出来，并让常看店铺的拍场在列表与今日推荐里靠前。
+
+**改了什么**
+
+- 新表列 `coin_shops.followed`（schema v11 + `app/migrations/v11.py`）；采集 upsert 不覆盖该列。
+- 拍品页店铺名右侧新增 `+ 关注` / `★ 已关注` 切换按钮，`POST /coins/shop/{id}/follow` 落库并回跳来源页。
+- 拍场列表与今日推荐右侧「今日拍场」排序统一为：精准匹配 > 相似推荐 > 已关注店铺 > 普通拍场，同层按截拍时间。
+- 拍场列表筛选栏新增「关注状态」（全部 / 已关注 / 未关注）；原「是否推荐（是 / 否）」改为「推荐状态（全部 / 已推荐 / 未推荐）」。
+- 列表 / 详情 / 今日拍场店铺名旁统一加金橙色 ★。
+
+**验证**：`.venv/bin/python -m pytest tests -q` → 325 passed（新增 `test_shop_follow_toggle_filters_and_sorts`）。
+
+**受影响**：`app/models.py`、`app/migrations/v11.py`、`app/repository.py`、`app/routers/coins.py`、`app/templates/coins/{sessions,session,collection}.html`、`app/static/style.css`、`tests/test_coins_pages.py`、`spec/coins.md` §14.7、`plan/coins.md` §18.7/§18.8、`tasks/coins.md` M28。
+
+---
+
 ## v1.31 — 2026-10-20 拍品页 Lot 号按数字排序
 
 **起因**：拍品页「其他拍品」按 `lot_no` 字符串排序，`Lot.12` 排到了 `Lot.119` 后面。

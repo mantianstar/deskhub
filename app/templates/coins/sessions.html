@@ -8,6 +8,10 @@
 {% set subtitle = "共 " ~ card_total ~ " 个专场" %}
 {% if summary.last_ok_at %}{% set subtitle = subtitle ~ " · 数据更新至 " ~ (summary.last_ok_at | local_time) %}{% endif %}
 {% call coin_head("拍场", subtitle) %}
+  <form class="coin-global-search" method="get" action="/coins/search">
+    <input type="search" name="q" placeholder="搜索全部拍品" aria-label="全局拍品搜索">
+    <button class="btn" type="submit">搜索</button>
+  </form>
   <form method="post" action="/coins/refresh">
     <button class="btn" type="submit">刷新今日拍品</button>
   </form>
@@ -18,11 +22,18 @@
     <label class="field">拍卖截止日期
       <input type="date" name="auction_date" value="{{ auction_date }}">
     </label>
-    <label class="field">是否推荐
+    <label class="field">推荐状态
       <select name="rec">
         <option value="all"{% if filter_rec == 'all' %} selected{% endif %}>全部</option>
-        <option value="yes"{% if filter_rec == 'yes' %} selected{% endif %}>是</option>
-        <option value="no"{% if filter_rec == 'no' %} selected{% endif %}>否</option>
+        <option value="yes"{% if filter_rec == 'yes' %} selected{% endif %}>已推荐</option>
+        <option value="no"{% if filter_rec == 'no' %} selected{% endif %}>未推荐</option>
+      </select>
+    </label>
+    <label class="field">关注状态
+      <select name="follow">
+        <option value="all"{% if filter_follow == 'all' %} selected{% endif %}>全部</option>
+        <option value="followed"{% if filter_follow == 'followed' %} selected{% endif %}>已关注</option>
+        <option value="unfollowed"{% if filter_follow == 'unfollowed' %} selected{% endif %}>未关注</option>
       </select>
     </label>
     <label class="field">推荐类型
@@ -44,6 +55,9 @@
         {{ coin_session_status_labels.get(card.status, card.status or '未知') }}
       </span>
       <span class="coin-time">截拍 {{ card.auction_at_raw or (card.auction_at | local_time) }}</span>
+      {% if card.shop_name %}
+      <span class="coin-session-shop">{{ card.shop_name }}{% if card.shop_followed %}<span class="coin-follow-star" title="已关注店铺">★</span>{% endif %}</span>
+      {% endif %}
       {% if card.shop_avatar %}
       <img class="coin-avatar" src="{{ card.shop_avatar }}" alt="{{ card.shop_name or '' }}" loading="lazy">
       {% endif %}

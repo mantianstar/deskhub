@@ -43,6 +43,7 @@
 | `/control` | `app/routers/control.py` | `control.html` |
 | `/funds` | `app/routers/placeholders.py` | `placeholder.html` |
 | `/coins`、`/coins/session/{id}` | `app/routers/coins.py` | `coins/sessions.html`、`coins/session.html`（拍场） |
+| `/coins/search` | 同上 | `coins/search.html`（全局拍品搜索） |
 | `/coins/manage`、`/coins/info`、`/coins/series/{id}` | 同上 | `coins/manage.html`（采集中心）、`coins/info.html`（币库）、`coins/series.html`（系列详情） |
 | `/coins/explore` | 同上 | `coins/explore.html`（候选池） |
 | `/coins/grades` | 同上 | `coins/grades.html`（品相台账） |
@@ -65,6 +66,7 @@ Numista 类型页（估值 / 稀有度）────────┘            
 | `app/coins/collection.py` | `build_year_specs`、`build_profile(s)`、`load_profiles`、`load_explore_profiles` |
 | `app/coins/explore.py` | `build_seeds`、`match_seed`、`scan_candidates`、`load_candidate_profiles`、`adopt_candidate` |
 | `app/coins/recommend.py` | `build_recommendations`、`year_labels`、`match_lots`、`load_recommendations` |
+| `app/coins/search.py` | `search_lots`（全局拍品搜索：FTS 候选 + 推荐标签 + 排序） |
 | `app/coins/matcher.py` | `match_lot`、`rematch_all` |
 | `app/coins/profile.py` | `read_orders`、`parse_extraction`、`rebuild_profile` |
 | `app/coins/grades.py` | `normalize_country/year/denomination`、`build_combos` |
@@ -79,7 +81,7 @@ Numista 类型页（估值 / 稀有度）────────┘            
 | 分组 | 表 |
 |---|---|
 | 知识聚合 | `sources`、`items`、`item_scores`、`fetch_runs` |
-| 铜币拍卖 | `coin_shops`、`coin_sessions`、`coin_lots`、`coin_price_refs`、`coin_fetch_runs`、`coin_api_usage` |
+| 铜币拍卖 | `coin_shops`、`coin_sessions`、`coin_lots`、`coin_lot_fts`（FTS5 搜索索引）、`coin_price_refs`、`coin_fetch_runs`、`coin_api_usage` |
 | Numista | `coin_series(_cn)`、`coin_issues(_cn)`、`coin_issue_values` |
 | 收藏 | `coin_orders`、`coin_purchase_grades`、`coin_profile_tags`、`coin_collection_series(_members)`、`coin_explore_candidates` |
 | 系统 | `schema_meta`、`feature_switches` |

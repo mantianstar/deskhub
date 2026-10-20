@@ -9,7 +9,7 @@ M14 的采集按钮在用例里一律把 `numista.collect_*` 换成桩，不发�
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
@@ -168,7 +168,7 @@ def test_sessions_page_shows_only_sessions_with_hits(web):
 
 
 def test_sessions_page_filters_recommendation_and_type(web):
-    """是否推荐默认只看推荐；全部展示无匹配专场；推荐类型可筛精准 / 相似。"""
+    """推荐状态默认只看推荐；全部展示无匹配专场；推荐类型可筛精准 / 相似。"""
     session_id = _seed_session()
     other_id = repository.upsert_coin_session(
         CoinSession(
@@ -188,7 +188,7 @@ def test_sessions_page_filters_recommendation_and_type(web):
     )
 
     page = web.get("/coins")
-    assert '<option value="yes" selected>是</option>' in page.text
+    assert '<option value="yes" selected>已推荐</option>' in page.text
     assert "一个无关专场" not in page.text
 
     page = web.get("/coins?rec=all")
@@ -204,6 +204,88 @@ def test_sessions_page_filters_recommendation_and_type(web):
 
     page = web.get("/coins?type=precise")
     assert f'href="/coins/session/{session_id}"' in page.text
+
+
+def _seed_empty_session(name: str, *, followed: bool) -> int:
+    """造一个没有拍品的专场（店铺名 = name），返回 session_id。"""
+    now = repository.utcnow()
+    shop_id = repository.upsert_coin_shop(
+        CoinShop(
+            id=None,
+            mxiqi_uid=f"shop-{name}",
+            name=name,
+            avatar_url=None,
+            badges=[],
+            fetched_at=now,
+        )
+    )
+    repository.set_coin_shop_followed(shop_id, followed)
+    return repository.upsert_coin_session(
+        CoinSession(
+            id=None,
+            mxiqi_id=f"session-{name}",
+            shop_id=shop_id,
+            title=f"{name}的专场",
+            status="running",
+            auction_at=_today_auction_at(),
+            auction_at_raw=None,
+            deposit=None,
+            lot_total=0,
+            view_count=0,
+            cover_urls=[],
+            fetched_at=now,
+        )
+    )
+
+
+def test_shop_follow_toggle_filters_and_sorts(web):
+    """详情页可关注 / 取消关注；列表按关注状态筛选，关注店铺排在普通拍场前。"""
+    session_id = _seed_session()
+    detail = repository.get_coin_session_detail(session_id)
+    shop_id = detail.shop.id
+
+    page = web.get(f"/coins/session/{session_id}")
+    assert "+ 关注" in page.text
+
+    response = web.post(
+        f"/coins/shop/{shop_id}/follow",
+        data={"follow": "1", "next": f"/coins/session/{session_id}"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 302
+    page = web.get(f"/coins/session/{session_id}")
+    assert "★ 已关注" in page.text
+    assert 'class="coin-follow-star"' in page.text
+
+    followed_id = _seed_empty_session("已关注小店", followed=True)
+    normal_id = _seed_empty_session("普通小店", followed=False)
+
+    page = web.get("/coins?rec=all")
+    assert page.text.index(f'href="/coins/session/{session_id}"') < page.text.index(
+        f'href="/coins/session/{followed_id}"'
+    )
+    assert page.text.index(f'href="/coins/session/{followed_id}"') < page.text.index(
+        f'href="/coins/session/{normal_id}"'
+    )
+    # 列表卡片店铺名旁带星标
+    assert "猩哥外币小铺<span class=\"coin-follow-star\"" in page.text
+
+    page = web.get("/coins?rec=all&follow=followed")
+    assert "已关注小店" in page.text
+    assert "普通小店" not in page.text
+
+    page = web.get("/coins?rec=all&follow=unfollowed")
+    assert "普通小店" in page.text
+    assert "已关注小店" not in page.text
+
+    response = web.post(
+        f"/coins/shop/{shop_id}/follow",
+        data={"follow": "0", "next": f"/coins/session/{session_id}"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 302
+    page = web.get(f"/coins/session/{session_id}")
+    assert "★ 已关注" not in page.text
 
 
 def test_sessions_page_paginates(web):
@@ -366,6 +448,21 @@ def test_session_page_renders_shop_header_and_recommended_lots(web):
     # 最多 3 张图
     assert page.text.count("coin-lot-img") >= 3
     assert 'class="coin-lot-img coin-zoom"' in page.text  # 点击可放大
+
+
+def test_session_page_has_lot_search_and_hide_rec_toggle(web):
+    session_id = _seed_session()
+
+    page = web.get(f"/coins/session/{session_id}")
+
+    assert page.status_code == 200
+    # 顶部工具条：搜索框 + 隐藏推荐模块开关
+    assert 'id="coin-lot-search"' in page.text
+    assert 'id="coin-hide-rec"' in page.text
+    # 搜索命中区与拍品检索文本
+    assert 'id="coin-search-results"' in page.text
+    assert "东印度公司1808年硬币" in page.text
+    assert "data-search=" in page.text
 
 
 def test_session_page_404_for_unknown(web):
@@ -1457,3 +1554,160 @@ def test_grades_delete_validates_input(web):
     )
     assert resp.status_code == 400
     assert len(repository.list_coin_order_keys()) == 5
+
+
+# ---------------------------------------------------------------- 全局拍品搜索
+
+
+def test_search_page_matches_title_and_tags(web):
+    session_id = _seed_session()
+
+    page = web.get("/coins/search", params={"q": "1808"})
+    assert page.status_code == 200
+    assert "东印度公司1808年硬币" in page.text
+    assert "某无关的纪念章" not in page.text
+    detail = repository.get_coin_session_detail(session_id)
+    lot_id = next(lot.lot_id for lot in detail.lots if lot.title == "东印度公司1808年硬币")
+    # 卡片直达具体拍品：带 lot 参数（翻到所在页）+ 锚点
+    assert f'href="/coins/session/{session_id}?lot={lot_id}#coin-lot-{lot_id}"' in page.text
+    assert f'id="coin-lot-{lot_id}"' in web.get(f"/coins/session/{session_id}").text
+    # 卡片必须带所属拍场 + 截拍时间 + 当前价
+    assert "猩哥外币小铺➡【东印度硬币专场】" in page.text
+    assert "截拍" in page.text
+    # 未配置收藏画像时沿用入库的标签匹配结果
+    assert "🎯 精准匹配" in page.text
+
+    # 国家 / 材质也在索引里（tags 参与搜索）
+    assert "东印度公司1808年硬币" in web.get("/coins/search", params={"q": "印度"}).text
+
+
+def test_search_page_filters_price_and_skips_closed_sessions(web):
+    _seed_session()
+    now = repository.utcnow()
+    closed_id = repository.upsert_coin_session(
+        CoinSession(
+            id=None,
+            mxiqi_id="closed-session",
+            shop_id=None,
+            title="已结束的专场",
+            status="closed",
+            auction_at=_today_auction_at(),
+            auction_at_raw="10月8日 星期四 15:25",
+            deposit=None,
+            lot_total=1,
+            view_count=0,
+            cover_urls=[],
+            fetched_at=now,
+        )
+    )
+    repository.upsert_coin_lot(
+        CoinLot(
+            id=None,
+            session_id=closed_id,
+            mxiqi_id="closed-lot",
+            lot_no="Lot.1",
+            title="东印度公司1808年硬币（已结束）",
+            start_price=10.0,
+            current_price=10.0,
+            image_urls=[],
+            tags={},
+            match_score=0.0,
+            is_recommended=False,
+            fetched_at=now,
+        )
+    )
+
+    assert "东印度公司1808年硬币" in web.get("/coins/search", params={"q": "1808", "price_max": "10"}).text
+    assert "东印度公司1808年硬币" not in web.get("/coins/search", params={"q": "1808", "price_min": "10"}).text
+    assert "已结束的专场" not in web.get("/coins/search", params={"q": "1808"}).text
+
+
+def test_search_page_skips_sessions_ended_before_today(web):
+    """截拍日期早于今天的专场，即使状态仍是 running 也不进搜索结果。"""
+    now = repository.utcnow()
+    tz = config.get().app.tz
+    past = repository.to_utc_str(
+        datetime.now(tz).replace(hour=15, minute=25, second=0, microsecond=0)
+        - timedelta(days=1)
+    )
+    session_id = repository.upsert_coin_session(
+        CoinSession(
+            id=None,
+            mxiqi_id="past-session",
+            shop_id=None,
+            title="昨天截拍的专场",
+            status="running",
+            auction_at=past,
+            auction_at_raw="10月7日 星期三 15:25",
+            deposit=None,
+            lot_total=1,
+            view_count=0,
+            cover_urls=[],
+            fetched_at=now,
+        )
+    )
+    repository.upsert_coin_lot(
+        CoinLot(
+            id=None,
+            session_id=session_id,
+            mxiqi_id="past-lot",
+            lot_no="Lot.1",
+            title="昨天截拍的东印度公司1808年硬币",
+            start_price=15.0,
+            current_price=15.0,
+            image_urls=[],
+            tags={},
+            match_score=0.0,
+            is_recommended=False,
+            fetched_at=now,
+        )
+    )
+
+    assert "昨天截拍的东印度公司1808年硬币" not in web.get(
+        "/coins/search", params={"q": "1808"}
+    ).text
+
+
+def test_search_page_keeps_denomination_adjacent(web):
+    """`英国 1便士` 只命中 1 便士，不得被年份 1901 或 6 便士带出来。"""
+    now = repository.utcnow()
+    session_id = repository.upsert_coin_session(
+        CoinSession(
+            id=None,
+            mxiqi_id="penny-session",
+            shop_id=None,
+            title="英国便士专场",
+            status="running",
+            auction_at=_today_auction_at(),
+            auction_at_raw="10月8日 星期四 15:25",
+            deposit=None,
+            lot_total=2,
+            view_count=0,
+            cover_urls=[],
+            fetched_at=now,
+        )
+    )
+    for mxiqi_id, title in (
+        ("penny-1", "英国1901年1便士铜币"),
+        ("penny-6", "英国1901年6便士铜币"),
+    ):
+        repository.upsert_coin_lot(
+            CoinLot(
+                id=None,
+                session_id=session_id,
+                mxiqi_id=mxiqi_id,
+                lot_no="Lot.1",
+                title=title,
+                start_price=1.0,
+                current_price=1.0,
+                image_urls=[],
+                tags={"发行年份": "1901", "国家地区": "英国"},
+                match_score=0.0,
+                is_recommended=False,
+                fetched_at=now,
+            )
+        )
+
+    page = web.get("/coins/search", params={"q": "英国 1便士"})
+    assert "英国1901年1便士铜币" in page.text
+    assert "英国1901年6便士铜币" not in page.text

@@ -28,6 +28,7 @@ FORWARD_ADDITIVE_UPGRADES = {
     ("6", "7"),
     ("8", "9"),
     ("9", "10"),
+    ("11", "12"),
 }
 
 _db_path: Path | None = None
@@ -86,6 +87,9 @@ def _check_schema_version(conn: sqlite3.Connection) -> None:
                 "UPDATE schema_meta SET value = ? WHERE key = 'schema_version'",
                 (models.SCHEMA_VERSION,),
             )
+            backfill = migrations.DATA_MIGRATIONS.get((current, models.SCHEMA_VERSION))
+            if backfill is not None:
+                backfill(conn)
         logger.info("schema 版本向前升级：%s → %s（仅新增表，DDL 已建）", current, models.SCHEMA_VERSION)
         return
 

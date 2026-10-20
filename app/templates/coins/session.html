@@ -18,7 +18,18 @@
   <img class="coin-avatar-lg" src="{{ detail.shop.avatar_url }}" alt="" loading="lazy">
   {% endif %}
   <div class="coin-shop-main">
-    <div class="coin-shop-name">{{ detail.shop.name if detail.shop else '未知店铺' }}</div>
+    <div class="coin-shop-title-row">
+      <span class="coin-shop-name">{{ detail.shop.name if detail.shop else '未知店铺' }}{% if detail.shop and detail.shop.followed %}<span class="coin-follow-star" title="已关注店铺">★</span>{% endif %}</span>
+      {% if detail.shop %}
+      <form class="coin-follow-form" method="post" action="/coins/shop/{{ detail.shop.id }}/follow">
+        <input type="hidden" name="next" value="/coins/session/{{ detail.session_id }}">
+        <input type="hidden" name="follow" value="{{ 0 if detail.shop.followed else 1 }}">
+        <button class="btn coin-follow-btn{% if detail.shop.followed %} is-followed{% endif %}" type="submit">
+          {{ '★ 已关注' if detail.shop.followed else '+ 关注' }}
+        </button>
+      </form>
+      {% endif %}
+    </div>
     {% if detail.shop and detail.shop.badges %}
     <div class="coin-badges">
       {% for badge in detail.shop.badges %}
@@ -41,13 +52,17 @@
 <div class="coin-facts">
   <span class="coin-fact">押金 ¥{{ detail.deposit | price }}</span>
   <span class="coin-fact">共 {{ detail.lot_total if detail.lot_total is not none else '—' }} 件</span>
-  <span class="coin-fact coin-fact-hit">精准推荐 {{ precise_lots|length }} 件</span>
-  <span class="coin-fact coin-fact-hit">相似推荐 {{ similar_lots|length }} 件</span>
+  <span class="coin-fact coin-fact-hit" id="coin-precise-fact">精准推荐 {{ precise_lots|length }} 件</span>
+  <span class="coin-fact coin-fact-hit" id="coin-similar-fact">相似推荐 {{ similar_lots|length }} 件</span>
   <span class="coin-fact">{{ detail.view_count or 0 }} 人次围观</span>
+  <div class="coin-facts-tools">
+    <input class="coin-lot-search" id="coin-lot-search" type="search" placeholder="搜索拍品" aria-label="搜索拍品">
+    <label class="coin-hide-rec"><input type="checkbox" id="coin-hide-rec"> 隐藏推荐模块</label>
+  </div>
 </div>
 
 {% macro lot_card(lot, reason=None, index=1) %}
-<section class="coin-lot">
+<section class="coin-lot" id="coin-lot-{{ lot.lot_id }}" data-search="{{ lot.lot_no or '' }} {{ lot.title or '' }}">
   <h3 class="coin-lot-title">{{ lot.lot_no or ('Lot.' ~ index) }} {{ lot.title }}</h3>
   {% if reason %}<p class="coin-lot-reason">推荐原因：{{ reason }}</p>{% endif %}
 
@@ -95,27 +110,38 @@
 </section>
 {% endmacro %}
 
+<section id="coin-precise-section">
 <h2 class="coin-section-title">精准推荐 <span class="coin-section-count">{{ precise_lots | length }} 件</span></h2>
 {% for lot, reason in precise_lots %}
 {{ lot_card(lot, reason, loop.index) }}
 {% else %}
 <div class="empty">这个专场没有精准命中你画像的拍品。</div>
 {% endfor %}
+</section>
 
+<section id="coin-similar-section">
 <h2 class="coin-section-title">相似推荐 <span class="coin-section-count">{{ similar_lots | length }} 件</span></h2>
 {% for lot, reason in similar_lots %}
 {{ lot_card(lot, reason, loop.index) }}
 {% else %}
 <div class="empty">暂无相似推荐。</div>
 {% endfor %}
+</section>
+
+<section id="coin-search-results" hidden>
+  <h2 class="coin-section-title">搜索结果 <span class="coin-section-count" id="coin-search-count">0 件</span></h2>
+  <div id="coin-search-list"></div>
+  <div class="empty" id="coin-search-empty" hidden>没有匹配的拍品。</div>
+</section>
 
 {% if other_total %}
+<section id="coin-other-section">
 <h2 class="coin-section-title">其他拍品 <span class="coin-section-count">{{ other_total }} 件</span></h2>
 {% for lot in other_lots %}
 {{ lot_card(lot, None, loop.index) }}
 {% endfor %}
 {% if other_pager.total_pages > 1 %}
-<nav class="pager">
+<nav class="pager" id="coin-other-pager">
   {% if other_pager.prev_url %}
   <a class="btn" href="{{ other_pager.prev_url }}">上一页</a>
   {% else %}
@@ -129,7 +155,53 @@
   {% endif %}
 </nav>
 {% endif %}
+</section>
 {% endif %}
+
+<script>
+(function () {
+  const input = document.getElementById('coin-lot-search');
+  const hideToggle = document.getElementById('coin-hide-rec');
+  if (!input || !hideToggle) return;
+  const recSections = ['coin-precise-section', 'coin-similar-section']
+    .map(function (id) { return document.getElementById(id); })
+    .filter(Boolean);
+  const recFacts = ['coin-precise-fact', 'coin-similar-fact']
+    .map(function (id) { return document.getElementById(id); })
+    .filter(Boolean);
+  const otherSection = document.getElementById('coin-other-section');
+  const results = document.getElementById('coin-search-results');
+  const list = document.getElementById('coin-search-list');
+  const count = document.getElementById('coin-search-count');
+  const empty = document.getElementById('coin-search-empty');
+  const cards = Array.from(document.querySelectorAll('.coin-lot[data-search]'));
+
+  function render() {
+    const keyword = input.value.trim().toLowerCase();
+    const searching = keyword !== '';
+    const hideRec = hideToggle.checked || searching;
+    recSections.forEach(function (el) { el.hidden = hideRec; });
+    recFacts.forEach(function (el) { el.classList.toggle('is-muted', hideRec); });
+    results.hidden = !searching;
+    if (otherSection) otherSection.hidden = searching;
+    list.replaceChildren();
+    if (!searching) return;
+    let hits = 0;
+    cards.forEach(function (card) {
+      if (!(card.dataset.search || '').toLowerCase().includes(keyword)) return;
+      const clone = card.cloneNode(true);
+      clone.removeAttribute('id');
+      list.appendChild(clone);
+      hits += 1;
+    });
+    count.textContent = hits + ' 件';
+    empty.hidden = hits > 0;
+  }
+
+  input.addEventListener('input', render);
+  hideToggle.addEventListener('change', render);
+})();
+</script>
 
 {% endif %}
 {% endblock %}

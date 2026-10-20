@@ -23,6 +23,7 @@ from app.coins import numista as coins_numista
 from app.coins import numista_web as coins_numista_web
 from app.coins import pipeline as coins_pipeline
 from app.coins import recommend as coins_recommend
+from app.coins import search as coins_search
 from app.coins.numista import ISSUER_CODES, NumistaError
 from app.coins.numista_web import NumistaPageError
 from app.models import (
@@ -87,9 +88,13 @@ def sessions_page(
     auction_date: str = "",
     rec: str = "yes",
     match_type: str = Query("all", alias="type"),
+    follow: str = "all",
     page: str = "",
 ) -> Response:
-    """专场列表：按拍卖截止日期 + 是否推荐 / 推荐类型筛选，默认今日的推荐专场。"""
+    """专场列表：按拍卖截止日期 + 推荐状态 / 推荐类型 / 关注状态筛选。
+
+    排序：精准匹配 > 相似推荐 > 已关注店铺 > 普通拍场，同层按截拍时间（库里已是倒序）。
+    """
     cfg = config.get()
     try:
         selected_day = datetime.strptime(auction_date, "%Y-%m-%d").date()
@@ -97,6 +102,7 @@ def sessions_page(
         selected_day = datetime.now(cfg.app.tz).date()
     rec = rec if rec in ("all", "yes", "no") else "yes"
     match_type = match_type if match_type in ("all", "precise", "similar") else "all"
+    follow = follow if follow in ("all", "followed", "unfollowed") else "all"
     start, end = repository.day_bounds_utc(cfg.app.tz, selected_day)
     cards = repository.list_coin_session_cards(
         day_bounds=(start, end), only_recommended=False
@@ -133,6 +139,23 @@ def sessions_page(
         cards = [card for card in cards if card.precise_count]
     elif match_type == "similar":
         cards = [card for card in cards if card.similar_count]
+    if follow == "followed":
+        cards = [card for card in cards if card.shop_followed]
+    elif follow == "unfollowed":
+        cards = [card for card in cards if not card.shop_followed]
+    # 稳定排序：同层保留库里的截拍时间倒序
+    cards = sorted(
+        cards,
+        key=lambda card: (
+            0
+            if card.precise_count
+            else 1
+            if card.similar_count
+            else 2
+            if card.shop_followed
+            else 3
+        ),
+    )
 
     card_total = len(cards)
     paged_cards, page_no, total_pages = _paginate(
@@ -147,6 +170,7 @@ def sessions_page(
                 "auction_date": selected_day.isoformat(),
                 "rec": rec,
                 "type": match_type,
+                "follow": follow,
                 "page": page_no - 1,
             },
         )
@@ -158,6 +182,7 @@ def sessions_page(
                 "auction_date": selected_day.isoformat(),
                 "rec": rec,
                 "type": match_type,
+                "follow": follow,
                 "page": page_no + 1,
             },
         )
@@ -176,7 +201,67 @@ def sessions_page(
             "auction_date": selected_day.isoformat(),
             "filter_rec": rec,
             "filter_match_type": match_type,
+            "filter_follow": follow,
             "summary": repository.coin_fetch_summary(),
+        },
+    )
+
+
+# ---------------------------------------------------------------- 全局拍品搜索
+
+
+def _price_bound(raw: str) -> float | None:
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+@router.get("/coins/search")
+def search_page(
+    request: Request,
+    q: str = "",
+    price_min: str = "",
+    price_max: str = "",
+    page: str = "",
+) -> Response:
+    """全局拍品搜索：关键词（名称 / 年份 / 国家 / 材质）+ 价格区间。
+
+    默认只返回进行中 / 即将开始（running / preview）的拍场拍品。
+    """
+    cfg = config.get()
+    keyword = q.strip()
+    lots = coins_search.search_lots(
+        cfg,
+        keyword=keyword,
+        price_min=_price_bound(price_min),
+        price_max=_price_bound(price_max),
+    )
+    lots_total = len(lots)
+    paged_lots, page_no, total_pages = _paginate(lots, page, COIN_SEARCH_PAGE_SIZE)
+    keep = {"q": keyword, "price_min": price_min, "price_max": price_max}
+    pager = {
+        "page": page_no,
+        "total_pages": total_pages,
+        "prev_url": _query_url("/coins/search", {**keep, "page": page_no - 1})
+        if page_no > 1
+        else "",
+        "next_url": _query_url("/coins/search", {**keep, "page": page_no + 1})
+        if page_no < total_pages
+        else "",
+    }
+    return templates.TemplateResponse(
+        request,
+        "coins/search.html",
+        {
+            "request": request,
+            "page_title": "拍品搜索",
+            "keyword": keyword,
+            "price_min": price_min,
+            "price_max": price_max,
+            "lots": paged_lots,
+            "lots_total": lots_total,
+            "pager": pager,
         },
     )
 
@@ -185,7 +270,7 @@ def sessions_page(
 
 
 @router.get("/coins/session/{session_id}")
-def session_page(request: Request, session_id: int, page: str = "") -> Response:
+def session_page(request: Request, session_id: int, page: str = "", lot: str = "") -> Response:
     detail = repository.get_coin_session_detail(session_id)
     if detail is None:
         return templates.TemplateResponse(
@@ -215,6 +300,12 @@ def session_page(request: Request, session_id: int, page: str = "") -> Response:
         if lot.lot_id not in precise_reasons and lot.lot_id not in similar_reasons
     ]
     other_total = len(other_lots)
+    # 从全局搜索跳转时带 lot 参数：目标拍品在其他拍品里则翻到它所在页，锚点才能命中
+    if lot:
+        for index, item in enumerate(other_lots):
+            if str(item.lot_id) == lot:
+                page = str(index // COIN_OTHER_LOT_PAGE_SIZE + 1)
+                break
     paged_other, other_page, other_pages = _paginate(
         other_lots, page, COIN_OTHER_LOT_PAGE_SIZE
     )
@@ -284,6 +375,15 @@ def _redirect(path: str) -> Response:
 def _return_target(raw: str, fallback: str) -> str:
     """只接受铜币模块内的回跳地址，其余回落到默认页。"""
     return raw if raw.startswith("/coins/") else fallback
+
+
+@router.post("/coins/shop/{shop_id}/follow")
+def follow_coin_shop(
+    shop_id: int, follow: str = Form("1"), next: str = Form("")
+) -> Response:
+    """关注 / 取消关注店铺（本地标记）。"""
+    repository.set_coin_shop_followed(shop_id, follow == "1")
+    return _redirect(_return_target(next, "/coins"))
 
 
 async def _run_coins(cfg: config.Config) -> None:
@@ -800,6 +900,7 @@ COIN_REASON_LABELS = {1: "稀缺年份", 2: "差品升级", 3: "相似推荐"}
 COIN_REASON_FILTER_LABELS = {1: "稀缺年份", 2: "差品升级"}
 COIN_RAIL_SESSION_LIMIT = 6
 COIN_SESSION_PAGE_SIZE = 12
+COIN_SEARCH_PAGE_SIZE = 20
 COIN_OTHER_LOT_PAGE_SIZE = 20
 
 
@@ -1143,6 +1244,7 @@ def collection_page(
                 "lot_count": 0,
                 "hit_count": 0,
                 "similar_count": 0,
+                "shop_followed": lot.shop_followed,
             },
         )
         session["lot_count"] += 1
@@ -1178,22 +1280,28 @@ def collection_page(
             similar_lot_ids.add(lot.id)
             session["similar_count"] += 1
 
-    # 右侧拍场：有精准匹配置顶 → 仅相似推荐居中 → 无关拍场垫底。
+    # 右侧拍场：精准匹配 > 相似推荐 > 已关注店铺 > 普通拍场，同层按截拍时间。
     today_session_list = sorted(
         today_sessions.values(),
         key=lambda session: (
-            0 if session["hit_count"] else 1 if session["similar_count"] else 2,
+            0
+            if session["hit_count"]
+            else 1
+            if session["similar_count"]
+            else 2
+            if session["shop_followed"]
+            else 3,
             -session["hit_count"],
             -session["similar_count"],
             session["auction_at"] or "",
             session["session_id"],
         ),
     )
-    # 聚合面板只铺匹配场次，超出上限的与无关专场一起折叠为「其他专场」
+    # 聚合面板只铺匹配 / 已关注场次，超出上限的与普通专场一起折叠为「其他专场」
     rail_sessions = [
         session
         for session in today_session_list
-        if session["hit_count"] or session["similar_count"]
+        if session["hit_count"] or session["similar_count"] or session["shop_followed"]
     ][:COIN_RAIL_SESSION_LIMIT]
     rail_ids = {session["session_id"] for session in rail_sessions}
     other_sessions = [

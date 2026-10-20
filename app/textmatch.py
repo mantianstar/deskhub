@@ -33,6 +33,35 @@ def normalize(text: str | None) -> str:
     return result
 
 
+_CJK_CHAR = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
+# 一个搜索词：CJK / 字母 / 数字连续排列；空白与标点分隔词项
+_FTS_TERM = re.compile(r"[0-9A-Za-z\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]+")
+
+
+def fts_text(*parts: str | None) -> str:
+    """拼 FTS5 索引文本：CJK 逐字加空格（unicode61 不切中文），西文原样。"""
+    text = " ".join(part for part in parts if part)
+    return _CJK_CHAR.sub(lambda match: f" {match.group(0)} ", text)
+
+
+def fts_query(keyword: str | None) -> str:
+    """用户输入 → FTS5 MATCH 表达式。
+
+    含 CJK 的词项整体作为**相邻短语**（`"1 便 士"`），数字不按前缀，
+    避免 `1便士` 命中 `6便士` 或标题里的年份 `1901`；纯字母仍按前缀匹配。
+    """
+    tokens: list[str] = []
+    for term in _FTS_TERM.findall(keyword or ""):
+        if _CJK_CHAR.search(term):
+            spaced = " ".join(_CJK_CHAR.sub(lambda m: f" {m.group(0)} ", term).split())
+            tokens.append(f'"{spaced}"')
+        elif term.isdigit():
+            tokens.append(f'"{term}"')
+        else:
+            tokens.append(f"{term.lower()}*")
+    return " AND ".join(tokens)
+
+
 def contains(value: str | None, needle: str) -> bool:
     """归一化后做子串命中；空关键词视为「不限」，直接命中。
 

@@ -27,6 +27,7 @@ from app.models import (
     CoinPriceRef,
     CoinProfileTag,
     CoinPurchaseGrade,
+    CoinSearchLot,
     CoinSeries,
     CoinSeriesIssueStats,
     CoinSession,
@@ -1038,7 +1039,7 @@ def _list_coin_lots_between(start: str, end: str) -> list[CoinTodayLot]:
             """
             SELECT l.id, l.session_id, l.title, l.start_price, l.current_price,
                    l.image_urls, s.title AS session_title, s.auction_at,
-                   sh.name AS shop_name
+                   sh.name AS shop_name, COALESCE(sh.followed, 0) AS shop_followed
             FROM coin_lots l
             JOIN coin_sessions s ON s.id = l.session_id
             LEFT JOIN coin_shops sh ON sh.id = s.shop_id
@@ -1058,10 +1059,80 @@ def _list_coin_lots_between(start: str, end: str) -> list[CoinTodayLot]:
             shop_name=row["shop_name"],
             session_title=row["session_title"],
             auction_at=row["auction_at"],
+            shop_followed=bool(row["shop_followed"]),
         )
         for row in rows
     ]
 
+
+
+def search_coin_lots(
+    keyword: str = "",
+    *,
+    price_min: float | None = None,
+    price_max: float | None = None,
+    auction_from: str | None = None,
+    statuses: tuple[str, ...] = ("running", "preview"),
+    limit: int = 300,
+) -> list[CoinSearchLot]:
+    """全局拍品搜索：FTS5 命中 + 价格区间 + 截拍日期下限 + 默认只取进行中 / 即将开始的拍场。"""
+    match = textmatch.fts_query(keyword)
+    clauses = [f"s.status IN ({', '.join('?' for _ in statuses)})"]
+    params: list[object] = list(statuses)
+    price = "COALESCE(l.current_price, l.start_price)"
+    if price_min is not None:
+        clauses.append(f"{price} >= ?")
+        params.append(price_min)
+    if price_max is not None:
+        clauses.append(f"{price} <= ?")
+        params.append(price_max)
+    if auction_from is not None:
+        clauses.append("s.auction_at >= ?")
+        params.append(auction_from)
+    if match:
+        source = "coin_lot_fts JOIN coin_lots l ON l.id = coin_lot_fts.rowid"
+        clauses.insert(0, "coin_lot_fts MATCH ?")
+        params.insert(0, match)
+        order = "rank"
+    else:
+        source = "coin_lots l"
+        order = "s.auction_at, l.id"
+    params.append(limit)
+    sql = f"""
+        SELECT l.id, l.session_id, l.lot_no, l.title, l.start_price, l.current_price,
+               l.image_urls, l.tags, l.is_recommended,
+               s.title AS session_title, s.status AS session_status,
+               s.auction_at, s.auction_at_raw,
+               sh.name AS shop_name, COALESCE(sh.followed, 0) AS shop_followed
+        FROM {source}
+        JOIN coin_sessions s ON s.id = l.session_id
+        LEFT JOIN coin_shops sh ON sh.id = s.shop_id
+        WHERE {' AND '.join(clauses)}
+        ORDER BY {order}
+        LIMIT ?
+    """
+    with db.connect() as conn:
+        rows = conn.execute(sql, params).fetchall()
+    return [
+        CoinSearchLot(
+            id=row["id"],
+            session_id=row["session_id"],
+            lot_no=row["lot_no"],
+            title=row["title"],
+            start_price=row["start_price"],
+            current_price=row["current_price"],
+            image_urls=_json_list(row["image_urls"]),
+            tags=_json_dict(row["tags"]),
+            session_title=row["session_title"],
+            session_status=row["session_status"],
+            auction_at=row["auction_at"],
+            auction_at_raw=row["auction_at_raw"],
+            shop_name=row["shop_name"],
+            shop_followed=bool(row["shop_followed"]),
+            is_recommended=bool(row["is_recommended"]),
+        )
+        for row in rows
+    ]
 
 
 def _row_to_coin_tag(row: sqlite3.Row) -> CoinProfileTag:
@@ -1262,7 +1333,20 @@ def upsert_coin_lot(lot: CoinLot) -> int:
         row = conn.execute(
             "SELECT id FROM coin_lots WHERE mxiqi_id = ?", (lot.mxiqi_id,)
         ).fetchone()
-        return int(row["id"])
+        lot_id = int(row["id"])
+        conn.execute("DELETE FROM coin_lot_fts WHERE rowid = ?", (lot_id,))
+        conn.execute(
+            "INSERT INTO coin_lot_fts(rowid, search_text) VALUES (?, ?)",
+            (
+                lot_id,
+                textmatch.fts_text(
+                    lot.title,
+                    *lot.tags.keys(),
+                    *lot.tags.values(),
+                ),
+            ),
+        )
+        return lot_id
 
 
 def update_coin_lot_match(lot_id: int, match_score: float, is_recommended: bool) -> None:
@@ -1428,6 +1512,7 @@ _SESSION_CARD_SQL = """
     SELECT s.id AS session_id, s.mxiqi_id, s.title, s.status,
            s.auction_at, s.auction_at_raw, s.lot_total, s.view_count, s.cover_urls,
            sh.name AS shop_name, sh.avatar_url AS shop_avatar,
+           COALESCE(sh.followed, 0) AS shop_followed,
            (SELECT COUNT(*) FROM coin_lots l
              WHERE l.session_id = s.id AND l.is_recommended = 1) AS recommended_count
     FROM coin_sessions s
@@ -1449,6 +1534,7 @@ def _row_to_session_card(row: sqlite3.Row) -> CoinSessionCard:
         shop_name=row["shop_name"],
         shop_avatar=row["shop_avatar"],
         recommended_count=row["recommended_count"],
+        shop_followed=bool(row["shop_followed"]),
     )
 
 
@@ -1506,7 +1592,17 @@ def _row_to_coin_shop(row: sqlite3.Row) -> CoinShop:
         avatar_url=row["avatar_url"],
         badges=_json_list_badges(row["badges"]),
         fetched_at=row["fetched_at"],
+        followed=bool(row["followed"]),
     )
+
+
+def set_coin_shop_followed(shop_id: int, followed: bool) -> None:
+    """关注 / 取消关注店铺（只改本地标记，不影响采集 upsert）。"""
+    with db.connect() as conn, conn:
+        conn.execute(
+            "UPDATE coin_shops SET followed = ? WHERE id = ?",
+            (1 if followed else 0, shop_id),
+        )
 
 
 def _json_list_badges(raw: str | None) -> list[dict]:

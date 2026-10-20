@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}{{ page_title }} · deskhub{% endblock %}
+{% block content_class %} content-wide{% endblock %}
+{% from "coins/_macros.html" import coin_nav, coin_head with context %}
+
+{% block content %}
+{{ coin_nav("auction") }}
+{% call coin_head("拍品搜索", "共 " ~ lots_total ~ " 件拍品") %}
+  <form class="coin-global-search" method="get" action="/coins/search">
+    <input type="search" name="q" value="{{ keyword }}" placeholder="拍品名 / 年份 / 国家 / 材质" aria-label="搜索拍品">
+    <input class="coin-price-input" type="text" inputmode="decimal" name="price_min" value="{{ price_min }}" placeholder="最低价">
+    <span class="coin-price-dash">—</span>
+    <input class="coin-price-input" type="text" inputmode="decimal" name="price_max" value="{{ price_max }}" placeholder="最高价">
+    <button class="btn btn-primary" type="submit">搜索</button>
+  </form>
+{% endcall %}
+
+{% if lots %}
+  {% for lot in lots %}
+  <a class="coin-search-card" href="/coins/session/{{ lot.session_id }}?lot={{ lot.id }}#coin-lot-{{ lot.id }}">
+    {% if lot.image_urls %}
+    <img class="coin-search-img" src="{{ lot.image_urls[0] }}" alt="" loading="lazy">
+    {% endif %}
+    <div class="coin-search-main">
+      <div class="coin-search-badges">
+        {% if lot.match_label == 'precise' %}
+        <span class="coin-match-badge coin-match-precise">🎯 精准匹配</span>
+        {% elif lot.match_label == 'similar' %}
+        <span class="coin-match-badge coin-match-similar">相似推荐</span>
+        {% endif %}
+        <span class="coin-status coin-status-{{ lot.session_status or 'unknown' }}">
+          {{ coin_session_status_labels.get(lot.session_status, lot.session_status or '未知') }}
+        </span>
+        {% if lot.shop_followed %}<span class="coin-follow-star" title="已关注店铺">★</span>{% endif %}
+      </div>
+      <h2 class="coin-search-title">{% if lot.lot_no %}{{ lot.lot_no }} {% endif %}{{ lot.title }}</h2>
+      <div class="coin-search-price">当前价 <b>{{ lot.current_price | price }}</b> 元</div>
+      <div class="coin-search-meta">
+        <span>{{ lot.session_title }}</span>
+        <span>截拍 {{ lot.auction_at_raw or (lot.auction_at | local_time) }}</span>
+        {% if lot.shop_name %}<span>{{ lot.shop_name }}</span>{% endif %}
+      </div>
+    </div>
+  </a>
+  {% endfor %}
+  {% if pager.total_pages > 1 %}
+  <nav class="pager">
+    {% if pager.prev_url %}
+    <a class="btn" href="{{ pager.prev_url }}">上一页</a>
+    {% else %}
+    <span class="btn btn-disabled">上一页</span>
+    {% endif %}
+    <span class="pager-meta">第 {{ pager.page }} / {{ pager.total_pages }} 页</span>
+    {% if pager.next_url %}
+    <a class="btn" href="{{ pager.next_url }}">下一页</a>
+    {% else %}
+    <span class="btn btn-disabled">下一页</span>
+    {% endif %}
+  </nav>
+  {% endif %}
+{% else %}
+<div class="empty">
+  {% if keyword or price_min or price_max %}
+  没有匹配的进行中拍品。换个关键词或放宽价格区间试试。
+  {% else %}
+  暂无进行中 / 即将开始的拍品。
+  {% endif %}
+</div>
+{% endif %}
+{% endblock %}

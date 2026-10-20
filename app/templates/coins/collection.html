@@ -178,7 +178,7 @@
       {% for session in rail_sessions %}
       <a class="coin-rail-item" href="/coins/session/{{ session.session_id }}">
         <span class="coin-rail-body">
-          <span class="coin-rail-shop">{{ session.shop_name or '未知店铺' }}</span>
+          <span class="coin-rail-shop">{{ session.shop_name or '未知店铺' }}{% if session.shop_followed %}<span class="coin-follow-star" title="已关注店铺">★</span>{% endif %}</span>
           <span class="coin-rail-title-text">{{ session.session_title }}</span>
           <span class="coin-rail-meta">
             {{ session.lot_count }} 件 · 精准 {{ session.hit_count }} · 相似 {{ session.similar_count }}

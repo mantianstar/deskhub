@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-SCHEMA_VERSION = "10"
+SCHEMA_VERSION = "12"
 
 # 所有时间列存 UTC ISO8601 字符串（SQLite 无原生时间类型）
 DDL = """
@@ -102,6 +102,7 @@ CREATE TABLE IF NOT EXISTS coin_shops (
   name       TEXT,
   avatar_url TEXT,
   badges     TEXT,          -- JSON 数组
+  followed   INTEGER NOT NULL DEFAULT 0,  -- 1 = 已关注店铺
   fetched_at TEXT
 );
 
@@ -120,6 +121,7 @@ CREATE TABLE IF NOT EXISTS coin_sessions (
   cover_urls     TEXT,      -- JSON 数组（列表页 4 图）
   fetched_at     TEXT    NOT NULL
 );
+CREATE INDEX IF NOT EXISTS idx_coin_sessions_status ON coin_sessions(status, auction_at);
 
 -- 拍品
 CREATE TABLE IF NOT EXISTS coin_lots (
@@ -138,6 +140,16 @@ CREATE TABLE IF NOT EXISTS coin_lots (
 );
 CREATE INDEX IF NOT EXISTS idx_coin_lots_rec
   ON coin_lots(session_id, is_recommended, match_score DESC);
+
+-- 全局拍品搜索索引（FTS5；CJK 逐字分词见 app/textmatch.fts_text）
+CREATE VIRTUAL TABLE IF NOT EXISTS coin_lot_fts USING fts5(
+  search_text,
+  tokenize = 'unicode61'
+);
+CREATE TRIGGER IF NOT EXISTS coin_lots_fts_delete
+AFTER DELETE ON coin_lots BEGIN
+  DELETE FROM coin_lot_fts WHERE rowid = old.id;
+END;
 
 -- 推荐价的取证记录
 CREATE TABLE IF NOT EXISTS coin_price_refs (
@@ -574,6 +586,7 @@ class CoinShop:
     avatar_url: str | None
     badges: list[dict]
     fetched_at: str | None
+    followed: bool = False
 
 
 @dataclass
@@ -765,6 +778,7 @@ class CoinSessionCard:
     recommended_count: int
     precise_count: int = 0
     similar_count: int = 0
+    shop_followed: bool = False
 
 
 @dataclass
@@ -896,6 +910,29 @@ class CoinTodayLot:
     shop_name: str | None
     session_title: str
     auction_at: str | None
+    shop_followed: bool = False
+
+
+@dataclass
+class CoinSearchLot:
+    """全局搜索命中的一条拍品：拍品 + 所属拍场 + 个性化标签。"""
+
+    id: int
+    session_id: int
+    lot_no: str | None
+    title: str
+    start_price: float | None
+    current_price: float | None
+    image_urls: list[str]
+    tags: dict[str, str]
+    session_title: str
+    session_status: str | None
+    auction_at: str | None
+    auction_at_raw: str | None
+    shop_name: str | None
+    shop_followed: bool
+    is_recommended: bool = False
+    match_label: str = ""  # precise | similar
 
 
 @dataclass

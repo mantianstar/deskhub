@@ -105,6 +105,8 @@ data/
 
 ## 18.7 拍卖：数据层（DDL，`app/models.py` 增量；`schema_version` 1 → 2）
 
+> 全局搜索索引 `coin_lot_fts`（FTS5）随 `schema_version` 11 → 12 新增：存量拍品在 `app/migrations/v12.py` 回填，之后由 `upsert_coin_lot` 同步、`coin_lots` 删除触发器清理。
+
 ```sql
 CREATE TABLE IF NOT EXISTS coin_orders (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -190,7 +192,8 @@ CREATE INDEX IF NOT EXISTS idx_coin_runs ON coin_fetch_runs(kind, started_at DES
 `upsert_coin_price_ref` / `get_coin_price_ref`、
 `record_coin_fetch_run` / `latest_coin_fetch_runs` / `coin_fetch_summary`、
 `list_coin_session_cards` / `get_coin_session_card` / `get_coin_session_detail` /
-`count_coin_sessions` / `count_coin_lots` / `count_recommended_lots`。
+`count_coin_sessions` / `count_coin_lots` / `count_recommended_lots` /
+`set_coin_shop_followed`。
 
 ---
 
@@ -198,8 +201,10 @@ CREATE INDEX IF NOT EXISTS idx_coin_runs ON coin_fetch_runs(kind, started_at DES
 
 | 路由 | 方法 | 职责 | 模板 |
 |---|---|---|---|
-| `/coins` | GET | 拍场：专场列表（按拍卖截止日期、是否推荐 全部/是/否、推荐类型筛选；默认今日 + 是；12 个/页；空态提示） | `coins/sessions.html` |
-| `/coins/session/{id}` | GET | 拍场详情：店铺头 + 拍品分「精准推荐 / 相似推荐 / 其他拍品」三组（推荐项带推荐原因，其他拍品 20 件/页；id 不存在返回 404） | `coins/session.html` |
+| `/coins` | GET | 拍场：专场列表（按拍卖截止日期、推荐状态 全部/已推荐/未推荐、推荐类型、关注状态 全部/已关注/未关注筛选；默认今日 + 已推荐；排序 精准 > 相似 > 已关注 > 普通，同层按截拍时间；12 个/页；空态提示） | `coins/sessions.html` |
+| `/coins/session/{id}` | GET | 拍场详情：店铺头（关注按钮）+ 拍品分「精准推荐 / 相似推荐 / 其他拍品」三组（推荐项带推荐原因，其他拍品 20 件/页；id 不存在返回 404）；带 `lot={拍品 id}` 时若命中「其他拍品」则直接渲染该拍品所在页；每条拍品带 `id="coin-lot-{拍品 id}"` 锚点 | `coins/session.html` |
+| `/coins/search` | GET | 全局拍品搜索：FTS5 关键词（拍品名 / 年份 / 国家 / 材质）+ 价格区间；只取 `auction_at >=` 业务时区今日零点起、且状态 running / preview；排序 精准 > 相似 > 关注店铺 > 普通，同层按截拍时间；20 件/页；拍品卡链接 `/coins/session/{session_id}?lot={lot_id}#coin-lot-{lot_id}` | `coins/search.html` |
+| `/coins/shop/{id}/follow` | POST | 关注 / 取消关注店铺（改 `coin_shops.followed`，302 回 `next`，只接受铜币模块内地址） | — |
 | `/coins/refresh` | POST | 手工触发一轮采集 + 查价（后台任务，302 回 `/coins`） | — |
 
 **性能**
@@ -207,6 +212,8 @@ CREATE INDEX IF NOT EXISTS idx_coin_runs ON coin_fetch_runs(kind, started_at DES
 - `translate.to_zh` 与 `textmatch.normalize` 都是纯函数，统一加 `lru_cache`：当日 2800+ 拍品、
   13 个收藏系列时，推荐加载从约 4s 降到约 0.6s（暖缓存约 0.2s）。
 - 面值音译差异（`莱普塔` / `雷普塔`）由 `denomination_variants` 双向展开，避免相似推荐与右侧拍场脱节。
+- 全局搜索走 FTS5 索引 `coin_lot_fts`：`textmatch.fts_text` 写索引（CJK 逐字分词），`textmatch.fts_query` 拼 `MATCH`；先取 300 条候选，再在 `app/coins/search.py` 套推荐标签排序，避免拍品 / 专场全量联查。
+- 关键词含 CJK 时整词按**相邻短语**匹配（`1便士` 不命中 `6便士`），纯数字精确匹配、纯字母前缀匹配。
 
 **模板约定**
 

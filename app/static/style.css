@@ -548,11 +548,19 @@ body {
 
 .coin-hit { color: var(--accent); font-weight: 600; }
 
+/* 关注店铺：列表 / 详情 / 今日拍场统一的橙金色星标 */
+.coin-follow-star { margin-left: 4px; color: #d48806; font-size: 13px; }
+.coin-session-shop { display: inline-flex; align-items: center; font-size: 13px; color: var(--text-muted); }
+.coin-shop-title-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.coin-follow-form { display: inline; margin-left: auto; }
+.coin-follow-btn { padding: 3px 10px; font-size: 12px; }
+.coin-follow-btn.is-followed { color: #8a5b00; border-color: #e8c46a; background: #fff8e6; }
+
 /* 第二页：拍品页（对应 data/item.png） */
 
 .coin-shop-head { display: flex; align-items: center; gap: 14px; }
 
-.coin-shop-main { min-width: 0; }
+.coin-shop-main { flex: 1; min-width: 0; }
 
 .coin-shop-name { font-size: 16px; font-weight: 600; }
 
@@ -595,6 +603,37 @@ body {
 }
 
 .coin-fact-hit { color: var(--accent); font-weight: 600; }
+
+/* 拍品页顶部工具条：搜索拍品 + 隐藏推荐模块 */
+.coin-facts-tools {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+}
+
+.coin-lot-search {
+  width: 180px;
+  padding: 5px 8px;
+  font-size: 13px;
+  font-family: inherit;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.coin-hide-rec {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+/* 推荐模块被隐藏时，概览里的件数置灰并加删除线 */
+.coin-facts .coin-fact.is-muted { color: var(--text-muted); text-decoration: line-through; }
 
 .coin-lot {
   padding: 16px 18px;
@@ -1116,6 +1155,66 @@ img.coin-zoom { cursor: zoom-in; }
 .coin-page-head h1 { font-size: 20px; margin: 0; }
 .coin-page-sub { margin: 4px 0 0; color: var(--text-muted); font-size: 13px; }
 .coin-page-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+
+/* 全局拍品搜索：拍场页入口 + 搜索结果页 */
+.coin-global-search { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.coin-global-search input[type="search"],
+.coin-price-input {
+  padding: 5px 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 13px;
+}
+.coin-global-search input[type="search"] { width: 200px; }
+.coin-price-input { width: 70px; }
+.coin-price-dash { color: var(--text-muted); }
+
+.coin-search-card {
+  display: flex;
+  gap: 14px;
+  padding: 14px 16px;
+  margin-bottom: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  text-decoration: none;
+  color: inherit;
+}
+.coin-search-card:hover { border-color: var(--accent); }
+.coin-search-img {
+  width: 120px;
+  height: 120px;
+  flex-shrink: 0;
+  object-fit: contain;
+  border-radius: 8px;
+  background: var(--bg);
+}
+.coin-search-main { flex: 1; min-width: 0; }
+.coin-search-badges { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.coin-match-badge { padding: 1px 9px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+.coin-match-precise {
+  color: var(--accent);
+  background: var(--score-high-bg);
+  border: 1px solid var(--score-high-border);
+}
+.coin-match-similar {
+  color: var(--text-muted);
+  background: var(--score-low-bg);
+  border: 1px solid var(--score-low-border);
+}
+.coin-search-title { margin: 8px 0; font-size: 14.5px; font-weight: 600; overflow-wrap: anywhere; }
+.coin-search-price { font-size: 13px; color: var(--text-muted); }
+.coin-search-price b { color: var(--accent); font-size: 15px; }
+.coin-search-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-top: 8px;
+  color: var(--text-muted);
+  font-size: 12.5px;
+}
 
 .coin-kpis {
   display: grid;
