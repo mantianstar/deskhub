@@ -6,7 +6,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from datetime import datetime
 from urllib.parse import urlencode
@@ -21,7 +20,6 @@ from app.coins import explore as coins_explore
 from app.coins import grades as coins_grades
 from app.coins import numista as coins_numista
 from app.coins import numista_web as coins_numista_web
-from app.coins import pipeline as coins_pipeline
 from app.coins import recommend as coins_recommend
 from app.coins import search as coins_search
 from app.coins.numista import ISSUER_CODES, NumistaError
@@ -42,9 +40,6 @@ router = APIRouter()
 
 # 状态的中文名放在 models 里（CLI 也要用，避免 CLI 反过来 import router）
 SESSION_STATUS_LABELS = COIN_SESSION_STATUS_LABELS
-
-# 手工触发的采集任务：留强引用，避免被 GC（Python 的标准做法）
-_background_tasks: set[asyncio.Task] = set()
 
 
 def format_price(value: float | None) -> str:
@@ -89,9 +84,10 @@ def sessions_page(
     rec: str = "yes",
     match_type: str = Query("all", alias="type"),
     follow: str = "all",
+    kind: str = "all",
     page: str = "",
 ) -> Response:
-    """专场列表：按拍卖截止日期 + 推荐状态 / 推荐类型 / 关注状态筛选。
+    """专场列表：按拍卖日期 + 推荐状态 / 推荐类型 / 关注状态 / 拍场类型筛选。
 
     排序：精准匹配 > 相似推荐 > 已关注店铺 > 普通拍场，同层按截拍时间（库里已是倒序）。
     """
@@ -103,9 +99,12 @@ def sessions_page(
     rec = rec if rec in ("all", "yes", "no") else "yes"
     match_type = match_type if match_type in ("all", "precise", "similar") else "all"
     follow = follow if follow in ("all", "followed", "unfollowed") else "all"
+    kind = kind if kind in ("all", "live", "timed") else "all"
     start, end = repository.day_bounds_utc(cfg.app.tz, selected_day)
     cards = repository.list_coin_session_cards(
-        day_bounds=(start, end), only_recommended=False
+        day_bounds=(start, end),
+        only_recommended=False,
+        kind=None if kind == "all" else kind,
     )
     _, items = coins_recommend.load_recommendations(cfg, day=selected_day)
     precise_by_session, similar_by_session = _recommendation_sessions(items)
@@ -117,7 +116,9 @@ def sessions_page(
         # 命中标记可能停在上一轮采集：打开拍场页时按当前画像重算当日匹配
         coins_recommend.rematch_today(cfg)
         cards = repository.list_coin_session_cards(
-            day_bounds=(start, end), only_recommended=False
+            day_bounds=(start, end),
+            only_recommended=False,
+            kind=None if kind == "all" else kind,
         )
         _, items = coins_recommend.load_recommendations(cfg, day=selected_day)
         precise_by_session, similar_by_session = _recommendation_sessions(items)
@@ -171,6 +172,7 @@ def sessions_page(
                 "rec": rec,
                 "type": match_type,
                 "follow": follow,
+                "kind": kind,
                 "page": page_no - 1,
             },
         )
@@ -183,6 +185,7 @@ def sessions_page(
                 "rec": rec,
                 "type": match_type,
                 "follow": follow,
+                "kind": kind,
                 "page": page_no + 1,
             },
         )
@@ -202,6 +205,7 @@ def sessions_page(
             "filter_rec": rec,
             "filter_match_type": match_type,
             "filter_follow": follow,
+            "filter_kind": kind,
             "summary": repository.coin_fetch_summary(),
         },
     )
@@ -384,27 +388,6 @@ def follow_coin_shop(
     """关注 / 取消关注店铺（本地标记）。"""
     repository.set_coin_shop_followed(shop_id, follow == "1")
     return _redirect(_return_target(next, "/coins"))
-
-
-async def _run_coins(cfg: config.Config) -> None:
-    try:
-        await coins_pipeline.run(cfg)
-    except Exception:
-        logger.exception("手工触发的铜币采集失败")
-
-
-@router.post("/coins/refresh")
-async def refresh_coins() -> Response:
-    """手工触发一轮铜币采集 + 查价（调试 / 自愈）。
-
-    后台任务、不 await：一轮要拉几十个专场、可能几分钟，不能让 HTTP 请求干等
-    （与管理页「立即运行」同一取舍，plan §19）。刷新页面后看顶部「数据更新至」是否推进。
-    采集与查价都走小程序网关（免登录、免浏览器）。
-    """
-    task = asyncio.create_task(_run_coins(config.get()))
-    _background_tasks.add(task)
-    task.add_done_callback(_background_tasks.discard)
-    return _redirect("/coins")
 
 
 # ---------------------------------------------------------------- 参考库：查询 / 详情 / 采集管理

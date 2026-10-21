@@ -1258,13 +1258,14 @@ def upsert_coin_session(session: CoinSession) -> int:
         conn.execute(
             """
             INSERT INTO coin_sessions
-                (mxiqi_id, shop_id, title, status, auction_at, auction_at_raw,
+                (mxiqi_id, shop_id, title, status, kind, auction_at, auction_at_raw,
                  deposit, lot_total, view_count, cover_urls, fetched_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(mxiqi_id) DO UPDATE SET
                 shop_id        = excluded.shop_id,
                 title          = excluded.title,
                 status         = excluded.status,
+                kind           = excluded.kind,
                 auction_at     = excluded.auction_at,
                 auction_at_raw = excluded.auction_at_raw,
                 deposit        = excluded.deposit,
@@ -1278,6 +1279,7 @@ def upsert_coin_session(session: CoinSession) -> int:
                 session.shop_id,
                 session.title,
                 session.status,
+                session.kind,
                 session.auction_at,
                 session.auction_at_raw,
                 session.deposit,
@@ -1509,7 +1511,7 @@ def coin_fetch_summary() -> dict[str, object]:
 
 
 _SESSION_CARD_SQL = """
-    SELECT s.id AS session_id, s.mxiqi_id, s.title, s.status,
+    SELECT s.id AS session_id, s.mxiqi_id, s.title, s.status, s.kind,
            s.auction_at, s.auction_at_raw, s.lot_total, s.view_count, s.cover_urls,
            sh.name AS shop_name, sh.avatar_url AS shop_avatar,
            COALESCE(sh.followed, 0) AS shop_followed,
@@ -1535,6 +1537,7 @@ def _row_to_session_card(row: sqlite3.Row) -> CoinSessionCard:
         shop_avatar=row["shop_avatar"],
         recommended_count=row["recommended_count"],
         shop_followed=bool(row["shop_followed"]),
+        kind=row["kind"],
     )
 
 
@@ -1543,12 +1546,14 @@ def list_coin_session_cards(
     *,
     day_bounds: tuple[str, str] | None = None,
     only_recommended: bool = True,
+    kind: str | None = None,
 ) -> list[CoinSessionCard]:
     """第一页：默认只列出至少命中 1 条推荐拍品的专场（spec §14.7「没有就不展示」）。
 
     `only_recommended=False` 时返回当日全部专场，供拍场页「是否推荐=全部」使用。
     未命中的专场仍全量入库，只是不默认出现 —— 画像改动后可以重新匹配，不必重抓。
-    `day_bounds` 给定时只取截拍时间落在该 `[start, end)` 区间（UTC 存储格式）的专场。
+    `day_bounds` 给定时只取展示时间落在该 `[start, end)` 区间（UTC 存储格式）的专场；
+    `kind` 给定时只取对应类型（live=实时 / timed=限时）。
     """
     conditions: list[str] = []
     if only_recommended:
@@ -1560,6 +1565,9 @@ def list_coin_session_cards(
     if day_bounds is not None:
         conditions.append("s.auction_at >= ? AND s.auction_at < ?")
         params.extend(day_bounds)
+    if kind is not None:
+        conditions.append("s.kind = ?")
+        params.append(kind)
     where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
     sql = (
         _SESSION_CARD_SQL
@@ -1652,6 +1660,7 @@ def get_coin_session_detail(session_id: int) -> CoinSessionDetail | None:
         mxiqi_id=session["mxiqi_id"],
         title=session["title"],
         status=session["status"],
+        kind=session["kind"],
         auction_at=session["auction_at"],
         auction_at_raw=session["auction_at_raw"],
         deposit=session["deposit"],

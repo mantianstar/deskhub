@@ -54,7 +54,8 @@ data/
 ## 18.3 拍卖：访问方式（小程序网关，**不需要浏览器**）
 
 - 采集（专场 + 拍品）与查价（站内历史成交）都只打 `gapi.mxiqi.com` 的三个接口，**普通 JSON POST**：免登录、免签名、不走 `www.mxiqi.com` 的滑块风控。
-- **限速**：请求之间留 `request_interval_seconds`；查价另有更保守的间隔与单轮上限（§18.6）。
+- **限速**：采集逐场详情按 `request_interval_seconds` 抖动等待（第 1 场不等）；查价另有更保守的间隔与单轮上限（§18.6）。
+- **限频重试**：网关返回 429 时按 2s / 4s 退避重试 2 次，仍失败才记 `http_error`。
 - **失败不静默**：接口报错 → 记 `coin_fetch_runs`（`http_error` / `parse_error`），页面标注「数据更新至 X 时间」。
 - 站点改版时改一处就行：接口与字段映射都在 `app/coins/gapi.py`。
 
@@ -76,10 +77,10 @@ data/
 
 - **专场 + 拍品都走小程序网关**：
   1. `POST miniprogram.auction.ListAuction`，body `{"auction_mode":1}`（实时）/ `{"auction_mode":2}`（限时）
-     → 当前专场列表（`name` / `start_time` / **`end_time`（=截拍时间）** / `num` / `status` / 店铺 / 围观）；
+     → 当前专场列表（`name` / `start_time`（开拍）/ `end_time`（截拍）/ `num` / `status` / 店铺 / 围观）；
   2. 逐场 `POST miniprogram.auction.get`，body `{"auction_id":<id>}`
      → 专场详情 + 店铺 + **全部拍品**（`auction_items.items`，一次给全）。
-- **「拍卖时间」按站内口径存 `end_time`（截拍时间）**：`coin_sessions.auction_at` 存 UTC ISO，`auction_at_raw` 存文案（如「10月12日 星期一 19:30」）。列表页那张卡显示的也是 `end_time`。
+- **「拍卖时间」按专场类型取**：`coin_sessions.kind` 记 `live`（实时）/ `timed`（限时）；实时取 `start_time`（开拍）、限时取 `end_time`（截拍），`auction_at` 存 UTC ISO、`auction_at_raw` 存文案（如「10月12日 星期一 19:30」）。列表页那张卡显示的也是同一口径。
 - 价格字段是**分**（`price_deposit=2000` → ¥20）；图片是 OSS key，用响应里的 `cdn.oss` 拼前缀。
 - 以麦稀奇 id 幂等 upsert（专场、拍品各一个唯一键）；单场失败只记日志、不中断其余专场。
 - 查价（§18.6）同走 `miniprogram.home.filter` —— 不需要浏览器与登录。
@@ -201,11 +202,10 @@ CREATE INDEX IF NOT EXISTS idx_coin_runs ON coin_fetch_runs(kind, started_at DES
 
 | 路由 | 方法 | 职责 | 模板 |
 |---|---|---|---|
-| `/coins` | GET | 拍场：专场列表（按拍卖截止日期、推荐状态 全部/已推荐/未推荐、推荐类型、关注状态 全部/已关注/未关注筛选；默认今日 + 已推荐；排序 精准 > 相似 > 已关注 > 普通，同层按截拍时间；12 个/页；空态提示） | `coins/sessions.html` |
+| `/coins` | GET | 拍场：专场列表（按拍卖日期、拍场类型 全部/实时/限时、推荐状态 全部/已推荐/未推荐、推荐类型、关注状态 全部/已关注/未关注筛选；默认今日 + 已推荐；排序 精准 > 相似 > 已关注 > 普通，同层按时间倒序；卡片依次显示类型 / 状态 / 时间（实时「开拍」、限时「截拍」）；12 个/页；空态提示） | `coins/sessions.html` |
 | `/coins/session/{id}` | GET | 拍场详情：店铺头（关注按钮）+ 拍品分「精准推荐 / 相似推荐 / 其他拍品」三组（推荐项带推荐原因，其他拍品 20 件/页；id 不存在返回 404）；带 `lot={拍品 id}` 时若命中「其他拍品」则直接渲染该拍品所在页；每条拍品带 `id="coin-lot-{拍品 id}"` 锚点 | `coins/session.html` |
 | `/coins/search` | GET | 全局拍品搜索：FTS5 关键词（拍品名 / 年份 / 国家 / 材质）+ 价格区间；只取 `auction_at >=` 业务时区今日零点起、且状态 running / preview；排序 精准 > 相似 > 关注店铺 > 普通，同层按截拍时间；20 件/页；拍品卡链接 `/coins/session/{session_id}?lot={lot_id}#coin-lot-{lot_id}` | `coins/search.html` |
 | `/coins/shop/{id}/follow` | POST | 关注 / 取消关注店铺（改 `coin_shops.followed`，302 回 `next`，只接受铜币模块内地址） | — |
-| `/coins/refresh` | POST | 手工触发一轮采集 + 查价（后台任务，302 回 `/coins`） | — |
 
 **性能**
 
@@ -413,10 +413,10 @@ coins:
 
 **为什么按钮 3 / 4 也同步 + 就地提示**：它们**不走 Numista 接口、走类型页**（需用户自己开的调试端口 Chrome，见 §18.13.2 / §18.15），失败抛 `NumistaPageError`（`_cdp_hint` 已带「怎么开 Chrome」的指引）—— 与 `NumistaError` 一样用 `try/except` 就地渲染成页面提示，不吞进日志。
 
-**为什么两组按钮都同步**（与 §18.8 `/coins/refresh` 的异步取舍相反）
+**为什么两组按钮都同步**（与运行控制「立即运行」的后台异步取舍相反）
 
 - `collect_series` 最多 1 次搜索 + `max_series`（默认 10）次详情 ≈ 11 个请求，按 2s 限速约 20s；`collect_issues` 只有 2 个请求。本地单用户可接受浏览器等待。
-- 同步才能把 `NumistaError`（未收录国家 / Key 未配置 / 月度额度用尽）**直接渲染成页面提示**；后台任务会把它吞进日志，用户看不到（`/coins/refresh` 是被迫异步：一轮要拉几十个专场、可能几分钟）。
+- 同步才能把 `NumistaError`（未收录国家 / Key 未配置 / 月度额度用尽）**直接渲染成页面提示**；后台任务会把它吞进日志，用户看不到（运行控制的铜币采集是被迫异步：一轮要拉几十个专场、可能几分钟）。
 - 同步让「取系列 → 取年份」两步**无缝衔接**，不必刷新页面。
 
 **repository 增量**（`app/repository.py`；SQL 只在此处）
@@ -710,8 +710,8 @@ CREATE TABLE IF NOT EXISTS coin_collection_series_members (
 
 **采集改动**
 
-- `SessionCard` 增加 `end_at`（UTC ISO，来自列表页 `end_time`）；`list_sessions` 传入业务时区。
-- `pipeline._collect` 先用 `repository.local_day_bounds` 过滤，只对当日截拍专场拉详情。
+- `SessionCard` 增加 `end_at` / `start_at`（UTC ISO）与 `kind`（live / timed）；`list_sessions` 传入业务时区和请求的 `auction_mode`。
+- `pipeline._collect` 先用 `repository.local_day_bounds` 过滤：实时专场看 `start_at`（今日开拍）、限时专场看 `end_at`（今日截拍），只对当日场次拉详情。
 - `pipeline.run` 优先调用 `recommend.rematch_all`；收藏画像为空时回退 `matcher.rematch_all`。
 - `_price_recommended` 新增 `keywords` 参数：新推荐直接使用推荐项关键词；旧画像仍从标题反推。
 

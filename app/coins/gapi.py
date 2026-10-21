@@ -18,6 +18,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -36,6 +37,9 @@ ACTION_FILTER = "miniprogram.home.filter"
 
 # 专场状态码 → 我们的三态（spec §14.7）
 SESSION_STATUS_BY_CODE = {0: "preview", 1: "running", 2: "closed"}
+# 专场类型：站内 `auction_mode` 1=实时 / 2=限时
+SESSION_KIND_BY_MODE = {1: "live", 2: "timed"}
+KIND_LIVE = "live"
 # 站内「成交」的 status 取值（同网页 `/auction/item?…&status=成交`）
 SOLD_STATUS = 2
 
@@ -44,6 +48,11 @@ DEFAULT_OSS_BASE = "https://oss.mxiqi.com/"
 
 # 一次请求取回专场详情的超时（网关很快，给宽一点即可）
 REQUEST_TIMEOUT_SECONDS = 20
+
+# 网关限频：429 时退避重试，别让整轮采集直接失败（风控优先于速度）
+RATE_LIMIT_STATUS = 429
+RETRY_ATTEMPTS = 2
+RETRY_BACKOFF_SECONDS = 2.0
 
 _WEEKDAYS = "一二三四五六日"
 
@@ -68,14 +77,19 @@ class SessionCard:
     mxiqi_id: str
     title: str
     status: str | None
-    # 站内文案形如「10月12日 星期一 19:30」；这里存的是**截拍时间**（end_time）
+    # 站内文案形如「10月12日 星期一 19:30」；实时专场取**开拍时间**（start_time），
+    # 限时专场取**截拍时间**（end_time）
     auction_at_raw: str | None
     lot_total: int | None
     view_count: int | None
     cover_urls: list[str]
     shop: ShopInfo | None = None
-    # 截拍时间的 UTC ISO8601（采集时只抓「当日截拍」的专场，见 spec §14.17）
+    # 截拍时间的 UTC ISO8601（限时专场按「当日截拍」采集，见 spec §14.17）
     end_at: str | None = None
+    # live=实时专场 / timed=限时专场
+    kind: str | None = None
+    # 开拍时间的 UTC ISO8601（实时专场按「今日开拍」采集）
+    start_at: str | None = None
 
 
 @dataclass(frozen=True)
@@ -185,22 +199,29 @@ def shop_from(org: dict | None) -> ShopInfo | None:
 
 
 def card_from_auction(
-    item: dict, *, oss_base: str = DEFAULT_OSS_BASE, tz=None
+    item: dict, *, oss_base: str = DEFAULT_OSS_BASE, tz=None, mode: int | None = None
 ) -> SessionCard | None:
-    """`ListAuction` 的一张专场卡 → `SessionCard`。"""
+    """`ListAuction` 的一张专场卡 → `SessionCard`。
+
+    `mode` 是请求用的 `auction_mode`；缺省看条目自带的 `auction_mode`。
+    """
     auction_id = item.get("auction_id")
     if auction_id is None:
         return None
+    kind = SESSION_KIND_BY_MODE.get(mode if mode is not None else item.get("auction_mode"))
+    at_raw = item.get("start_time") if kind == KIND_LIVE else item.get("end_time")
     return SessionCard(
         mxiqi_id=str(auction_id),
         title=(item.get("name") or "").strip() or f"专场 {auction_id}",
         status=SESSION_STATUS_BY_CODE.get(item.get("status")),
-        auction_at_raw=format_end_at(item.get("end_time")),
+        auction_at_raw=format_end_at(at_raw),
         lot_total=item.get("num"),
         view_count=(item.get("stat") or {}).get("pv"),
         cover_urls=_images(oss_base, item.get("thumbs"), 4),
         shop=shop_from(item.get("org_info")),
         end_at=to_utc_iso(item.get("end_time"), tz) if tz is not None else None,
+        kind=kind,
+        start_at=to_utc_iso(item.get("start_time"), tz) if tz is not None else None,
     )
 
 
@@ -245,19 +266,24 @@ def detail_from_payload(data: dict, fallback: SessionCard | None = None) -> Sess
     cover_urls = _images(oss_base, (items[0].get("thumbs") if items else None), 4) or (
         list(fallback.cover_urls) if fallback else []
     )
+    kind = SESSION_KIND_BY_MODE.get(auction.get("auction_mode")) or (
+        fallback.kind if fallback else None
+    )
+    at_raw = auction.get("start_time") if kind == KIND_LIVE else auction.get("end_time")
     card = SessionCard(
         mxiqi_id=mxiqi_id,
         title=(auction.get("name") or (fallback.title if fallback else "") or f"专场 {mxiqi_id}").strip(),
         status=SESSION_STATUS_BY_CODE.get(auction.get("status"))
         if auction.get("status") is not None
         else (fallback.status if fallback else None),
-        auction_at_raw=format_end_at(auction.get("end_time"))
+        auction_at_raw=format_end_at(at_raw)
         or (fallback.auction_at_raw if fallback else None),
         lot_total=auction.get("num") or (fallback.lot_total if fallback else None),
         view_count=(data.get("auction_stat") or {}).get("pv")
         or (fallback.view_count if fallback else None),
         cover_urls=cover_urls,
         shop=shop_from(org) or (fallback.shop if fallback else None),
+        kind=kind,
     )
     return SessionDetail(
         card=card,
@@ -314,12 +340,20 @@ class MxiqiGapi:
     async def _call(self, action: str, payload: dict) -> dict:
         if self._client is None:  # pragma: no cover - 只有误用才走到
             raise GapiError("客户端尚未通过 async with 打开")
-        try:
-            response = await self._client.post(f"/{action}", json=payload)
-            response.raise_for_status()
-            body = response.json()
-        except (httpx.HTTPError, ValueError) as exc:
-            raise GapiError(f"{action} 调用失败：{exc}") from exc
+        body: dict = {}
+        for attempt in range(RETRY_ATTEMPTS + 1):
+            try:
+                response = await self._client.post(f"/{action}", json=payload)
+                if response.status_code == RATE_LIMIT_STATUS and attempt < RETRY_ATTEMPTS:
+                    delay = RETRY_BACKOFF_SECONDS * (2**attempt)
+                    logger.warning("网关限频（429），%.0f 秒后重试：%s", delay, action)
+                    await asyncio.sleep(delay)
+                    continue
+                response.raise_for_status()
+                body = response.json()
+            except (httpx.HTTPError, ValueError) as exc:
+                raise GapiError(f"{action} 调用失败：{exc}") from exc
+            break
 
         error = body.get("error") or {}
         if error.get("code") not in (0, None):
@@ -333,7 +367,7 @@ class MxiqiGapi:
         for mode in (1, 2):
             data = await self._call(ACTION_LIST, {"auction_mode": mode})
             for item in ((data.get("auctions") or {}).get("items")) or []:
-                card = card_from_auction(item, tz=self._cfg.app.tz)
+                card = card_from_auction(item, tz=self._cfg.app.tz, mode=mode)
                 if card and card.mxiqi_id not in seen:
                     seen.add(card.mxiqi_id)
                     cards.append(card)
@@ -348,8 +382,14 @@ class MxiqiGapi:
     ) -> SessionDetail:
         data = await self._call(ACTION_GET, {"auction_id": int(mxiqi_id)})
         detail = detail_from_payload(data, fallback)
-        # 截拍时间的 UTC ISO 在这里补（纯函数拿不到业务时区）
-        end_at = to_utc_iso((data.get("auction") or {}).get("end_time"), self._cfg.app.tz)
+        auction = data.get("auction") or {}
+        kind = SESSION_KIND_BY_MODE.get(auction.get("auction_mode")) or (
+            fallback.kind if fallback else None
+        )
+        # 实时专场取开拍时间（start_time），限时专场取截拍时间（end_time）；
+        # UTC ISO 在这里补（纯函数拿不到业务时区）
+        at_raw = auction.get("start_time") if kind == KIND_LIVE else auction.get("end_time")
+        end_at = to_utc_iso(at_raw, self._cfg.app.tz)
         return SessionDetail(
             card=detail.card, deposit=detail.deposit, lots=detail.lots, end_at=end_at
         )

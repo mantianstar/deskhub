@@ -12,15 +12,19 @@
     <input type="search" name="q" placeholder="搜索全部拍品" aria-label="全局拍品搜索">
     <button class="btn" type="submit">搜索</button>
   </form>
-  <form method="post" action="/coins/refresh">
-    <button class="btn" type="submit">刷新今日拍品</button>
-  </form>
 {% endcall %}
 
 <form class="search-form" method="get" action="/coins">
   <div class="search-row search-row-labeled">
-    <label class="field">拍卖截止日期
+    <label class="field">拍卖日期
       <input type="date" name="auction_date" value="{{ auction_date }}">
+    </label>
+    <label class="field">拍场类型
+      <select name="kind">
+        <option value="all"{% if filter_kind == 'all' %} selected{% endif %}>全部</option>
+        <option value="live"{% if filter_kind == 'live' %} selected{% endif %}>实时</option>
+        <option value="timed"{% if filter_kind == 'timed' %} selected{% endif %}>限时</option>
+      </select>
     </label>
     <label class="field">推荐状态
       <select name="rec">
@@ -51,10 +55,11 @@
   {% for card in cards %}
   <a class="coin-session-card" href="/coins/session/{{ card.session_id }}">
     <div class="coin-session-top">
+      <span class="coin-badge">{% if card.kind == 'live' %}实时{% elif card.kind == 'timed' %}限时{% else %}—{% endif %}</span>
       <span class="coin-status coin-status-{{ card.status or 'unknown' }}">
         {{ coin_session_status_labels.get(card.status, card.status or '未知') }}
       </span>
-      <span class="coin-time">截拍 {{ card.auction_at_raw or (card.auction_at | local_time) }}</span>
+      <span class="coin-time">{{ '开拍' if card.kind == 'live' else '截拍' }} {{ card.auction_at_raw or (card.auction_at | local_time) }}</span>
       {% if card.shop_name %}
       <span class="coin-session-shop">{{ card.shop_name }}{% if card.shop_followed %}<span class="coin-follow-star" title="已关注店铺">★</span>{% endif %}</span>
       {% endif %}
@@ -74,7 +79,7 @@
     {% endif %}
 
     <div class="coin-session-foot">
-      <span>实时拍卖</span>
+      {% if card.kind %}<span>{% if card.kind == 'live' %}实时拍卖{% else %}限时拍卖{% endif %}</span>{% endif %}
       <span>共 {{ card.lot_total if card.lot_total is not none else '—' }} 件拍品</span>
       <span>{{ card.view_count or 0 }} 人次围观</span>
       <span class="coin-hit">精准 {{ card.precise_count }} 件</span>

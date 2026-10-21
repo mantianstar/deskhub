@@ -9,10 +9,12 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import replace
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
+import httpx
 import pytest
 
 from app import config as config_module
@@ -149,6 +151,18 @@ def test_card_from_auction_maps_list_card():
     assert [badge["label"] for badge in card.shop.badges] == ["认证"]
 
 
+def test_card_from_auction_maps_live_mode_to_start_time():
+    """实时专场（auction_mode=1）的时间取开拍 start_time，类型记为 live。"""
+    live = {**LIST_ITEM, "auction_mode": 1, "start_time": "2026-10-12 19:30:00"}
+
+    card = gapi.card_from_auction(live, tz=SHANGHAI)
+
+    assert card is not None
+    assert card.kind == "live"
+    assert card.auction_at_raw == "10月12日 星期一 19:30"  # 开拍时间（start_time）
+    assert card.start_at == "2026-10-12T11:30:00Z"
+
+
 def test_detail_from_payload_maps_session_shop_and_lots():
     detail = gapi.detail_from_payload(DETAIL_PAYLOAD)
 
@@ -267,6 +281,51 @@ async def test_search_sold_skips_blank_keyword():
     assert api.calls == []  # 空关键词不发请求
 
 
+# ---------------------------------------------------------------- 风控（真 _call + MockTransport）
+
+
+def _mock_client(handler) -> httpx.AsyncClient:
+    return httpx.AsyncClient(
+        base_url="https://gapi.test", transport=httpx.MockTransport(handler)
+    )
+
+
+@pytest.mark.asyncio
+async def test_call_retries_once_after_429(monkeypatch):
+    """429 先退避再重试；第二次成功就正常返回（退避归零，测试不真等）。"""
+    monkeypatch.setattr(gapi, "RETRY_BACKOFF_SECONDS", 0)
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
+        if len(calls) == 1:
+            return httpx.Response(429)
+        return httpx.Response(200, json={"data": {"ok": 1}})
+
+    async with gapi.MxiqiGapi(config_module.load(), client=_mock_client(handler)) as api:
+        data = await api._call("miniprogram.test", {})
+
+    assert data == {"ok": 1}
+    assert len(calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_call_gives_up_after_retries(monkeypatch):
+    """连续 429 只重试 RETRY_ATTEMPTS 次，最终抛 GapiError（交给管道记失败）。"""
+    monkeypatch.setattr(gapi, "RETRY_BACKOFF_SECONDS", 0)
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
+        return httpx.Response(429)
+
+    async with gapi.MxiqiGapi(config_module.load(), client=_mock_client(handler)) as api:
+        with pytest.raises(gapi.GapiError):
+            await api._call("miniprogram.test", {})
+
+    assert len(calls) == gapi.RETRY_ATTEMPTS + 1
+
+
 # ---------------------------------------------------------------- 管道（对象替身）
 # 这一段验的是「编排 + 落库」：一个替身同时扮采集与查价，都不碰网络。
 
@@ -347,10 +406,12 @@ def _seed_tags() -> None:
 
 
 def _cfg(**price_overrides):
-    """真配置 + 查价限速归零（真实配置里是 15 秒，测试不该真等）。"""
+    """真配置 + 采集/查价限速归零（真实配置里是 3 / 15 秒，测试不该真等）。"""
     cfg = config_module.load()
     price = replace(cfg.coins.price, query_interval_seconds=0, **price_overrides)
-    return replace(cfg, coins=replace(cfg.coins, price=price))
+    return replace(
+        cfg, coins=replace(cfg.coins, request_interval_seconds=0, price=price)
+    )
 
 
 def _sold():
@@ -382,6 +443,45 @@ async def test_pipeline_collects_and_matches(temp_db):
     assert detail is not None
     assert detail.auction_at == _today_end_at()
     assert detail.auction_at_raw == "10月12日 星期一 19:30"
+
+
+@pytest.mark.asyncio
+async def test_pipeline_collects_live_session_by_start_time(temp_db):
+    """实时专场按「今日开拍」采集：end_at 为空也不影响，入库类型为 live。"""
+
+    class _LiveGapi(_FakeGapi):
+        async def list_sessions(self) -> list[SessionCard]:
+            return [replace(_card(), kind="live", start_at=_today_end_at(), end_at=None)]
+
+        async def session_detail(self, mxiqi_id: str, *, fallback=None) -> SessionDetail:
+            return replace(
+                _detail(mxiqi_id),
+                card=replace(_card(mxiqi_id), kind="live", start_at=_today_end_at(), end_at=None),
+            )
+
+    result = await coins_run(config_module.load(), gapi=_LiveGapi(), collect_only=True)
+
+    assert result.sessions_stored == 1
+    cards = repository.list_coin_session_cards(only_recommended=False)
+    assert [card.kind for card in cards] == ["live"]
+
+
+@pytest.mark.asyncio
+async def test_pipeline_waits_between_session_details(temp_db, monkeypatch):
+    """采集逐场请求按 `request_interval_seconds` 抖动限速：两个专场只等一次。"""
+    delays: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        delays.append(seconds)
+
+    monkeypatch.setattr(asyncio, "sleep", fake_sleep)
+    cfg = config_module.load()
+    cfg = replace(cfg, coins=replace(cfg.coins, request_interval_seconds=3))
+
+    await coins_run(cfg, gapi=_FakeGapi(), collect_only=True)
+
+    assert len(delays) == 1
+    assert 1.8 <= delays[0] <= 4.2  # 3 秒 × (0.6 ~ 1.4)
 
 
 @pytest.mark.asyncio

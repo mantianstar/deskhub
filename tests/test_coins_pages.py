@@ -206,6 +206,45 @@ def test_sessions_page_filters_recommendation_and_type(web):
     assert f'href="/coins/session/{session_id}"' in page.text
 
 
+def test_sessions_page_filters_kind_and_labels_time(web):
+    """拍场类型可筛实时 / 限时；时间前缀按类型显示开拍 / 截拍。"""
+    now = repository.utcnow()
+
+    def _seed(mxiqi_id: str, title: str, kind: str) -> int:
+        return repository.upsert_coin_session(
+            CoinSession(
+                id=None,
+                mxiqi_id=mxiqi_id,
+                shop_id=None,
+                title=title,
+                status="running",
+                auction_at=_today_auction_at(),
+                auction_at_raw="10月8日 星期四 15:25",
+                deposit=None,
+                lot_total=1,
+                view_count=0,
+                cover_urls=[],
+                fetched_at=now,
+                kind=kind,
+            )
+        )
+
+    live_id = _seed("live-session", "实时专场", "live")
+    timed_id = _seed("timed-session", "限时专场", "timed")
+
+    page = web.get("/coins?rec=all&kind=live")
+    assert f'href="/coins/session/{live_id}"' in page.text
+    assert f'href="/coins/session/{timed_id}"' not in page.text
+    assert "开拍 10月8日 星期四 15:25" in page.text
+    assert 'value="live" selected' in page.text
+
+    page = web.get("/coins?rec=all&kind=timed")
+    assert f'href="/coins/session/{timed_id}"' in page.text
+    assert f'href="/coins/session/{live_id}"' not in page.text
+    assert "截拍 10月8日 星期四 15:25" in page.text
+    assert 'value="timed" selected' in page.text
+
+
 def _seed_empty_session(name: str, *, followed: bool) -> int:
     """造一个没有拍品的专场（店铺名 = name），返回 session_id。"""
     now = repository.utcnow()

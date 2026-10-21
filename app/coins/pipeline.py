@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from app import repository
 from app.coins import matcher, pricing
 from app.coins import recommend as coins_recommend
-from app.coins.gapi import GapiError, MxiqiGapi
+from app.coins.gapi import KIND_LIVE, GapiError, MxiqiGapi
 from app.config import Config
 from app.models import CoinFetchRun, CoinFetchStatus, CoinLot, CoinSession, CoinShop
 
@@ -181,15 +181,20 @@ async def _collect(config: Config, api: MxiqiGapi, started: str) -> tuple[int, i
         _record(RUN_KIND_SESSIONS, TARGET_LIST, started, CoinFetchStatus.HTTP_ERROR, error=str(exc))
         return 0, 0, 0
 
-    # 只抓当日截拍的店铺（spec §14.17）：截拍时间落在业务时区「今天」的专场才继续拉详情
+    # 只抓当日场次（spec §14.17）：实时专场看开拍时间（start_time）、限时专场看截拍时间
+    # （end_time）是否落在业务时区的「今天」
     day_start, day_end = repository.local_day_bounds(config.app.tz)
+
+    def _day_at(card) -> str | None:
+        return card.start_at if card.kind == KIND_LIVE else card.end_at
+
     before = len(cards)
     cards = [
         card
         for card in cards
-        if card.end_at is not None and day_start <= card.end_at < day_end
+        if (at := _day_at(card)) is not None and day_start <= at < day_end
     ]
-    logger.info("铜币采集：今日截拍专场 %d 个（列表共 %d 个）", len(cards), before)
+    logger.info("铜币采集：今日开拍/截拍专场 %d 个（列表共 %d 个）", len(cards), before)
 
     limit = config.coins.max_sessions_per_run
     cards = cards[:limit]
@@ -197,7 +202,13 @@ async def _collect(config: Config, api: MxiqiGapi, started: str) -> tuple[int, i
 
     sessions_stored = 0
     lots_stored = 0
-    for card in cards:
+    # 限速：场详情逐场请求，第 2 场起才等（第一场不必白等），带抖动避免节奏固定
+    interval = config.coins.request_interval_seconds
+    for index, card in enumerate(cards):
+        if index > 0 and interval > 0:
+            delay = random.uniform(interval * 0.6, interval * 1.4)
+            logger.info("采集限速：等 %.1f 秒（每场间隔 %d 秒）", delay, interval)
+            await asyncio.sleep(delay)
         detail_started = repository.utcnow()
         try:
             # 详情页拿不到的字段用列表页那张卡兜底（gapi.detail_from_payload）
@@ -230,8 +241,10 @@ async def _collect(config: Config, api: MxiqiGapi, started: str) -> tuple[int, i
                 shop_id=shop_id,
                 title=detail.card.title,
                 status=detail.card.status,
-                # 「拍卖时间」按站内口径 = **截拍时间**（end_time）；同时存 UTC ISO 与原始文案
+                # 实时专场 = 开拍时间（start_time），限时专场 = 截拍时间（end_time）；
+                # 同时存 UTC ISO 与原始文案
                 auction_at=detail.end_at,
+                kind=detail.card.kind,
                 auction_at_raw=detail.card.auction_at_raw,
                 deposit=detail.deposit,
                 lot_total=detail.card.lot_total,

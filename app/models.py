@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-SCHEMA_VERSION = "12"
+SCHEMA_VERSION = "13"
 
 # 所有时间列存 UTC ISO8601 字符串（SQLite 无原生时间类型）
 DDL = """
@@ -113,8 +113,9 @@ CREATE TABLE IF NOT EXISTS coin_sessions (
   shop_id        INTEGER REFERENCES coin_shops(id) ON DELETE SET NULL,
   title          TEXT    NOT NULL,
   status         TEXT,      -- preview | running | closed
-  auction_at     TEXT,      -- 拍卖时间（站内口径 = 截拍 end_time）的 UTC ISO8601
-  auction_at_raw TEXT,      -- 截拍时间的站点文案，如「10月12日 星期一 19:30」
+  kind           TEXT,      -- live（实时，展示开拍时间）| timed（限时，展示截拍时间）
+  auction_at     TEXT,      -- 展示时间：实时 = 开拍 start_time，限时 = 截拍 end_time（UTC ISO8601）
+  auction_at_raw TEXT,      -- 展示时间的站点文案，如「10月12日 星期一 19:30」
   deposit        REAL,
   lot_total      INTEGER,
   view_count     INTEGER,
@@ -603,6 +604,8 @@ class CoinSession:
     view_count: int | None
     cover_urls: list[str]
     fetched_at: str
+    # live（实时）/ timed（限时）；老库迁移前为空
+    kind: str | None = None
 
 
 @dataclass
@@ -779,6 +782,8 @@ class CoinSessionCard:
     precise_count: int = 0
     similar_count: int = 0
     shop_followed: bool = False
+    # live（实时）/ timed（限时）
+    kind: str | None = None
 
 
 @dataclass
@@ -817,6 +822,8 @@ class CoinSessionDetail:
     recommended_count: int
     shop: CoinShop | None
     lots: list[CoinLotCard]
+    # live（实时）/ timed（限时）
+    kind: str | None = None
 
 
 # ---------------------------------------------------------------- 收藏画像（spec §14.17）

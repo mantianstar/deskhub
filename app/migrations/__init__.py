@@ -12,13 +12,14 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Callable
 
-from app.migrations import v4, v8, v11, v12
+from app.migrations import v4, v8, v11, v12, v13
 
 # (from_version, to_version) -> {表名: {列名: 列定义}}
 COLUMN_MIGRATIONS: dict[tuple[str, str], dict[str, dict[str, str]]] = {
     ("3", "4"): v4.COLUMNS,
     ("7", "8"): v8.COLUMNS,
     ("10", "11"): v11.COLUMNS,
+    ("12", "13"): v13.COLUMNS,
 }
 
 # (from_version, to_version) -> 建表之外还要跑一次的数据回填

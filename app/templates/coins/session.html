@@ -44,7 +44,7 @@
   <span class="coin-status coin-status-{{ detail.status or 'unknown' }}">
     {{ coin_session_status_labels.get(detail.status, detail.status or '未知') }}
   </span>
-  <span class="coin-time">截拍 {{ detail.auction_at_raw or (detail.auction_at | local_time) }}</span>
+  <span class="coin-time">{{ '开拍' if detail.kind == 'live' else '截拍' }} {{ detail.auction_at_raw or (detail.auction_at | local_time) }}</span>
 </div>
 
 <h1 class="coin-session-title-lg">{{ detail.title }}</h1>

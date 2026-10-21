@@ -271,3 +271,14 @@
 | [x] M30-B | 匹配口径说明 | 精准匹配 / 相似推荐标题右侧直接显示说明文字；P5 搜索词只拼国家 + 面值 | 页面 smoke / keyword 断言 |
 
 **验证**：`.venv/bin/python -m pytest tests -q` → 334 passed；真实库重算相似推荐 2 张卡 / 5 条拍品（英国卡 4 条、爱尔兰卡 1 条）。
+
+---
+
+## M31 — 拍场类型：实时 / 限时（2026-10-21）
+
+| # | 块 | 产出 | 验证 |
+|---|---|---|---|
+| [x] M31-A | 采集：`SessionCard.kind` / `start_at`；实时专场按开拍（`start_time`）、限时按截拍（`end_time`）筛当日；`coin_sessions.kind` + schema 12→13 | `app/coins/gapi.py`、`app/coins/pipeline.py`、`app/models.py`、`app/migrations/v13.py` | gapi 实时映射用例；管道实时场次采集用例 |
+| [x] M31-B | 页面：拍场页新增类型筛选 + 状态前类型标签 + 时间前缀（开拍 / 截拍）；拍品页时间前缀 | `app/routers/coins.py`、`app/repository.py`、`app/templates/coins/{sessions,session}.html` | 类型筛选与开拍 / 截拍文案断言；全量 `pytest` 337 passed |
+
+**验证**：`.venv/bin/python -m pytest tests -q` → 337 passed（新增 3 例：实时映射 / 实时场次采集 / 类型筛选与时间前缀）。
