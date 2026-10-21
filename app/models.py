@@ -369,7 +369,7 @@ CREATE TABLE IF NOT EXISTS coin_explore_candidates (
   status      TEXT    NOT NULL,            -- candidate / adopted / ignored
   payload     TEXT    NOT NULL,            -- SeriesInfo JSON（英文）
   payload_cn  TEXT    NOT NULL,            -- SeriesInfo JSON（中文，页面与采纳用）
-  issues      TEXT    NOT NULL,            -- IssueInfo JSON 数组（P3 缺失年份用）
+  issues      TEXT    NOT NULL,            -- IssueInfo JSON 数组（P4/P5 候选缺失年份用）
   verified_at TEXT    NOT NULL,
   created_at  TEXT    NOT NULL,
   updated_at  TEXT    NOT NULL
@@ -937,7 +937,7 @@ class CoinSearchLot:
 
 @dataclass
 class CoinRecommendation:
-    """三层优先级的一条目标购买推荐。"""
+    """一条目标购买推荐（P1 缺失年份 / P2 差品升级 / P4 年份匹配 / P5 面值探索）。"""
 
     priority: int
     collection: CoinCollectionSeries
@@ -947,6 +947,8 @@ class CoinRecommendation:
     score: float
     reason: str
     spec: CoinYearSpec | None = None
+    # 相似推荐卡最多展示几条拍品：第一轮 1 条，第二轮兜底卡按剩余名额多条
+    lot_limit: int = 1
     matched_lots: list[CoinTodayLot] = field(default_factory=list)
 
     @property

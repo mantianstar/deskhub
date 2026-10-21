@@ -133,7 +133,7 @@
     {% if filter_hit != '0' %}
     <section class="coin-rec-section">
       <h3 class="coin-rec-section-title">
-        <span>精准匹配</span>
+        <span>精准匹配 <span class="coin-rec-hint">系列收藏缺失年份、差品年份匹配</span></span>
         <span class="coin-rec-section-count">{{ precise_total }} 项</span>
       </h3>
       {% if precise_items %}
@@ -155,7 +155,7 @@
 
     <section class="coin-rec-section">
       <h3 class="coin-rec-section-title">
-        <span>相似推荐</span>
+        <span>相似推荐 <span class="coin-rec-hint">候选池国家年份面值、国家面值匹配</span></span>
         <span class="coin-rec-section-count">{{ similar_total }} 项</span>
       </h3>
       {% if similar_items %}

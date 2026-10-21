@@ -1,4 +1,4 @@
-"""收藏画像与三层推荐测试（spec §14.17）。
+"""收藏画像与推荐优先级测试（spec §14.17）。
 
 运行方式：`.venv/bin/python -m pytest tests/test_coins_collection.py -q`
 纯函数 + 临时库，不发网络请求。
@@ -365,7 +365,7 @@ def test_japanese_year_labels_translate_back():
     assert item.keyword.startswith("日本 明治6年")
 
 
-def test_priority_three_only_when_first_two_are_insufficient():
+def test_priority_four_only_when_first_two_are_insufficient():
     primary = _profile(
         key="uk-victoria-penny",
         years=[1860, 1861, 1862],
@@ -394,12 +394,11 @@ def test_priority_three_only_when_first_two_are_insufficient():
         [primary], explore_profiles=[similar], min_results=3
     )
 
-    # 前两层只有 1 条 → 触发第三层补到 3 条
-    assert len(items) == 3
-    assert any(item.priority == 3 for item in items)
+    # 前两层只有 1 条 → 触发相似推荐；每个系列一条（无拍品可补多条）
+    assert [item.priority for item in items] == [1, 4]
 
 
-def test_priority_three_tops_up_when_items_enough_but_matches_short():
+def test_priority_four_tops_up_when_items_enough_but_matches_short():
     primary = _profile(
         key="uk-victoria-penny",
         years=[1860, 1861, 1862, 1863, 1864, 1865],
@@ -421,31 +420,30 @@ def test_priority_three_tops_up_when_items_enough_but_matches_short():
         [primary], explore_profiles=[similar], search_results=0, min_results=3
     )
 
-    # 前两层已有 6 条推荐但当日命中 0 条 → 第三层按缺口补 3 条
-    threes = [item for item in items if item.priority == 3]
-    assert len(threes) == 3
+    # 前两层已有 6 条推荐但当日命中 0 条 → 相似推荐补位；每个系列一条
+    fours = [item for item in items if item.priority == 4]
+    assert len(fours) == 1
     assert len([item for item in items if item.priority == 1]) == 6
 
 
-def test_priority_three_returns_only_matched_targets_up_to_limit():
-    """给了当日拍品时，相似推荐只保留确实命中的目标，最多 min_results 个。"""
-    primary = _profile(
-        key="uk-victoria-penny",
-        years=[1860, 1861, 1862, 1863, 1864, 1865],
-        owned=[],
-    )
-    similar = _profile(
-        key="uk-victoria-halfpenny",
-        denomination="半 便士",
-        size_mm=30.5,
-        years=[1880, 1881, 1882, 1883, 1884, 1885],
-        owned=[],
-    )
+def test_priority_four_caps_at_min_results_across_series():
+    """给了当日拍品时，多个候选系列各出一条，最多 min_results 个。"""
+    primary = _profile(key="uk-victoria-penny", years=[1860], owned=[])
+    similars = [
+        _profile(
+            key=f"uk-victoria-similar-{index}",
+            denomination=f"{index} 便士",
+            size_mm=30.5,
+            years=[1879 + index],
+            owned=[],
+        )
+        for index in range(1, 7)
+    ]
     lots = [
         CoinTodayLot(
-            id=index + 1,
+            id=index,
             session_id=1,
-            title=f"英国 {year} 年 半 便士",
+            title=f"英国 {1879 + index} 年 {index} 便士",
             start_price=None,
             current_price=None,
             image_urls=[],
@@ -453,7 +451,35 @@ def test_priority_three_returns_only_matched_targets_up_to_limit():
             session_title="",
             auction_at=None,
         )
-        for index, year in enumerate([1880, 1881, 1882, 1883, 1884])
+        for index in range(1, 7)
+    ]
+
+    items = recommend.build_recommendations(
+        [primary],
+        explore_profiles=similars,
+        search_results=0,
+        similar_lots=lots,
+        min_results=5,
+    )
+
+    fours = [item for item in items if item.priority == 4]
+    assert len(fours) == 5
+    assert {item.year for item in fours} == {1880, 1881, 1882, 1883, 1884}
+
+
+def test_similar_tops_up_same_series_with_multiple_lots():
+    """第二轮把同系列拍品追加到同一张卡，不新开卡。"""
+    primary = _profile(key="uk-victoria-penny", years=[1860], owned=[])
+    similar = _profile(
+        key="uk-victoria-halfpenny",
+        denomination="半 便士",
+        size_mm=30.5,
+        years=[1900, 1901, 1902, 1903, 1904],
+        owned=[],
+    )
+    lots = [
+        CoinTodayLot(index, 1, f"英国 {1939 + index} 年 半 便士", None, None, [], None, "", None)
+        for index in range(1, 6)
     ]
 
     items = recommend.build_recommendations(
@@ -463,11 +489,118 @@ def test_priority_three_returns_only_matched_targets_up_to_limit():
         similar_lots=lots,
         min_results=5,
     )
+    recommend.attach_lots(items, lots)
+    recommend._prune_similar_lots(items, set())
 
-    threes = [item for item in items if item.priority == 3]
-    assert len(threes) == 5
-    # 1885 没有对应拍品，不再作为相似推荐出现
-    assert {item.year for item in threes} == {1880, 1881, 1882, 1883, 1884}
+    fives = [item for item in items if item.priority == 5]
+    assert len(fives) == 1
+    assert len(fives[0].matched_lots) == 5
+    # 面值探索的搜索词不带年份
+    assert fives[0].keyword == "英国 半 便士"
+
+
+def test_similar_excludes_precise_lots_and_reuses_no_lot():
+    """相似推荐不碰精准命中的拍品；多个系列只命中同一条拍品时只保留一条。"""
+    primary = _profile(key="uk-victoria-penny", years=[1860], owned=[])
+    same_lot_series = [
+        _profile(
+            key=f"uk-victoria-halfpenny-{index}",
+            denomination="半 便士",
+            size_mm=30.5,
+            years=[1880],
+            owned=[],
+        )
+        for index in range(2)
+    ]
+    # 这个系列只能靠 P5 命中 1860 那条精准拍品，应当被排除
+    precise_only = _profile(
+        key="uk-victoria-penny-similar",
+        denomination="1 便士",
+        size_mm=31.0,
+        years=[1900],
+        owned=[],
+    )
+    precise_lot = CoinTodayLot(1, 1, "英国 1860 年 1 便士", None, None, [], None, "", None)
+    shared_lot = CoinTodayLot(2, 1, "英国 1880 年 半 便士", None, None, [], None, "", None)
+
+    items = recommend.build_recommendations(
+        [primary],
+        explore_profiles=[*same_lot_series, precise_only],
+        search_results=1,
+        similar_lots=[precise_lot, shared_lot],
+        exclude_lot_ids={1},
+        min_results=5,
+    )
+
+    # 1860 已由精准匹配占用 → 相似推荐不再出卡；两个系列抢同一条拍品 → 只留一条
+    assert [item.priority for item in items if item.priority in (4, 5)] == [4]
+
+
+def test_similar_card_keeps_single_lot():
+    """相似推荐一张卡只挂一条拍品。"""
+    primary = _profile(key="uk-victoria-penny", years=[1860], owned=[])
+    similar = _profile(
+        key="uk-victoria-halfpenny",
+        denomination="半 便士",
+        size_mm=30.5,
+        years=[1880],
+        owned=[],
+    )
+    lots = [
+        CoinTodayLot(index, 1, "英国 1880 年 半 便士", None, None, [], None, "", None)
+        for index in (2, 3, 4)
+    ]
+
+    items = recommend.build_recommendations(
+        [primary],
+        explore_profiles=[similar],
+        search_results=0,
+        similar_lots=lots,
+        min_results=5,
+    )
+    recommend.attach_lots(items, lots)
+    recommend._prune_similar_lots(items, set())
+
+    fours = [item for item in items if item.priority == 4]
+    assert len(fours) == 1
+    assert [lot.id for lot in fours[0].matched_lots] == [2]
+
+
+def test_priority_five_denomination_explore_fills_when_year_misses():
+    """P4 年份对不上时，P5 用「同国家 + 同面值」补位，同一系列只出一条。"""
+    primary = _profile(key="uk-victoria-penny", years=[1860, 1861], owned=[])
+    similar = _profile(
+        key="uk-victoria-halfpenny",
+        denomination="半 便士",
+        size_mm=30.5,
+        years=[1900, 1901, 1902],
+        owned=[],
+    )
+    lot = CoinTodayLot(
+        id=1,
+        session_id=1,
+        title="英国 1940 年 半 便士",
+        start_price=None,
+        current_price=None,
+        image_urls=[],
+        shop_name=None,
+        session_title="",
+        auction_at=None,
+    )
+
+    items = recommend.build_recommendations(
+        [primary],
+        explore_profiles=[similar],
+        search_results=0,
+        similar_lots=[lot],
+        min_results=4,
+    )
+
+    fives = [item for item in items if item.priority == 5]
+    assert len(fives) == 1
+    assert fives[0].reason == "面值探索"
+    assert recommend.lot_matches(fives[0], lot)
+    assert not recommend.lot_matches(items[0], lot)  # P1 仍然要求年份命中
 
 
 def test_lot_matching_handles_arabic_and_chinese_year_forms():
@@ -813,7 +946,7 @@ def test_collection_page_filters_series_reason_and_hit(web):
 
 
 def test_collection_hit_filter_separates_precise_and_similar(web):
-    """相似推荐（P3）不计入命中；无论是否命中，相似推荐模块都常驻展示。"""
+    """相似推荐（P4/P5）不计入命中；无论是否命中，相似推荐模块都常驻展示。"""
     series_id = repository.upsert_coin_series_cn(
         _series(902, min_year=1800, max_year=1804)
     )
@@ -1146,7 +1279,7 @@ def test_match_seed_requires_copper_and_size_tolerance():
     )
 
 
-def test_explore_profiles_feed_priority_three(temp_db):
+def test_explore_profiles_feed_similar_recommendations(temp_db):
     repository.upsert_coin_explore_candidate(_explore_candidate(990002))
     candidate_profiles = collection.load_explore_profiles()
     assert len(candidate_profiles) == 1
@@ -1159,7 +1292,7 @@ def test_explore_profiles_feed_priority_three(temp_db):
         search_results=0,
         min_results=5,
     )
-    assert any(item.priority == 3 for item in items)
+    assert any(item.priority in (4, 5) for item in items)
 
 
 def test_explore_page_adopt_and_ignore(web):

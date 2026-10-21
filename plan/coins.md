@@ -678,8 +678,8 @@ CREATE TABLE IF NOT EXISTS coin_collection_series_members (
 | 文件 | 职责 |
 |---|---|
 | `app/coins/collection.py` | 纯函数 + 组装：尺寸分档、Bronze/Copper 过滤、精制过滤、年份规格聚合、已有/缺失/升级年份 |
-| `app/coins/explore.py` | 探索候选池：种子提取、Numista 目录扫描、材质 / 尺寸过滤、候选 CRUD 适配、采纳落库、P3 画像 |
-| `app/coins/recommend.py` | 三层推荐排序、日本年号翻译、面值写法变体、当日拍品匹配、`rematch_all` |
+| `app/coins/explore.py` | 探索候选池：种子提取、Numista 目录扫描、材质 / 尺寸过滤、候选 CRUD 适配、采纳落库、P4/P5 画像 |
+| `app/coins/recommend.py` | 推荐排序（P1/P2/P4/P5）、日本年号翻译、面值写法变体、当日拍品匹配、`rematch_all` |
 | `app/repository.py` | 收藏系列 / 成员 CRUD、候选池 CRUD、`list_coin_today_lots`（按 `coin_sessions.auction_at` 取当日） |
 | `app/routers/coins.py` | `/coins/collection`、`/coins/collections`、`/coins/explore` 及映射 / 候选状态 POST |
 | `app/config.py` | `coins.collection`：`min_results` / `rarity_floor` / `top_upgrades_per_series` / `denomination_tiers` / `explore_*` |
@@ -698,11 +698,15 @@ CREATE TABLE IF NOT EXISTS coin_collection_series_members (
 - P1：`position_weight × scarcity_weight`；`position_weight` 首/末/执政者边界 1.5；
   `scarcity_weight = 1 / max(rarity, rarity_floor)`，无 rarity 时 1.0。
 - P2：`XF/VF × 1/max(rarity, floor)`，每系列取前 `top_upgrades_per_series`。
-- P3：仅当前两层与当日拍品的**匹配条数** < `min_results`（没有当日拍品时按推荐项数兜底）；
+- P4：仅当前两层与当日拍品的**匹配条数** < `min_results`（没有当日拍品时按推荐项数兜底）；
   候选来自 `load_explore_profiles()` → `explore.load_candidate_profiles()`（候选池状态为候选 / 采纳，忽略除外），
-  取候选的缺失年份；按尺寸差升序、`-rarity` 升序。
+  取候选的缺失年份；按尺寸差升序、`-rarity` 升序；只保留当日确有命中（国家 + 年份 + 面值）的候选，
+  排除精准匹配已命中的拍品；第一轮不同系列各一条、每卡 1 条拍品；不足 `min_results` 时第二轮
+  把同系列更多拍品追加到该系列卡（不新开卡），拍品总数补满；同一条拍品只归属一条推荐。
+- P5：P4 命中不足 `min_results` 时用剩余名额补齐，候选与 P4 同源，命中口径放宽为国家 + 面值；
+  系列去重与两轮补满规则同 P4；**搜索词只拼国家 + 面值**；卡片标签「年份匹配」/「面值探索」。
 - 匹配：拍品标题需同时命中 `country`、任一年份写法、任一面值写法；日本年号由
-  `ruler` / 系列名 / `gregorian_year` 定位，输出 `明治6年` / `明治六年`。
+  `ruler` / 系列名 / `gregorian_year` 定位，输出 `明治6年` / `明治六年`。P5 不校验年份。
 
 **采集改动**
 
@@ -714,9 +718,9 @@ CREATE TABLE IF NOT EXISTS coin_collection_series_members (
 **页面**
 
 - `/coins/collection`：**今日推荐**——4 个 KPI（精准匹配店铺 / 精准匹配拍品只统计 P1+P2）+ 两栏布局：左侧分段
-  【精准匹配】（P1+P2，橙色高亮）与【相似推荐】（P3，灰色弱化；先与当日拍品匹配，只保留有命中的目标，
-  最多 5 项，一个年份一张，标题按「国家 · 执政者 · 面值」，含推荐原因 / 发行量 / 稀有度 /
-  尺寸重量 / VF-XF / 命中店铺与拍品）；
+  【精准匹配】（P1+P2，橙色高亮）与【相似推荐】（P4 年份匹配 + P5 面值探索，灰色弱化；先与当日拍品匹配，
+  只保留有命中的目标，最多 5 项，标题右侧显示匹配口径说明文字，一个年份一张，标题按「国家 · 执政者 · 面值」，
+  含推荐原因 / 发行量 / 稀有度 / 尺寸重量 / VF-XF / 命中店铺与拍品）；
   可按系列 / 推荐原因 / 是否命中筛选（推荐原因只控制精准匹配；已命中过滤精准匹配的当日命中，未命中隐藏精准匹配）；
   右侧今日拍场为聚合面板，按「精准匹配 > 相似推荐 > 无关」排序：标题下显示精准 / 相似各自的推荐项数
   与当日命中件数；每行右侧居中圆圈显示该场总匹配件数，统计顺序为总件数 → 精准 → 相似；最多 6 场，
@@ -741,7 +745,8 @@ CREATE TABLE IF NOT EXISTS coin_collection_series_members (
 | P1 | 首/末年位置权重 1.5；稀缺权重 1/rarity |
 | P2 | 只取 `差`；每系列最多 3 个 |
 | 年号 | `明治6年` / `明治六年` / `1873`；标题 `明治六年二钱` 能命中 |
-| P3 | 前两层不足时用候选池画像补齐 |
+| P4 | 前两层不足时用候选池画像补齐，只保留当日有命中的目标 |
+| P5 | 年份对不上时按国家 + 面值补位，同一系列一条 |
 | 候选池 | 忽略后列表隐藏且重扫不复活；材质 / 尺寸容差过滤；采纳后信息页与采集管理页可见 |
 | 映射表 | 收藏系列 CRUD、成员增删 |
 | 页面 | 新建 → 映射 → 两个页面 200 且渲染名称/年份；推荐表按系列 / 推荐原因 / 是否命中筛选；候选默认取系列执政者、可切「全部」；空库空态 200 |

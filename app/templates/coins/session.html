@@ -200,6 +200,11 @@
 
   input.addEventListener('input', render);
   hideToggle.addEventListener('change', render);
+  // 翻页链接带 hide_rec=1：进页即勾选，只留其他拍品
+  if (new URLSearchParams(window.location.search).get('hide_rec') === '1') {
+    hideToggle.checked = true;
+    render();
+  }
 })();
 </script>
 

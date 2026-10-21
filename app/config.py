@@ -150,9 +150,9 @@ class ExploreCatalogueConfig:
 
 @dataclass(frozen=True)
 class CoinCollectionConfig:
-    """收藏画像与三层推荐的口径（spec §14.17）。"""
+    """收藏画像与推荐优先级的口径（spec §14.17）。"""
 
-    # 前两层推荐总数少于此值时，才触发第三层「跨系列相似推荐」
+    # 前两层推荐总数少于此值时，才触发相似推荐（P4 年份匹配 / P5 面值探索）
     min_results: int = 5
     # 稀缺权重 = 1 / max(rarity, rarity_floor)；rarity 是 Numista Frequency / 100
     rarity_floor: float = 0.005
@@ -188,7 +188,7 @@ class CoinsConfig:
             api_key="",
         )
     )
-    # 收藏画像与三层推荐（spec §14.17）
+    # 收藏画像与推荐优先级（spec §14.17）
     collection: CoinCollectionConfig = field(default_factory=CoinCollectionConfig)
 
 

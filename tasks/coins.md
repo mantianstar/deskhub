@@ -260,3 +260,14 @@
 | [x] M29-E | 词项 | 数字 + 中文按相邻短语匹配，`1便士` 不再命中 `6便士` / 年份 `1901` | `test_search_page_keeps_denomination_adjacent` |
 
 **验证**：`.venv/bin/python -m pytest tests -q` → 329 passed。
+
+---
+
+## M30 — 推荐兜底：P4 / P5 + 标题说明文字（2026-10-20）
+
+| # | 块 | 产出 | 验证 |
+|---|---|---|---|
+| [x] M30-A | 相似推荐分层 | 原「候选池国家 + 年份 + 面值」改为 P4 年份匹配；P4 不足 `min_results` 时用 P5 面值探索（国家 + 面值，不卡年份）补位；排除精准已命中拍品；第一轮每系列一条、每卡 1 条拍品，第二轮把同系列拍品追加到同一张卡；同一条拍品只归属一条推荐 | `test_priority_four_*` / `test_priority_five_*` / `test_similar_*` |
+| [x] M30-B | 匹配口径说明 | 精准匹配 / 相似推荐标题右侧直接显示说明文字；P5 搜索词只拼国家 + 面值 | 页面 smoke / keyword 断言 |
+
+**验证**：`.venv/bin/python -m pytest tests -q` → 334 passed；真实库重算相似推荐 2 张卡 / 5 条拍品（英国卡 4 条、爱尔兰卡 1 条）。

@@ -105,7 +105,7 @@ async def run(
         if not price_only:
             sessions_seen, sessions_stored, lots_stored = await _collect(config, api, started)
 
-        # 收藏画像优先：配了收藏系列映射就按三层推荐匹配；否则回退旧的标签匹配
+        # 收藏画像优先：配了收藏系列映射就按推荐优先级匹配；否则回退旧的标签匹配
         recommend_result = coins_recommend.rematch_all(config)
         if recommend_result.profiles_total:
             match_result = recommend_result

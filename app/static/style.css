@@ -1268,6 +1268,7 @@ img.coin-zoom { cursor: zoom-in; }
   font-weight: 600;
 }
 .coin-rec-section-count { color: var(--text-muted); font-size: 12px; font-weight: 400; }
+.coin-rec-hint { margin-left: 6px; color: var(--text-muted); font-size: 12px; font-weight: 400; }
 .coin-rec-card {
   padding: 14px 16px;
   background: var(--surface);
@@ -1291,7 +1292,8 @@ img.coin-zoom { cursor: zoom-in; }
 }
 .coin-reason-1 { color: var(--danger-fg); background: var(--danger-bg); border-color: var(--danger-border); }
 .coin-reason-2 { color: #7a5b12; background: #fff8e6; border-color: #f2e0ae; }
-.coin-reason-3 { color: var(--text-muted); background: var(--score-low-bg); border-color: var(--border); }
+.coin-reason-4 { color: var(--text-muted); background: var(--score-low-bg); border-color: var(--border); }
+.coin-reason-5 { color: #2f6b5f; background: #eef8f5; border-color: #cfe8e1; }
 .coin-rec-facts { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 8px; color: var(--text-muted); font-size: 12px; }
 .coin-rec-lots { margin-top: 10px; border-top: 1px solid var(--border); }
 .coin-rec-lot {

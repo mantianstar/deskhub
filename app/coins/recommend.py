@@ -1,12 +1,13 @@
-"""三层优先级推荐：缺失年份 → 差品升级 → 跨系列相似（spec §14.17）。
+"""推荐优先级：缺失年份 → 差品升级 → 跨系列相似（P4 年份 + P5 面值探索，spec §14.17）。
 
 排序口径：
 - P1 缺失年份：收藏位置权重 × 稀缺权重；位置权重首年/末年/执政者更替年 = 1.5，其余 1.0；
   稀缺权重 = 1 / max(rarity, floor)，rarity 取 Numista Frequency / 100。
 - P2 差品升级：品相敏感度 × (1 / 稀有度)，敏感度 = XF 估值 / VF 估值（仅排序）；
   每个收藏系列最多取前 3 个，整体排在 P1 之后。
-- P3 跨系列相似：仅当前两层不足时触发；同尺寸档位且差 ≤ 2mm、同面值层级、
+- P4 跨系列相似：仅当前两层不足时触发；同尺寸档位且差 ≤ 2mm、同面值层级、
   同执政者或历史时期重叠 ≥ 50%，满足其一即可；按尺寸差升序、稀有度降序。
+- P5 面值探索：P4 命中不足时兜底，候选池同国家 + 面值即可，不卡年份；同一系列只取一条。
 
 推荐生成后与「当日截拍专场」的已入库拍品做匹配；年份会翻译回站点写法
 （日本：`明治6年` / `明治六年`）。
@@ -252,19 +253,21 @@ def build_recommendations(
     explore_profiles: list[CoinCollectionProfile] | None = None,
     search_results: int | None = None,
     similar_lots: list[CoinTodayLot] | None = None,
+    exclude_lot_ids: set[int] | None = None,
     config: CoinCollectionConfig | None = None,
     rarity_floor: float = 0.005,
     min_results: int = 5,
     top_upgrades_per_series: int = 3,
     denomination_tiers: tuple[tuple[str, ...], ...] = (),
 ) -> list[CoinRecommendation]:
-    """按三层优先级生成推荐（P1 → P2 → P3）。
+    """按优先级生成推荐（P1 → P2 → P4 → P5）。
 
-    `search_results` 是前两层与已入库拍品的匹配条数；传了它就按「搜索结果」判断是否触发 P3，
+    `search_results` 是前两层与已入库拍品的匹配条数；传了它就按「搜索结果」判断是否触发 P4，
     不传时退化为按前两层推荐项数判断（纯函数测试用）。
 
-    `similar_lots` 给定时，P3 只保留**当日确有拍品命中**的候选，最多取 `min_results` 个；
-    这样相似推荐不会再出现「5 项目标 0 项命中」。
+    `similar_lots` 给定时，P4 只保留**当日确有拍品命中**的候选；`exclude_lot_ids` 是精准匹配
+    已命中的拍品，相似推荐不再使用。P4/P5 都是**每个候选系列一条**，同一拍品只归属一条推荐；
+    不足 `min_results` 时用 P5「面值探索」补位（同国家 + 面值即算命中）。
     """
     if config is not None:
         rarity_floor = config.rarity_floor
@@ -331,7 +334,7 @@ def build_recommendations(
         items.append(item)
         existing.add(key)
 
-    # 优先级 3：跨系列相似（前两层搜索结果不足时兜底）
+    # 优先级 4：跨系列相似（候选池国家 + 年份 + 面值；前两层搜索结果不足时兜底）
     enough = search_results >= min_results if search_results is not None else len(items) >= min_results
     if enough:
         return items
@@ -354,13 +357,13 @@ def build_recommendations(
                         size_diff,
                         -(spec.rarity if spec and spec.rarity is not None else 999),
                         CoinRecommendation(
-                            priority=3,
+                            priority=4,
                             collection=other.collection,
                             year=year,
                             year_labels=labels,
                             keyword=_keyword(other, labels, other.collection.denomination),
                             score=round(1 / (size_diff + 1), 6),
-                            reason="跨系列相似",
+                            reason="年份匹配",
                             spec=spec,
                         ),
                     )
@@ -368,26 +371,106 @@ def build_recommendations(
                 seen.add(key)
 
     candidates.sort(key=lambda entry: (entry[0], entry[1], entry[2].collection.name, entry[2].year))
+
+    # 优先级 5：面值探索（候选池国家 + 面值，不卡年份）；系列去重在选取阶段处理
+    explore_candidates: list[tuple[float, float, CoinRecommendation]] = []
+    for size_diff, rarity_key, item in candidates:
+        explore_candidates.append(
+            (
+                size_diff,
+                rarity_key,
+                CoinRecommendation(
+                    priority=5,
+                    collection=item.collection,
+                    year=item.year,
+                    year_labels=item.year_labels,
+                    keyword=" ".join(
+                        part
+                        for part in [
+                            item.collection.country.strip(),
+                            item.collection.denomination.strip(),
+                        ]
+                        if part
+                    ),
+                    score=item.score,
+                    reason="面值探索",
+                    spec=item.spec,
+                ),
+            )
+        )
+
     if similar_lots is not None:
-        # 先匹配再取数：只保留当日有拍品命中的相似目标，最多 min_results 个
-        added = 0
+        # 先匹配再取数：排除精准命中的拍品；第一轮每卡 1 条，第二轮按剩余名额多条
+        pool = [lot for lot in similar_lots if lot.id not in (exclude_lot_ids or set())]
+        added_lots = 0
+        used_series: set[str] = set()
+        used_lots: set[int] = set()
+        used_keys: set[tuple[str, int]] = set()
+        series_cards: dict[str, CoinRecommendation] = {}
+
+        def add(item: CoinRecommendation, *, new_card: bool) -> bool:
+            nonlocal added_lots
+            if added_lots >= min_results:
+                return False
+            series_key = item.collection.collection_key
+            key = (series_key, item.year)
+            if key in used_keys:
+                return False
+            if new_card and series_key in used_series:
+                return False
+            if not new_card and series_key not in series_cards:
+                return False
+            matched = [
+                lot for lot in pool if lot.id not in used_lots and lot_matches(item, lot)
+            ]
+            if not matched:
+                return False
+            quota = 1 if new_card else min(len(matched), min_results - added_lots)
+            if new_card:
+                item.lot_limit = quota
+                items.append(item)
+                series_cards[series_key] = item
+            else:
+                series_cards[series_key].lot_limit += quota
+            used_keys.add(key)
+            used_series.add(series_key)
+            used_lots.update(lot.id for lot in matched[:quota] if lot.id is not None)
+            added_lots += quota
+            return True
+
+        # 第一轮：P4 每个系列一条，再用 P5 每个系列一条，各挂 1 条拍品
         for _, _, item in candidates:
-            if added >= min_results:
-                break
-            if not any(lot_matches(item, lot) for lot in similar_lots):
-                continue
-            items.append(item)
-            added += 1
+            add(item, new_card=True)
+        for _, _, item in explore_candidates:
+            add(item, new_card=True)
+        # 不同系列不足 min_results：同一系列继续挂多条拍品，不新开卡
+        if len(used_series) < min_results:
+            for _, _, item in candidates:
+                add(item, new_card=False)
+            for _, _, item in explore_candidates:
+                add(item, new_card=False)
         return items
 
-    # 纯函数模式（没有拍品可匹配）：只看第三层新增条数补位
+    # 纯函数模式（没有拍品可匹配）：P4 先补位，不足再用 P5 补；每个系列一条
     base_count = search_results if search_results is not None else len(items)
     added = 0
-    for _, _, item in candidates:
+    used_series = set()
+
+    def add(item: CoinRecommendation) -> bool:
+        nonlocal added
         if base_count + added >= min_results:
-            break
+            return False
+        if item.collection.collection_key in used_series:
+            return False
         items.append(item)
+        used_series.add(item.collection.collection_key)
         added += 1
+        return True
+
+    for _, _, item in candidates:
+        add(item)
+    for _, _, item in explore_candidates:
+        add(item)
     return items
 
 
@@ -403,7 +486,7 @@ class LotMatch:
 
 
 def lot_matches(item: CoinRecommendation, lot: CoinLot | CoinTodayLot) -> bool:
-    """拍品标题必须同时命中国家、年份（任一种写法）、面值（任一种写法）。"""
+    """拍品标题必须同时命中国家、面值；P5 面值探索不卡年份。"""
     title = lot.title
     if not textmatch.contains(title, item.collection.country):
         return False
@@ -412,6 +495,8 @@ def lot_matches(item: CoinRecommendation, lot: CoinLot | CoinTodayLot) -> bool:
         for variant in denomination_variants(item.collection.denomination)
     ):
         return False
+    if item.priority == 5:
+        return True
     return any(textmatch.contains(title, label) for label in item.year_labels)
 
 
@@ -444,6 +529,26 @@ def attach_lots(
     return items
 
 
+def _prune_similar_lots(
+    items: list[CoinRecommendation], exclude_lot_ids: set[int]
+) -> list[CoinRecommendation]:
+    """相似推荐不展示精准命中的拍品；每卡按 `lot_limit` 取拍品，且同一条拍品只归属一条推荐。"""
+    used: set[int] = set()
+    for item in items:
+        if item.priority not in (4, 5):
+            continue
+        kept = []
+        for lot in item.matched_lots:
+            if lot.id is None or lot.id in exclude_lot_ids or lot.id in used:
+                continue
+            kept.append(lot)
+            used.add(lot.id)
+            if len(kept) >= item.lot_limit:
+                break
+        item.matched_lots = kept
+    return items
+
+
 @dataclass(frozen=True)
 class MatchRunResult:
     lots_total: int
@@ -459,7 +564,7 @@ def rematch_all(
     profiles: list[CoinCollectionProfile] | None = None,
     items: list[CoinRecommendation] | None = None,
 ) -> MatchRunResult:
-    """按三层推荐重算拍品推荐位；只有**当日截拍专场**的拍品会被推荐。
+    """按推荐优先级重算拍品推荐位；只有**当日截拍专场**的拍品会被推荐。
 
     画像为空（还没配收藏系列映射）时返回空结果，由调用方回退旧的标签匹配。
     """
@@ -481,6 +586,7 @@ def rematch_all(
             explore_profiles=collection_module.load_explore_profiles(),
             search_results=len(base_matches),
             similar_lots=today_lots,
+            exclude_lot_ids=set(base_matches),
             config=config.coins.collection,
         )
     matches = match_lots(active_items, today_lots)
@@ -564,6 +670,7 @@ def load_recommendations(
         explore_profiles=collection_module.load_explore_profiles(),
         search_results=len(base_matches),
         similar_lots=lots,
+        exclude_lot_ids=set(base_matches),
         config=config.coins.collection,
     )
-    return profiles, attach_lots(items, lots)
+    return profiles, _prune_similar_lots(attach_lots(items, lots), set(base_matches))

@@ -313,12 +313,12 @@ def session_page(request: Request, session_id: int, page: str = "", lot: str = "
         "page": other_page,
         "total_pages": other_pages,
         "prev_url": _query_url(
-            f"/coins/session/{session_id}", {"page": other_page - 1}
+            f"/coins/session/{session_id}", {"page": other_page - 1, "hide_rec": 1}
         )
         if other_page > 1
         else "",
         "next_url": _query_url(
-            f"/coins/session/{session_id}", {"page": other_page + 1}
+            f"/coins/session/{session_id}", {"page": other_page + 1, "hide_rec": 1}
         )
         if other_page < other_pages
         else "",
@@ -895,8 +895,8 @@ COIN_COLLECTION_PAGE_SIZE = 20
 COIN_RECOMMEND_PAGE_SIZE = 20
 COIN_PROFILE_PAGE_SIZE = 10
 COIN_MEMBER_CANDIDATE_LIMIT = 50
-COIN_REASON_LABELS = {1: "稀缺年份", 2: "差品升级", 3: "相似推荐"}
-# 推荐原因筛选只管精准匹配（P1/P2）；相似推荐（P3）常驻展示
+COIN_REASON_LABELS = {1: "稀缺年份", 2: "差品升级", 4: "年份匹配", 5: "面值探索"}
+# 推荐原因筛选只管精准匹配（P1/P2）；相似推荐（P4/P5）常驻展示
 COIN_REASON_FILTER_LABELS = {1: "稀缺年份", 2: "差品升级"}
 COIN_RAIL_SESSION_LIMIT = 6
 COIN_SESSION_PAGE_SIZE = 12
@@ -1149,7 +1149,7 @@ def collection_page(
 ) -> Response:
     """收藏画像 + 精准匹配 / 相似推荐分段展示 + 当日拍品匹配结果。
 
-    推荐原因只筛精准匹配（P1/P2）；相似推荐（P3）常驻展示，只跟着系列筛选。
+    推荐原因只筛精准匹配（P1/P2）；相似推荐（P4/P5）常驻展示，只跟着系列筛选。
     「已命中」过滤精准匹配（含当日拍品）；「未命中」隐藏精准匹配。
     """
     cfg = config.get()
@@ -1160,9 +1160,9 @@ def collection_page(
             return source
         return [item for item in source if item.collection.collection_key == series]
 
-    # 精准匹配 = P1 缺失年份 + P2 差品升级；相似推荐 = P3 跨系列兜底，不计入命中。
+    # 精准匹配 = P1 缺失年份 + P2 差品升级；相似推荐 = P4 年份匹配 + P5 面值探索，不计入命中。
     precise_items = [item for item in items if item.priority in (1, 2)]
-    similar_items = [item for item in items if item.priority == 3]
+    similar_items = [item for item in items if item.priority in (4, 5)]
     precise_view = _apply_series(precise_items)
     # 推荐原因只控制精准匹配；相似推荐常驻展示，只跟系列筛选联动
     if reason in ("1", "2"):

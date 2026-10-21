@@ -357,10 +357,13 @@ def test_session_page_paginates_other_lots(web):
     page = web.get(f"/coins/session/{session_id}")
     assert 'class="coin-section-count">22 件' in page.text
     assert "第 1 / 2 页" in page.text
+    # 翻页链接带 hide_rec=1：进页自动勾选「隐藏推荐模块」
+    assert f'href="/coins/session/{session_id}?page=2&amp;hide_rec=1"' in page.text
 
     page = web.get(f"/coins/session/{session_id}?page=2")
     assert "第 2 / 2 页" in page.text
     assert "精准推荐 1 件" in page.text
+    assert f'href="/coins/session/{session_id}?page=1&amp;hide_rec=1"' in page.text
 
 
 def test_session_page_orders_lots_by_number(web):
@@ -1257,6 +1260,10 @@ def test_normalize_country_to_numista_style():
     assert coins_grades.normalize_country("英属澳大利亚") == "澳大利亚"
     assert coins_grades.normalize_country("荷属东印度") == "东印度"
     assert coins_grades.normalize_country("葡属澳门") == "澳门"
+    # 去前缀后仍与 Numista 发行方不一致 → 别名统一
+    assert coins_grades.normalize_country("泽西岛") == "泽西"
+    assert coins_grades.normalize_country("英属泽西岛") == "泽西"
+    assert coins_grades.normalize_country("根西岛") == "根西"
     # 没有前缀 / 会变空 → 原样
     assert coins_grades.normalize_country("英国") == "英国"
     assert coins_grades.normalize_country("  英国 ") == "英国"
@@ -1288,13 +1295,14 @@ def test_normalize_denomination_to_numista_style():
     # 大写中文数字与分数（真实订单里都有）
     assert coins_grades.normalize_denomination("壹圆") == "1 圆"
     assert coins_grades.normalize_denomination("拾分") == "10 分"
-    assert coins_grades.normalize_denomination("1/4安娜") == "1/4 安娜"
-    assert coins_grades.normalize_denomination("1/12先令") == "1/12 先令"
+    assert coins_grades.normalize_denomination("1/4安娜") == "1⁄4 安娜"
+    assert coins_grades.normalize_denomination("1/12先令") == "1⁄12 先令"
     assert coins_grades.normalize_denomination("¼安娜") == "四分之一 安娜"
     assert coins_grades.normalize_denomination("½便士") == "半 便士"
     # 已是统一写法 → 幂等
     assert coins_grades.normalize_denomination("1 便士") == "1 便士"
     assert coins_grades.normalize_denomination("半 便士") == "半 便士"
+    assert coins_grades.normalize_denomination("1⁄12 先令") == "1⁄12 先令"
     # 认不出前导数字 → 原样保留
     assert coins_grades.normalize_denomination("当制钱十文") == "当制钱十文"
     assert coins_grades.normalize_denomination("大便士") == "大便士"

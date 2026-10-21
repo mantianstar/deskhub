@@ -53,6 +53,7 @@ def _match_labels(cfg: Config, lots: list[CoinSearchLot]) -> dict[int, str] | No
         explore_profiles=collection_module.load_explore_profiles(),
         search_results=len(base_matches),
         similar_lots=lots,
+        exclude_lot_ids=set(base_matches),
         config=cfg.coins.collection,
     )
     matches = recommend_module.match_lots(items, lots)

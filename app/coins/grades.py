@@ -7,7 +7,8 @@
   （`明治十五年` → `15`、`康德元年` → `1`），与 Numista 的 `year` 对齐；只有年号没有年份数字的
   （`光绪`）**原样保留**。
 - **面值**：数字转成阿拉伯数字、与单位之间加一个空格（`1便士` → `1 便士`、`一分` → `1 分`、
-  `半便士` → `半 便士`、`二十文` → `20 文`）。认不出前导数字的（如 `当制钱十文`）原样保留。
+  `半便士` → `半 便士`、`二十文` → `20 文`）；分数斜杠统一成 Numista 的 `⁄`（U+2044，
+  `1/12先令` → `1⁄12 先令`）。认不出前导数字的（如 `当制钱十文`）原样保留。
 - **国家**：去掉殖民时期的前缀（`英属新西兰` → `新西兰`、`英属澳大利亚` → `澳大利亚`），
   与 Numista 的发行方命名对齐。
 
@@ -36,8 +37,8 @@ _CN_UNITS = {"十": 10, "拾": 10, "百": 100, "佰": 100, "千": 1000, "仟": 1
 # 前导分数符号 → Numista 中文口径（与 `translate.GLOSSARY` 的 ½→半、¼→四分之一 一致）
 _LEADING_FRACTION = {"½": "半", "¼": "四分之一", "¾": "四分之三"}
 
-# 前导数字：整数 / 小数 / 「1/4」这类分数，可带尾随 ½¼¾（如 `2½盾`）
-_LEADING_ARABIC = re.compile(r"^\s*(\d+(?:\.\d+)?(?:\s*/\s*\d+)?[½¼¾]?)")
+# 前导数字：整数 / 小数 / 「1/4」「1⁄4」这类分数，可带尾随 ½¼¾（如 `2½盾`）
+_LEADING_ARABIC = re.compile(r"^\s*(\d+(?:\.\d+)?(?:\s*[/⁄]\s*\d+)?[½¼¾]?)")
 _LEADING_CN = re.compile(r"^\s*([零〇一二两三四五六七八九十百千壹贰貳叁肆伍陆陸柒捌玖拾佰仟]+)")
 _TRAILING_YEAR_SUFFIX = re.compile(r"\s*年度?\s*$")
 # 年号纪年末尾的年份数字（`明治十五年` / `民国31年` / `康德元年`）；`元` 表示第一年
@@ -75,14 +76,18 @@ _COLONIAL_PREFIXES = (
     "意属", "比属", "丹属", "俄属", "奥属",
 )
 
+# 去完殖民前缀后仍与 Numista 发行方命名不一致的别名（泽西岛 → 泽西）
+_COUNTRY_ALIASES = {"泽西岛": "泽西", "根西岛": "根西"}
+
 
 def normalize_country(value: str | None) -> str:
-    """国家：去「X属」殖民前缀（`英属新西兰` → `新西兰`）；去掉后会变空则原样保留。"""
+    """国家：去「X属」殖民前缀（`英属新西兰` → `新西兰`）+ 别名（`泽西岛` → `泽西`）；去掉后为空则原样保留。"""
     text = (value or "").strip()
     for prefix in _COLONIAL_PREFIXES:
         if text.startswith(prefix) and len(text) > len(prefix):
-            return text[len(prefix) :].strip()
-    return text
+            text = text[len(prefix) :].strip()
+            break
+    return _COUNTRY_ALIASES.get(text, text)
 
 
 def normalize_year(value: str | None) -> str:
@@ -125,8 +130,9 @@ def normalize_denomination(value: str | None) -> str:
 
     match = _LEADING_ARABIC.match(text)
     if match:
+        number = match.group(1).replace("/", "⁄")  # 分数斜杠统一成 Numista 的 ⁄
         rest = text[match.end() :].strip()
-        return f"{match.group(1)} {rest}" if rest else match.group(1)
+        return f"{number} {rest}" if rest else number
 
     match = _LEADING_CN.match(text)
     if match:
