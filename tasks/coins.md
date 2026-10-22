@@ -282,3 +282,63 @@
 | [x] M31-B | 页面：拍场页新增类型筛选 + 状态前类型标签 + 时间前缀（开拍 / 截拍）；拍品页时间前缀 | `app/routers/coins.py`、`app/repository.py`、`app/templates/coins/{sessions,session}.html` | 类型筛选与开拍 / 截拍文案断言；全量 `pytest` 337 passed |
 
 **验证**：`.venv/bin/python -m pytest tests -q` → 337 passed（新增 3 例：实时映射 / 实时场次采集 / 类型筛选与时间前缀）。
+
+## M32 — 拍品终态回采（2026-10-21，spec/coins.md §14.18 / plan/coins.md §18.18）
+
+| # | 块 | 产出 | 验证 |
+|---|---|---|---|
+| [x] M32-A | 数据层：`coin_lots` 增 `outcome` / `final_price` / `winner_uid` / `closed_at`；schema 13→14 | `app/models.py`、`app/migrations/v14.py`、`app/migrations/__init__.py` | 真实库迁移后 `pragma table_info(coin_lots)` 含 4 列 |
+| [x] M32-B | 采集：`lot_from_item` 解析终态（status 2/3，仅成交取价）；`detail_from_payload` 传时区转 `closed_at` | `app/coins/gapi.py` | 终态解析用例（sold / unsold / 在拍） |
+| [x] M32-C | 管道：`_finalize` 按 `coins.finalize_days`（默认 3）回采已结束专场，跳过本轮刚采过的场次；`upsert_coin_lot` 用 COALESCE 保终态 | `app/coins/pipeline.py`、`app/repository.py`、`app/config.py`、`config/config.yaml`、`app/cli.py` | 回采 + 去重用例；全量 `pytest` 343 passed；真实库近 3 天窗口待回采 79 场 |
+
+**验证**：`.venv/bin/python -m pytest tests -q` → 343 passed（新增 2 例：终态解析、管道回采与不重复抓）。
+
+## M33 — 成交明细表（2026-10-21，spec/coins.md §14.18 / plan/coins.md §18.18.3）
+
+| # | 块 | 产出 | 验证 |
+|---|---|---|---|
+| [x] M33-A | 数据层：`coin_sales`（`item_id` UNIQUE、两档 `source`）；schema 14→15（纯新增表） | `app/models.py`、`app/db.py` | 真实库迁移到 v15 且建表成功 |
+| [x] M33-B | 写入：`upsert_coin_sales` 冲突时不降级来源；`list_coin_sold_lots` 从终态建高置信行；`count_coin_sales_by_source` | `app/repository.py`、`app/coins/pipeline.py` | 来源优先级用例；管道回采后 `session_final` 行数 = 成交拍品数 |
+| [x] M33-C | 中置信来源：`SoldSample` / 取证 raw 带 `item_id`、`sold_at`；`pricing.sales_from_ref` 解析并跳过旧证据 | `app/coins/gapi.py`、`app/coins/pricing.py`、`app/cli.py` | 缺 `item_id` 跳过用例；全量 `pytest` 345 passed |
+
+**验证**：`.venv/bin/python -m pytest tests -q` → 345 passed（新增 2 例：raw 缺 `item_id` 跳过、来源优先级与重复写入去重）。
+
+## M34 — 回采进入运行控制（2026-10-21，plan/core.md §19）
+
+| # | 块 | 产出 | 验证 |
+|---|---|---|---|
+| [x] M34-A | 管道：`run(finalize_only=True)` 只回采终态并同步成交库；`collect_only` 不再顺带回采 | `app/coins/pipeline.py` | 回采用例改用 `finalize_only`；采集后 `sessions_finalized` 保持 0 |
+| [x] M34-B | 开关与任务：`coins_finalize` 功能项 + `run_coins_finalize`；`daily_coins` 按三个开关依次调用 | `app/switches.py`、`app/tasks.py`、`app/scheduler.py` | 控制页功能清单 5 项；三开关全关时跳过；全量 `pytest` 345 passed |
+
+**验证**：`.venv/bin/python -m pytest tests -q` → 345 passed（`test_control` 功能清单补 `coins_finalize`；`test_scheduler` 改名并补关回采开关）。
+
+## M35 — 拍品 → Numista 币种映射（2026-10-22，plan/coins.md §18.18.1 P0-4 / §18.18.5）
+
+| # | 块 | 产出 | 验证 |
+|---|---|---|---|
+| [x] M35-A | 数据层：`coin_lots` 增 `series_numista_id` / `issue_numista_id` / `match_method` / `confidence` / `match_candidates`；schema 15→16 | `app/models.py`、`app/migrations/v16.py`、`app/migrations/__init__.py` | 真实库迁移到 v16，`pragma table_info(coin_lots)` 含 5 列 |
+| [x] M35-B | 匹配：国家/年份 attrs 优先、标题补 4 位年份、面值必须命中；唯一命中才写单版，多候选只存候选集 + 置信度 | `app/coins/coinmap.py` | 新增 8 例（属性优先、单版唯一、同年多版、多系列、面值矛盾、缺年份/缺面值、落库） |
+| [x] M35-C | 触发与观测：管道每轮匹配后重跑；`coins-map` 打印「已映射 / 总数」与 `match_method` 分布 | `app/coins/pipeline.py`、`app/repository.py`、`app/cli.py` | 真实库 57/41988 系列已映射、14/41988 单版；多候选 issue 全空 |
+
+**验证**：`.venv/bin/python -m pytest tests -q` → 353 passed（新增 8 例：映射纯函数与批量落库）。
+
+## M36 — 费率与到手价（2026-10-22，plan/coins.md §18.18.1 P1-8）
+
+| # | 块 | 产出 | 验证 |
+|---|---|---|---|
+| [x] M36-A | 数据层：`coin_sessions` 增 `commission_rate` / `commission_min` / `express_desc` / `express_day` / `express_fee` / `express_free_amount` / `is_storage`；schema 16→17 | `app/models.py`、`app/migrations/v17.py`、`app/migrations/__init__.py`、`app/repository.py` | 管道用例从库里读回 7 列 |
+| [x] M36-B | 解析：`detail_from_payload` 直取费率 / 天数、`express_desc` 原样存；从文本抽基础运费（首个「运费 ¥N」）、满额包邮门槛、「寄存」关键词 | `app/coins/gapi.py` | 真实 330227 文案用例；实测解析 费率 0 / 运费 8 / 满百包邮 / 可寄存；`session_detail` 补 `end_at` 用 `replace` 保留新字段（回归用例） |
+| [x] M36-C | 到手价：`pricing.landed_price(final_price, session)` = 成交价 + max(费率×价, 最低佣金) + 运费（达包邮门槛免） | `app/coins/pricing.py` | 新增 5 例（0 费率、0.03、min 下限、包邮门槛、老场次）；真实 330227 成交抽样 5 条均 = 成交价 + 8 |
+
+**验证**：`.venv/bin/python -m pytest tests -q` → 361 passed；跑今日 43 场后费率 43/43、运费 37/43、包邮门槛 8/43、可寄存 19/43 有值。
+
+## M37 — 热度字段与同图识别（2026-10-22，plan/coins.md §18.18.1 P1-6 / P1-7）
+
+| # | 块 | 产出 | 验证 |
+|---|---|---|---|
+| [x] M37-A | 数据层：`coin_lots` 增 `bid_num` / `bid_user_num` / `bid_source`；新表 `coin_lot_images(lot_id, oss_key)`（schema 17→18）；老数据从 `image_urls` 回填 key | `app/models.py`、`app/migrations/v18.py`、`app/migrations/__init__.py`、`app/db.py`、`app/repository.py` | 迁移在真实库 41988 条上执行成功；回填用例覆盖去 base / 去 query；COALESCE 回归用例 |
+| [x] M37-B | 解析：`ListAuction` 卡内 5 条预览带 `bid_num` / `bid_user_num`，`auction.get` 缺键即 NULL；`home.filter` 成交条目同步解析 | `app/coins/gapi.py`、`app/coins/pricing.py` | 预览 / 详情 / 成交搜索各 1 例 |
+| [x] M37-C | 落库与回填：预览先写、详情 COALESCE 不擦；`sold_search` 按 item_id 后缀回填 `home_filter` | `app/coins/pipeline.py`、`app/repository.py` | 后缀匹配、NULL 不覆盖、覆盖率分桶用例 |
+| [x] M37-D | 观测：`coins-quality` 按来源打印非空率 / 均值 / `bid_user_num`，并列出同 key 分组与重复拍品数 | `app/cli.py`、`app/repository.py` | 真实库首跑见下 |
+
+**验证**：`.venv/bin/python -m pytest tests -q` → 367 passed；补跑 2 场后 `preview` 10/10 非空（均值 4.30）；回填 41844 条有图拍品后同图重复涉及 8687 条（20.7%），最大单 key 714 条（同一描述图跨场复用）→ 阈值待定。

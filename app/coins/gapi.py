@@ -19,9 +19,13 @@
 from __future__ import annotations
 
 import asyncio
+import html
 import logging
-from dataclasses import dataclass, field
+import re
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
+from urllib.parse import urlsplit
+from zoneinfo import ZoneInfo
 
 import httpx
 
@@ -42,6 +46,9 @@ SESSION_KIND_BY_MODE = {1: "live", 2: "timed"}
 KIND_LIVE = "live"
 # 站内「成交」的 status 取值（同网页 `/auction/item?…&status=成交`）
 SOLD_STATUS = 2
+# 拍品终态：item.status 2=成交 / 3=未成交；1=在拍（不落终态，见 plan/coins.md §18.18）
+LOT_OUTCOME_BY_CODE = {2: "sold", 3: "unsold"}
+OUTCOME_SOLD = "sold"
 
 # 图片 key 的默认前缀；`get` 会在 `cdn.oss` 里给准确值，列表页没有就退回这个
 DEFAULT_OSS_BASE = "https://oss.mxiqi.com/"
@@ -90,6 +97,8 @@ class SessionCard:
     kind: str | None = None
     # 开拍时间的 UTC ISO8601（实时专场按「今日开拍」采集）
     start_at: str | None = None
+    # 列表卡只嵌 5 条拍品预览；只有这里带 bid_num / bid_user_num（plan §18.18.1 P1-6）
+    preview_lots: tuple["LotInfo", ...] = ()
 
 
 @dataclass(frozen=True)
@@ -101,6 +110,17 @@ class LotInfo:
     current_price: float | None
     image_urls: list[str]
     tags: dict[str, str]
+    # 终态：在拍 / 未回采时全为 None（plan/coins.md §18.18）
+    outcome: str | None = None
+    final_price: float | None = None
+    winner_uid: str | None = None
+    closed_at: str | None = None
+    # 热度：ListAuction 预览 / home.filter 有，auction.get 缺键即 None
+    bid_num: int | None = None
+    bid_user_num: int | None = None
+    bid_source: str | None = None
+    # 同图识别的 OSS key（去 base、去 query；plan §18.18.1 P1-7）
+    image_keys: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -110,6 +130,14 @@ class SessionDetail:
     lots: list[LotInfo]
     # 截拍时间的 UTC ISO8601（站内是北京时间；落库口径统一用 UTC）
     end_at: str | None = None
+    # 费率与运费（plan §18.18.1 P1-8）；详情拿不到时为 None
+    commission_rate: float | None = None
+    commission_min: float | None = None
+    express_desc: str | None = None
+    express_day: int | None = None
+    express_fee: float | None = None
+    express_free_amount: float | None = None
+    is_storage: bool = False
 
 
 # ---------------------------------------------------------------- 纯函数：解析
@@ -123,6 +151,59 @@ def _money(value: object) -> float | None:
         return round(float(value) / 100, 2)
     except (TypeError, ValueError):
         return None
+
+
+def _number(value: object) -> float | None:
+    """原样数值（费率 / 天数这类不按「分」换算的字段）。"""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _whole(value: object) -> int | None:
+    """整数计数（`bid_num` / `bid_user_num`），缺键或脏值一律 None。"""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+_TAG_RE = re.compile(r"<[^>]+>")
+_EXPRESS_FEE_RE = re.compile(r"运费\s*[¥￥]?\s*(\d+(?:\.\d+)?)")
+_EXPRESS_FREE_RE = re.compile(r"满\s*([0-9]+(?:\.[0-9]+)?|[百千万])\s*(?:元)?\s*包邮")
+_FREE_UNITS = {"百": 100.0, "千": 1000.0, "万": 10000.0}
+
+
+def _plain_text(raw: str | None) -> str:
+    """富文本 → 纯文本：只去标签、反转义，不做结构化解析。"""
+    if not raw:
+        return ""
+    return html.unescape(_TAG_RE.sub(" ", raw))
+
+
+def parse_express_fee(desc: str | None) -> float | None:
+    """运费说明 → 基础运费（元）：取首个「运费 ¥N」，**忽略地区差异**。"""
+    match = _EXPRESS_FEE_RE.search(_plain_text(desc))
+    return float(match.group(1)) if match else None
+
+
+def parse_express_free_amount(text: str | None) -> float | None:
+    """「满百包邮 / 满 200 元包邮」→ 包邮门槛（元）。"""
+    match = _EXPRESS_FREE_RE.search(_plain_text(text))
+    if match is None:
+        return None
+    raw = match.group(1)
+    return _FREE_UNITS.get(raw) or float(raw)
+
+
+def parse_is_storage(text: str | None) -> bool:
+    """说明里出现「寄存」即视为可寄存（拍下先存店、凑单再发）。"""
+    return "寄存" in _plain_text(text)
 
 
 def _image_url(base: str, key: str | None) -> str | None:
@@ -144,6 +225,29 @@ def _images(base: str, thumbs: list | None, limit: int) -> list[str]:
         if len(urls) >= limit:
             break
     return urls
+
+
+def _oss_key(raw: object) -> str | None:
+    """缩略图地址 → OSS key：去 base（http 取 path）、去 query / fragment。"""
+    if not isinstance(raw, str):
+        return None
+    key = raw.split("#", 1)[0].split("?", 1)[0].strip()
+    if "://" in key:
+        key = urlsplit(key).path.lstrip("/")
+    return key or None
+
+
+def _oss_keys(thumbs: list | None, limit: int) -> list[str]:
+    keys: list[str] = []
+    for thumb in thumbs or []:
+        if not isinstance(thumb, dict):
+            continue
+        key = _oss_key(thumb.get("thumb"))
+        if key and key not in keys:
+            keys.append(key)
+        if len(keys) >= limit:
+            break
+    return keys
 
 
 def format_end_at(raw: str | None) -> str | None:
@@ -198,6 +302,13 @@ def shop_from(org: dict | None) -> ShopInfo | None:
     )
 
 
+def _preview_items(item: dict) -> list[dict]:
+    """列表卡里嵌的拍品预览（只有 5 条，不是全量）。"""
+    block = item.get("auction_items") or {}
+    items = block.get("items") if isinstance(block, dict) else None
+    return [raw for raw in (items or []) if isinstance(raw, dict)]
+
+
 def card_from_auction(
     item: dict, *, oss_base: str = DEFAULT_OSS_BASE, tz=None, mode: int | None = None
 ) -> SessionCard | None:
@@ -210,6 +321,14 @@ def card_from_auction(
         return None
     kind = SESSION_KIND_BY_MODE.get(mode if mode is not None else item.get("auction_mode"))
     at_raw = item.get("start_time") if kind == KIND_LIVE else item.get("end_time")
+    preview_lots = tuple(
+        lot
+        for lot in (
+            lot_from_item(raw, oss_base=oss_base, bid_source="preview")
+            for raw in _preview_items(item)
+        )
+        if lot is not None
+    )
     return SessionCard(
         mxiqi_id=str(auction_id),
         title=(item.get("name") or "").strip() or f"专场 {auction_id}",
@@ -222,11 +341,24 @@ def card_from_auction(
         end_at=to_utc_iso(item.get("end_time"), tz) if tz is not None else None,
         kind=kind,
         start_at=to_utc_iso(item.get("start_time"), tz) if tz is not None else None,
+        preview_lots=preview_lots,
     )
 
 
-def lot_from_item(item: dict, *, oss_base: str = DEFAULT_OSS_BASE) -> LotInfo | None:
-    """`auction_items.items` 的一条拍品 → `LotInfo`。"""
+def lot_from_item(
+    item: dict,
+    *,
+    oss_base: str = DEFAULT_OSS_BASE,
+    tz: ZoneInfo | None = None,
+    bid_source: str | None = None,
+) -> LotInfo | None:
+    """`auction_items.items` 的一条拍品 → `LotInfo`。
+
+    `status` 2/3 时落终态；`closed_at` 取 `end_time`（已结束场次等于场次截拍时刻，
+    见 spec/coins.md §14.18.8），需要 `tz` 才能转 UTC，未传则留空。
+    `bid_num` / `bid_user_num` 只在 `ListAuction` 预览与 `home.filter` 里有，
+    `auction.get` 缺键时保持 NULL（`bid_source` 也留空）。
+    """
     item_id = item.get("item_id")
     title = (item.get("name") or "").strip()
     if item_id is None or not title:
@@ -237,6 +369,10 @@ def lot_from_item(item: dict, *, oss_base: str = DEFAULT_OSS_BASE) -> LotInfo | 
         for attr in (item.get("attrs") or [])
         if isinstance(attr, dict) and attr.get("attr_name") and attr.get("attr_value")
     }
+    outcome = LOT_OUTCOME_BY_CODE.get(item.get("status"))  # type: ignore[arg-type]
+    winner_uid = item.get("won_user_id")
+    bid_num = _whole(item.get("bid_num"))
+    bid_user_num = _whole(item.get("bid_user_num"))
     return LotInfo(
         mxiqi_id=str(item_id),
         lot_no=f"Lot.{order_no}" if order_no else None,
@@ -245,10 +381,22 @@ def lot_from_item(item: dict, *, oss_base: str = DEFAULT_OSS_BASE) -> LotInfo | 
         current_price=_money(item.get("price")),
         image_urls=_images(oss_base, item.get("thumbs"), 3),
         tags=tags,
+        outcome=outcome,
+        # 未成交条目站点不给 price，成交价只对成交条目有意义
+        final_price=_money(item.get("price")) if outcome == OUTCOME_SOLD else None,
+        winner_uid=str(winner_uid) if winner_uid is not None else None,
+        closed_at=to_utc_iso(item.get("end_time"), tz) if outcome and tz else None,
+        bid_num=bid_num,
+        bid_user_num=bid_user_num,
+        # 两个键都没有时不算任何来源给过值，保持 NULL
+        bid_source=bid_source if bid_num is not None or bid_user_num is not None else None,
+        image_keys=_oss_keys(item.get("thumbs"), 3),
     )
 
 
-def detail_from_payload(data: dict, fallback: SessionCard | None = None) -> SessionDetail:
+def detail_from_payload(
+    data: dict, fallback: SessionCard | None = None, tz: ZoneInfo | None = None
+) -> SessionDetail:
     """`miniprogram.auction.get` 的 data → `SessionDetail`。
 
     专场卡拿不到的字段用 `fallback`（列表页那张卡）兜底。
@@ -261,7 +409,11 @@ def detail_from_payload(data: dict, fallback: SessionCard | None = None) -> Sess
     mxiqi_id = str(auction_id) if auction_id is not None else (fallback.mxiqi_id if fallback else "")
     lots_block = data.get("auction_items") or {}
     items = lots_block.get("items") or []
-    lots = [lot for lot in (lot_from_item(item, oss_base=oss_base) for item in items) if lot]
+    lots = [
+        lot
+        for lot in (lot_from_item(item, oss_base=oss_base, tz=tz) for item in items)
+        if lot
+    ]
 
     cover_urls = _images(oss_base, (items[0].get("thumbs") if items else None), 4) or (
         list(fallback.cover_urls) if fallback else []
@@ -270,6 +422,10 @@ def detail_from_payload(data: dict, fallback: SessionCard | None = None) -> Sess
         fallback.kind if fallback else None
     )
     at_raw = auction.get("start_time") if kind == KIND_LIVE else auction.get("end_time")
+    # 运费 / 包邮 / 寄存只出现在富文本里：原样存 express_desc，另抽基础值落数值列
+    express_desc = auction.get("express_desc")
+    policy_text = f"{_plain_text(express_desc)} {_plain_text(auction.get('desc_orginal'))}"
+    express_day = _number(auction.get("express_day"))
     card = SessionCard(
         mxiqi_id=mxiqi_id,
         title=(auction.get("name") or (fallback.title if fallback else "") or f"专场 {mxiqi_id}").strip(),
@@ -289,14 +445,22 @@ def detail_from_payload(data: dict, fallback: SessionCard | None = None) -> Sess
         card=card,
         deposit=_money(auction.get("price_deposit")),
         lots=lots,
+        commission_rate=_number(auction.get("commission_rate")),
+        commission_min=_number(auction.get("commission_min")),
+        express_desc=express_desc,
+        express_day=int(express_day) if express_day is not None else None,
+        express_fee=parse_express_fee(express_desc),
+        express_free_amount=parse_express_free_amount(policy_text),
+        is_storage=parse_is_storage(policy_text),
     )
 
 
 def sold_from_payload(data: dict, tz) -> list[SoldSample]:
-    """`miniprogram.home.filter` 的 data → 成交样本（title / price / sold_at）。
+    """`miniprogram.home.filter` 的 data → 成交样本（title / price / sold_at / item_id）。
 
     只取 `status == SOLD_STATUS`（成交）的条目：`price` 是成交价（分），
-    `end_time` 是这条拍品的成交时间（当 `sold_at` 用，供 180 天窗口过滤）。
+    `end_time` 是这条拍品的成交时间（当 `sold_at` 用，供 180 天窗口过滤）；
+    `item_id` 是成交明细的去重键（plan/coins.md §18.18 P0-3）。
     """
     items = ((data.get("auction_items") or {}).get("items")) or []
     samples: list[SoldSample] = []
@@ -307,8 +471,16 @@ def sold_from_payload(data: dict, tz) -> list[SoldSample]:
         price = _money(item.get("price"))
         if not title or price is None:
             continue
+        item_id = item.get("item_id")
         samples.append(
-            SoldSample(title=title, price=price, sold_at=to_utc_iso(item.get("end_time"), tz))
+            SoldSample(
+                title=title,
+                price=price,
+                sold_at=to_utc_iso(item.get("end_time"), tz),
+                item_id=str(item_id) if item_id is not None else None,
+                bid_num=_whole(item.get("bid_num")),
+                bid_user_num=_whole(item.get("bid_user_num")),
+            )
         )
     return samples
 
@@ -381,7 +553,7 @@ class MxiqiGapi:
         self, mxiqi_id: str, *, fallback: SessionCard | None = None
     ) -> SessionDetail:
         data = await self._call(ACTION_GET, {"auction_id": int(mxiqi_id)})
-        detail = detail_from_payload(data, fallback)
+        detail = detail_from_payload(data, fallback, tz=self._cfg.app.tz)
         auction = data.get("auction") or {}
         kind = SESSION_KIND_BY_MODE.get(auction.get("auction_mode")) or (
             fallback.kind if fallback else None
@@ -390,9 +562,7 @@ class MxiqiGapi:
         # UTC ISO 在这里补（纯函数拿不到业务时区）
         at_raw = auction.get("start_time") if kind == KIND_LIVE else auction.get("end_time")
         end_at = to_utc_iso(at_raw, self._cfg.app.tz)
-        return SessionDetail(
-            card=detail.card, deposit=detail.deposit, lots=detail.lots, end_at=end_at
-        )
+        return replace(detail, end_at=end_at)
 
     async def search_sold(self, keyword: str) -> list[SoldSample]:
         """按关键词搜站内**历史成交**（推荐价的证据来源）。

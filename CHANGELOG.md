@@ -10,6 +10,114 @@
 
 ---
 
+## v1.53 — 2026-10-22 截拍场次状态与拍品终态展示
+
+**起因**：回采终态只写拍品，没同步拍场状态，已截拍专场在列表页与拍品页仍显示「进行中」；拍品也没有成交 / 流拍标识与中标签价。
+
+**改了什么**：`_finalize` 回采后按站内 `card.status` 同步 `coin_sessions.status`（新增 `repository.set_coin_session_status`）；状态文案 `closed` 由「已结束」改为「已截拍」；拍品页给 `CoinLotCard` 补 `outcome` / `final_price`，标题末尾用图标标「✓ 已成交」/「✕ 流拍」，价格位由「当前价：X元」改为「中标价：X元」或「无人出价」。
+
+**验证**：`pytest tests -q` 全量通过；新增拍场状态同步断言与拍品页终态展示用例。
+
+**涉及**：`app/models.py`、`app/repository.py`、`app/coins/pipeline.py`、`app/templates/coins/session.html`、`app/static/style.css`。
+
+## v1.52 — 2026-10-22 拍品热度与同图识别
+
+**起因**：拍品缺竞争强度字段，且重挂重拍无法识别（plan/coins.md §18.18.1 P1-6 / P1-7）。
+
+**改了什么**：`coin_lots` 增 `bid_num` / `bid_user_num` / `bid_source`（schema 17→18，`app/migrations/v18.py`），只从 `ListAuction` 预览与 `home.filter` 取，`auction.get` 缺键即 NULL、不写 0；新增 `coin_lot_images(lot_id, oss_key)` 存同图识别用的 OSS key（去 base、去 query），老数据从 `image_urls` 回填；预览先写、详情 COALESCE 不擦，成交搜索按 `item_id` 后缀回填；新增 `python -m app.cli coins-quality` 按来源打印非空率与均值，并列出同 key 分组与重复拍品数。
+
+**验证**：`pytest tests -q` 367 通过；真实库迁移 + 回填成功（41844 条有图拍品）；补采 2 场后 `preview` 10/10 非空、均值 4.30；同图重复涉及 8687 条（20.7%），最大单 key 714 条，阈值待定。
+
+**涉及**：`plan/coins.md` §18.18.1 / §18.18.6、`tasks/coins.md` M37。
+
+## v1.51 — 2026-10-22 专场费率与到手价
+
+**起因**：推荐价只比成交价，忽略佣金与运费，实际到手成本被低估（plan/coins.md §18.18.1 P1-8）。
+
+**改了什么**：`coin_sessions` 增 `commission_rate` / `commission_min` / `express_desc`（富文本原样存）/ `express_day` / `express_fee` / `express_free_amount` / `is_storage`（schema 16→17，`app/migrations/v17.py`）；`gapi.detail_from_payload` 直取费率与天数，并从运费说明抽基础运费（首个「运费 ¥N」，忽略地区）、满额包邮门槛与「寄存」关键词；新增 `pricing.landed_price(final_price, session)` = 成交价 + max(费率×价, 最低佣金) + 运费（达门槛免运费），不含保险费与汇率。
+
+**验证**：`pytest tests -q` 361 通过；真实 330227（费率 0、运费 8、满百包邮）解析正确，5 条成交抽样到手价 = 成交价 + 8；补跑今日 43 场后 `coin_sessions` 费率 43/43、运费 37/43、包邮门槛 8/43、可寄存 19/43 有值（其余场次说明文本里没有对应信息）。修掉 `session_detail` 补 `end_at` 时丢新字段的问题（已加回归用例）。
+
+**涉及**：`spec/coins.md` §14.18.8、`plan/coins.md` §18.18.1、`tasks/coins.md` M36。
+
+## v1.50 — 2026-10-22 拍品落 Numista 币种映射
+
+**起因**：spec §14.18 的「按币种聚合」全都卡在拍品→币种映射（P0-4），靠标题猜不可靠。
+
+**改了什么**：`coin_lots` 增 `series_numista_id` / `issue_numista_id` / `match_method` / `confidence` / `match_candidates`（schema 15→16，`app/migrations/v16.py`）；新增 `app/coins/coinmap.py`：国家/年份先取属性、缺失再抽标题，`grades.normalize_*` 统一后按 issuer + 年份区间 + 面值匹配，**唯一命中才写单版**，多候选只落候选集与置信度；管道每轮自动重跑，`coins-map` 手动重跑并打印覆盖率与方式分布。
+
+**验证**：`pytest tests -q` 353 通过；真实库 41988 条 → 系列 57、单版 14（币库仅 38 个系列），多候选样本的 `issue_numista_id` 全为空。
+
+**涉及**：`spec/coins.md` §14.18、`plan/coins.md` §18.18.1 / §18.18.5、`tasks/coins.md` M35。
+
+## v1.49 — 2026-10-21 回采窗口收窄到 1 天
+
+**起因**：`config/config.yaml` 的 `coins.finalize_days` 仍是 3，回采窗口比预期宽；只改 `app/config.py` 的数据类默认值不生效（yaml 会覆盖）。
+
+**改了什么**：`config/config.yaml` 与 `app/config.py` 的兜底值统一为 `finalize_days: 1`；`plan/coins.md` §18.18 的默认值同步改写；回采用例的种子场次从 30 小时前改到 10 小时前（仍晚于 6 小时宽限期，落在 1 天窗口内），断言未动。
+
+**验证**：`pytest tests -q` 345 通过。
+
+## v1.48 — 2026-10-21 回采进入运行控制
+
+**起因**：终态回采原本藏在采集里顺带执行（`_collect` 之后），控制页看不到、也不能单独跑；定时任务也没有独立开关。
+
+**改了什么**：管道新增 `run(finalize_only=True)`（只回采 + 同步成交库）；`collect_only` 不再顺带回采；`/control` 增加第五个功能「铜币拍卖·回采」（`coins_finalize`，默认启用），对应 `tasks.run_coins_finalize`；`daily_coins` 按「采集 → 回采 → 查价」三个开关依次调用，避免合成一整轮绕过回采开关。
+
+**验证**：`pytest tests -q` 345 通过（回采用例改为 `finalize_only`；功能清单与「三开关全关跳过」同步更新）。
+
+**受影响**：spec/core.md §9、spec/knowledge.md、spec/coins.md §14.8、plan/core.md §19、plan/coins.md §18.9、README、tasks/coins.md M34。
+
+## v1.47 — 2026-10-21 成交明细表 coin_sales（plan §18.18 P0-3）
+
+**起因**：成交样本只存在于 `coin_price_refs.raw` 的取证 JSON 里，按关键词重复命中、没有全局去重，无法回测与聚合。
+
+**改了什么**：新增 `coin_sales`（`item_id` 唯一，schema 14→15，纯新增表）；终态回采后直接同步 `session_final`（高置信，不额外请求站点），成交搜索命中的条目按 `item_id` 落 `sold_search`（中置信）；冲突时高置信不被覆盖；`SoldSample` / 取证 raw 增加 `item_id` 与 `sold_at`；CLI 与日志输出按来源的成交库条数。
+
+**验证**：`pytest tests -q` 345 通过（新增 2 条：raw 缺 `item_id` 跳过、来源优先级与去重）；真实库迁移到 v15 并建表，当前终态成交 0 条（尚未跑网络回采）。
+
+**受影响**：spec/coins.md §14.18、plan/coins.md §18.18、tasks/coins.md M33。
+
+## v1.46 — 2026-10-21 拍场数据分析并入 spec / plan
+
+**起因**：`ANALYTICS.md` 是独立台账，与 spec / plan / tasks 三件套并行，容易和项目地图、代码注释脱节。
+
+**改了什么**：分析方向与统计口径并入 `spec/coins.md` §14.18；站点字段实测表、P0/P1/P2 缺口台账、P0-2 实现细节与落地顺序并入 `plan/coins.md` §18.18；落地证据并入 `tasks/coins.md` M32；删除 `ANALYTICS.md`，代码与测试里的 8 处引用改指新章节。
+
+**验证**：仓库内已无指向 `ANALYTICS.md` 的引用（本文件历史条目除外）；仅文档与注释改动，`pytest` 无需重跑。
+
+**受影响**：spec/coins.md §14.18、plan/coins.md §18.18、tasks/coins.md M32。
+
+## v1.45 — 2026-10-21 拍品终态回采（ANALYTICS P0-2）
+
+**起因**：库里的专场/拍品是覆盖写快照，场次一结束就停在最后采集值，成交率与流拍完全看不到；而站点 `auction.get` 每场 1 次就能拿到全量拍品的 `status / price / won_user_id / end_time`。
+
+**改了什么**：`coin_lots` 增 `outcome` / `final_price` / `winner_uid` / `closed_at`（schema v13→v14，`app/migrations/v14.py`）；`gapi.lot_from_item` 解析终态（status 2→sold、3→unsold，成交才有价）；管道在采集后按 `coins.finalize_days`（默认 3 天）回采已结束专场，本轮刚采过的场次跳过、起抓留 6 小时缓冲；`upsert_coin_lot` 用 COALESCE 写终态，在拍重抓不会擦掉已回采结果；CLI 输出增加回采场次与成交/未成交条数。
+
+**验证**：`pytest tests -q` 343 通过（新增 2 条：终态解析、管道回采与去重）；真实库迁移到 v14，近 3 天窗口内待回采 79 场。
+
+**受影响**：spec/coins.md §14.18 / plan/coins.md §18.18 / tasks/coins.md M32（当时记录在 ANALYTICS.md，后续并入，见 v1.46）；纯采集侧改动，页面与接口契约未变。
+
+## v1.44 — 2026-10-21 候选池卡片与筛选对齐「系列库」
+
+**起因**：候选池的筛选条与卡片排版、正反图尺寸与币库「系列库」页不一致，候选/采纳标签压在信息底部不易扫读。
+
+**改了什么**：`coins/explore.html` 筛选条改用 `search-form / search-row-labeled`，卡片复用 `coin-series-card` 排版，正反图 40px → 72px；候选/采纳标签移到标题右侧。
+
+**验证**：`tests/test_coins_collection.py -k "explore or smoke"`、`tests/test_coins_pages.py` 全通过。
+
+---
+
+## v1.43 — 2026-10-21 面值词表补「仙」→ cent
+
+**起因**：查「香港 1900 1 仙」时，`仙` 不在 `DENOMINATION_UNITS`，关键词原样透传成 `1 仙`，详情过滤对 `1 Cent` 两次比对都不中，命中 2 个系列却入库 0 个。
+
+**改了什么**：`app/coins/numista.py` 的 `DENOMINATION_UNITS` 增加 `"仙": "cent"`。
+
+**验证**：`tests/test_coins_numista.py` 增加 `("1 仙", "1 cent")` 用例。
+
+---
+
 ## v1.42 — 2026-10-21 拍场去掉「刷新今日拍品」+ 采集侧限速
 
 **起因**：拍场页「刷新今日拍品」与运行控制「采集 + 查价」两个按钮重复；采集逐场详情连续请求，`request_interval_seconds` 配了却没有代码使用；网关 429 也没有重试。

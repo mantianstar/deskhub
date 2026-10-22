@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
 
 import pytest
 
 from app.coins import pricing
 from app.coins.pricing import SoldSample
+from app.models import CoinPriceRef, CoinSession
 
 
 def _at(days_ago: int) -> str:
@@ -57,6 +59,57 @@ def test_summarize_ignores_negative_prices():
     summary = pricing.summarize([SoldSample("a", -1), SoldSample("b", 10), SoldSample("c", 20)],
                                 min_samples=2)
     assert summary.sample_count == 2
+
+
+# ---------------------------------------------------------------- 到手价（plan §18.18.1 P1-8）
+
+
+def _session(**overrides) -> CoinSession:
+    base = dict(
+        id=None,
+        mxiqi_id="1",
+        shop_id=None,
+        title="场次",
+        status="closed",
+        auction_at=None,
+        auction_at_raw=None,
+        deposit=None,
+        lot_total=None,
+        view_count=None,
+        cover_urls=[],
+        fetched_at="2026-10-22T00:00:00Z",
+    )
+    return CoinSession(**base, **overrides)
+
+
+def test_landed_price_zero_rate_equals_price_plus_shipping():
+    """验收：commission_rate=0 时到手价 = 成交价 + 运费。"""
+    session = _session(commission_rate=0.0, commission_min=0.0, express_fee=8.0)
+    assert pricing.landed_price(258.0, session) == 266.0
+
+
+def test_landed_price_applies_rate():
+    """验收：费率 0.03 → 成交价 × 1.03 + 运费。"""
+    session = _session(commission_rate=0.03, commission_min=0.0, express_fee=8.0)
+    assert pricing.landed_price(100.0, session) == 111.0
+
+
+def test_landed_price_uses_commission_min_floor():
+    """费率算出来低于最低佣金时，按最低佣金收。"""
+    session = _session(commission_rate=0.03, commission_min=5.0, express_fee=8.0)
+    assert pricing.landed_price(100.0, session) == 113.0
+
+
+def test_landed_price_free_shipping_over_threshold():
+    """成交价达到包邮门槛时不加运费。"""
+    session = _session(commission_rate=0.0, express_fee=8.0, express_free_amount=100.0)
+    assert pricing.landed_price(100.0, session) == 100.0
+    assert pricing.landed_price(99.0, session) == 107.0
+
+
+def test_landed_price_without_fee_fields_equals_final_price():
+    """老场次没有费率 / 运费字段时，到手价等于成交价。"""
+    assert pricing.landed_price(58.0, _session()) == 58.0
 
 
 # ---------------------------------------------------------------- 时间窗口
@@ -112,3 +165,32 @@ async def test_price_lot_insufficient_samples_has_no_point():
     assert ref.sample_count == 1
     assert ref.median is None
     assert ref.p25 == 15.0
+
+
+# ---------------------------------------------------------------- 成交明细（plan/coins.md §18.18 P0-3）
+
+
+def test_sales_from_ref_skips_rows_without_item_id():
+    """旧取证只有标题 + 价格，无法按 item_id 去重 → 跳过，不污染成交库。"""
+    ref = CoinPriceRef(
+        lot_id=1,
+        keyword="东印度 1808",
+        sample_count=2,
+        p25=18.0,
+        median=19.0,
+        p75=20.0,
+        raw=json.dumps(
+            [
+                {"item_id": "9001", "title": "东印度1808", "price": 18.0, "sold_at": None},
+                {"title": "东印度1808", "price": 20.0},
+            ],
+            ensure_ascii=False,
+        ),
+        queried_at="2026-10-21T00:00:00Z",
+    )
+
+    sales = pricing.sales_from_ref(ref)
+
+    assert [(sale.item_id, sale.source, sale.keyword) for sale in sales] == [
+        ("9001", "sold_search", "东印度 1808")
+    ]

@@ -1,7 +1,7 @@
-"""四个可独立运行的功能：定时任务与管理页「立即运行」共用同一入口。
+"""五个可独立运行的功能：定时任务与管理页「立即运行」共用同一入口。
 
 为什么单开一层：`app/pipeline.run` 是「抓取 → 打分」一体的（CLI 出报用），
-而管理页要能**分开**跑抓取和打分，所以这里按功能拆成四个小函数。
+而管理页要能**分开**跑抓取和打分，所以这里按功能拆成五个小函数。
 
 手动触发（`trigger`）是**后台执行**：铜币查价一轮可能几分钟，
 不能把 HTTP 请求挂在那里等；跑完把一句摘要留在 `last_state` 里供页面显示。
@@ -50,6 +50,15 @@ async def run_coins_collect(config: Config) -> str:
     )
 
 
+async def run_coins_finalize(config: Config) -> str:
+    """只回采已结束专场的拍品终态（不采集、不查价）。"""
+    result = await coins_pipeline.run(config, finalize_only=True)
+    return (
+        f"回采 {result.sessions_finalized} 场：成交 {result.lots_sold} 条，"
+        f"未成交 {result.lots_unsold} 条；成交库 session_final {result.sales_session_final} 条"
+    )
+
+
 async def run_coins_price(config: Config) -> str:
     """只给已入库的推荐拍品查价。"""
     result = await coins_pipeline.run(config, price_only=True)
@@ -63,6 +72,7 @@ RUNNERS: dict[str, Callable[[Config], Awaitable[str]]] = {
     switches.KNOWLEDGE_FETCH: run_knowledge_fetch,
     switches.KNOWLEDGE_SCORE: run_knowledge_score,
     switches.COINS_COLLECT: run_coins_collect,
+    switches.COINS_FINALIZE: run_coins_finalize,
     switches.COINS_PRICE: run_coins_price,
 }
 

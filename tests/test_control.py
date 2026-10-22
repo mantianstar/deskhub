@@ -51,6 +51,7 @@ def test_all_features_enabled_by_default(tmp_path):
         switches.KNOWLEDGE_FETCH,
         switches.KNOWLEDGE_SCORE,
         switches.COINS_COLLECT,
+        switches.COINS_FINALIZE,
         switches.COINS_PRICE,
     ]
     for feature in switches.FEATURES:

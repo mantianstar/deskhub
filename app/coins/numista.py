@@ -155,6 +155,7 @@ DENOMINATION_UNITS: dict[str, str] = {
     "元": "yuan",
     "圆": "yuan",
     "分": "cent",
+    "仙": "cent",
     "钱": "sen",
     "毫": "mill",
     "厘": "cash",

@@ -8,40 +8,42 @@
 {% set subtitle = candidates|length ~ " 个候选" ~ ("（共 " ~ total ~ " 个）" if filters_active else "") ~ " · 目录扫描得到的外部铜币 · 忽略的不再显示" %}
 {{ coin_head("候选池", subtitle) }}
 
-<form class="coin-member-add" method="get" action="/coins/explore">
-  <label class="field">国家
-    <select name="country" onchange="this.form.ruler.value=''; this.form.denomination.value=''; this.form.requestSubmit();">
-      <option value="">全部</option>
-      {% for option in countries %}
-      <option value="{{ option }}"{% if option == country %} selected{% endif %}>{{ option }}</option>
-      {% endfor %}
-    </select>
-  </label>
-  <label class="field">执政者
-    <select name="ruler" onchange="this.form.denomination.value=''; this.form.requestSubmit();">
-      <option value="">全部</option>
-      {% for option in rulers %}
-      <option value="{{ option }}"{% if option == ruler %} selected{% endif %}>{{ option }}</option>
-      {% endfor %}
-    </select>
-  </label>
-  <label class="field">面值
-    <select name="denomination" onchange="this.form.requestSubmit();">
-      <option value="">全部</option>
-      {% for option in denominations %}
-      <option value="{{ option }}"{% if option == denomination %} selected{% endif %}>{{ option }}</option>
-      {% endfor %}
-    </select>
-  </label>
-  <button class="btn btn-ghost" type="submit">筛选</button>
-  {% if filters_active %}<a class="btn btn-ghost" href="/coins/explore">重置</a>{% endif %}
+<form class="search-form" method="get" action="/coins/explore">
+  <div class="search-row search-row-labeled">
+    <label class="field">国家
+      <select class="search-input" name="country" onchange="this.form.ruler.value=''; this.form.denomination.value=''; this.form.requestSubmit();">
+        <option value="">全部</option>
+        {% for option in countries %}
+        <option value="{{ option }}"{% if option == country %} selected{% endif %}>{{ option }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label class="field">执政者
+      <select class="search-input" name="ruler" onchange="this.form.denomination.value=''; this.form.requestSubmit();">
+        <option value="">全部</option>
+        {% for option in rulers %}
+        <option value="{{ option }}"{% if option == ruler %} selected{% endif %}>{{ option }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label class="field">面值
+      <select class="search-input" name="denomination" onchange="this.form.requestSubmit();">
+        <option value="">全部</option>
+        {% for option in denominations %}
+        <option value="{{ option }}"{% if option == denomination %} selected{% endif %}>{{ option }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <button class="btn btn-primary" type="submit">筛选</button>
+    {% if filters_active %}<a class="btn btn-ghost" href="/coins/explore">重置</a>{% endif %}
+  </div>
 </form>
 
 {% if candidates %}
 <div class="coin-candidate-list">
   {% for item in candidates %}
-  <div class="coin-candidate-card">
-    <div class="coin-candidate-main">
+  <div class="coin-series-card coin-candidate-card">
+    <div class="coin-series-main">
       <div class="coin-explore-imgs">
         {% for side, label in [('obverse', '正'), ('reverse', '反')] %}
           {% if item['has_' ~ side ~ '_image'] %}
@@ -55,10 +57,13 @@
           {% endif %}
         {% endfor %}
       </div>
-      <div class="coin-candidate-meta">
-        <a class="coin-candidate-title" href="/coins/series/{{ item.numista_id }}">
-          {{ item.issuer or '—' }} · {{ item.ruler or '—' }} · {{ item.denomination or '—' }}
-        </a>
+      <div class="coin-series-meta">
+        <div class="coin-candidate-head">
+          <a class="coin-candidate-title" href="/coins/series/{{ item.numista_id }}">
+            {{ item.issuer or '—' }} · {{ item.ruler or '—' }} · {{ item.denomination or '—' }}
+          </a>
+          <span class="coin-series-tag {% if item.status == 'adopted' %}{% else %}coin-series-tag-off{% endif %}">{{ status_labels[item.status] }}</span>
+        </div>
         <p class="coin-candidate-line">
           Numista #{{ item.numista_id }}
           {%- if item.min_year is not none and item.max_year is not none %} · {{ item.min_year }}{% if item.max_year != item.min_year %}–{{ item.max_year }}{% endif %}{% endif %}
@@ -68,9 +73,6 @@
           {%- if item.shape %} · {{ item.shape }}{% endif %}
         </p>
         <p class="coin-candidate-line">核实时间：{{ item.verified_at | local_time }}</p>
-        <p class="coin-candidate-tags">
-          <span class="coin-series-tag {% if item.status == 'adopted' %}{% else %}coin-series-tag-off{% endif %}">{{ status_labels[item.status] }}</span>
-        </p>
       </div>
     </div>
 

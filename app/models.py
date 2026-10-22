@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-SCHEMA_VERSION = "13"
+SCHEMA_VERSION = "18"
 
 # 所有时间列存 UTC ISO8601 字符串（SQLite 无原生时间类型）
 DDL = """
@@ -117,6 +117,13 @@ CREATE TABLE IF NOT EXISTS coin_sessions (
   auction_at     TEXT,      -- 展示时间：实时 = 开拍 start_time，限时 = 截拍 end_time（UTC ISO8601）
   auction_at_raw TEXT,      -- 展示时间的站点文案，如「10月12日 星期一 19:30」
   deposit        REAL,
+  commission_rate REAL,      -- 佣金费率（0.03 = 3%）
+  commission_min  REAL,      -- 最低佣金（元）
+  express_desc    TEXT,      -- 运费说明（站点富文本，原样存）
+  express_day     INTEGER,   -- 发货天数
+  express_fee     REAL,      -- 基础运费（元；从 express_desc 抽首个「运费 ¥N」，忽略地区差）
+  express_free_amount REAL,  -- 满额包邮门槛（元）
+  is_storage      INTEGER NOT NULL DEFAULT 0,  -- 是否可寄存（拍下不发货、先存店）
   lot_total      INTEGER,
   view_count     INTEGER,
   cover_urls     TEXT,      -- JSON 数组（列表页 4 图）
@@ -133,14 +140,37 @@ CREATE TABLE IF NOT EXISTS coin_lots (
   title          TEXT    NOT NULL,
   start_price    REAL,
   current_price  REAL,
+  outcome        TEXT,    -- 终态：sold（成交）| unsold（未成交）；NULL = 在拍 / 未回采
+  final_price    REAL,    -- 成交价（元）；未成交为 NULL
+  winner_uid     TEXT,    -- 中拍人站内 uid（仅成交）
+  closed_at      TEXT,    -- 终态时间（UTC ISO8601，取自拍品 end_time）
   image_urls     TEXT,    -- JSON 数组（页面展示 ≤3）
   tags           TEXT,    -- JSON 对象：{"发行年份":"1808","国家地区":"印度"}
+  series_numista_id INTEGER,  -- 匹配到的 Numista 系列号（plan §18.18.5）
+  issue_numista_id  INTEGER,  -- 唯一命中的单版号；多候选 / 无命中为空
+  match_method   TEXT,    -- attrs / title（后缀 _multi = 多候选未落库）；NULL = 未映射
+  confidence     REAL,    -- 0..1；多候选时为 1/候选数
+  match_candidates TEXT,  -- JSON 数组：歧义候选的 Numista 编号（系列级或单版级）
   match_score    REAL    NOT NULL DEFAULT 0,
   is_recommended INTEGER NOT NULL DEFAULT 0,
+  -- 热度：只有 ListAuction 预览 / home.filter 带，auction.get 没有（plan §18.18.1 P1-6）
+  bid_num        INTEGER,
+  bid_user_num   INTEGER,
+  bid_source     TEXT,    -- preview | home_filter；NULL = 没有来源给过值
   fetched_at     TEXT    NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_coin_lots_rec
   ON coin_lots(session_id, is_recommended, match_score DESC);
+
+-- 拍品图片的 OSS key（同图识别用，plan §18.18.1 P1-7）
+CREATE TABLE IF NOT EXISTS coin_lot_images (
+  id      INTEGER PRIMARY KEY AUTOINCREMENT,
+  lot_id  INTEGER NOT NULL REFERENCES coin_lots(id) ON DELETE CASCADE,
+  oss_key TEXT    NOT NULL,
+  UNIQUE(lot_id, oss_key)
+);
+CREATE INDEX IF NOT EXISTS idx_coin_lot_images_key ON coin_lot_images(oss_key);
+CREATE INDEX IF NOT EXISTS idx_coin_lot_images_lot ON coin_lot_images(lot_id);
 
 -- 全局拍品搜索索引（FTS5；CJK 逐字分词见 app/textmatch.fts_text）
 CREATE VIRTUAL TABLE IF NOT EXISTS coin_lot_fts USING fts5(
@@ -161,10 +191,26 @@ CREATE TABLE IF NOT EXISTS coin_price_refs (
   p25          REAL,
   median       REAL,
   p75          REAL,
-  raw          TEXT,      -- JSON：命中的成交（标题 + 价格）
+  raw          TEXT,      -- JSON：命中的成交（item_id + 标题 + 价格 + 成交时间）
   queried_at   TEXT    NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_coin_refs_lot ON coin_price_refs(lot_id);
+
+-- 成交明细（可回测的价格基准库；见 plan/coins.md §18.18）
+CREATE TABLE IF NOT EXISTS coin_sales (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  item_id    TEXT    NOT NULL UNIQUE,   -- 站内拍品 id（去重键，不用标题）
+  title      TEXT    NOT NULL,
+  price      REAL    NOT NULL,          -- 成交价（元）
+  sold_at    TEXT,                      -- 成交时间（UTC ISO8601）
+  session_id INTEGER REFERENCES coin_sessions(id) ON DELETE SET NULL,
+  shop_id    INTEGER REFERENCES coin_shops(id) ON DELETE SET NULL,
+  keyword    TEXT,                      -- 仅 sold_search 来源有
+  source     TEXT    NOT NULL,          -- session_final（高置信）| sold_search（中置信）
+  fetched_at TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_coin_sales_source ON coin_sales(source);
+CREATE INDEX IF NOT EXISTS idx_coin_sales_sold_at ON coin_sales(sold_at);
 
 -- 采集日志
 CREATE TABLE IF NOT EXISTS coin_fetch_runs (
@@ -516,7 +562,7 @@ COIN_DIMENSION_LABELS = {
 COIN_SESSION_STATUS_LABELS = {
     "preview": "预出价",
     "running": "进行中",
-    "closed": "已结束",
+    "closed": "已截拍",
 }
 
 # 历史购买品相录入的可选档位（coin_purchase_grades.grade 的 CHECK 一致）
@@ -606,6 +652,15 @@ class CoinSession:
     fetched_at: str
     # live（实时）/ timed（限时）；老库迁移前为空
     kind: str | None = None
+    # 费率与到手价（plan §18.18.1 P1-8）
+    commission_rate: float | None = None
+    commission_min: float | None = None
+    express_desc: str | None = None
+    express_day: int | None = None
+    # 基础运费 / 满额包邮门槛（元）；老库与无运费说明的场次为空
+    express_fee: float | None = None
+    express_free_amount: float | None = None
+    is_storage: bool = False
 
 
 @dataclass
@@ -622,6 +677,16 @@ class CoinLot:
     match_score: float
     is_recommended: bool
     fetched_at: str
+    # 终态（截拍后回采，见 plan/coins.md §18.18）：在拍 / 未回采时为 None
+    outcome: str | None = None
+    final_price: float | None = None
+    winner_uid: str | None = None
+    closed_at: str | None = None
+    # 热度与同图识别（plan/coins.md §18.18.1 P1-6 / P1-7）
+    bid_num: int | None = None
+    bid_user_num: int | None = None
+    bid_source: str | None = None
+    image_keys: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -634,6 +699,22 @@ class CoinPriceRef:
     p75: float | None
     raw: str | None
     queried_at: str
+
+
+@dataclass
+class CoinSale:
+    """一条成交明细；`source` 高置信（session_final）不会被中置信覆盖。"""
+
+    id: int | None
+    item_id: str
+    title: str
+    price: float
+    sold_at: str | None
+    session_id: int | None
+    shop_id: int | None
+    keyword: str | None
+    source: str
+    fetched_at: str
 
 
 @dataclass
@@ -804,6 +885,9 @@ class CoinLotCard:
     median: float | None
     p75: float | None
     is_recommended: bool = False
+    # 终态（截拍后回采）：sold / unsold；在拍或未回采时为 None
+    outcome: str | None = None
+    final_price: float | None = None
 
 
 @dataclass

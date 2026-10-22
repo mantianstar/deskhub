@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -22,7 +22,8 @@ from app import db, repository
 from app.coins import gapi
 from app.coins.gapi import LotInfo, SessionCard, SessionDetail, ShopInfo
 from app.coins.pipeline import run as coins_run
-from app.models import CoinFetchStatus
+from app.migrations import v18
+from app.models import CoinFetchStatus, CoinLot, CoinSale, CoinSession
 
 SHANGHAI = ZoneInfo("Asia/Shanghai")
 
@@ -205,6 +206,46 @@ def test_detail_from_payload_falls_back_to_list_card():
     assert detail.card.shop is not None and detail.card.shop.mxiqi_uid == "41006"
 
 
+# 运费 / 包邮 / 寄存的真实文案（2026-10-22 实测 330227）
+EXPRESS_DESC = (
+    '<div style="margin-bottom:4px;">运费 ¥8，另外吉林省¥10；甘肃省¥12；青海省¥12；'
+    "西藏自治区¥18；新疆维吾尔自治区¥18；</div>"
+)
+POLICY_DESC = (
+    "<p>1、所有藏品包老保真，实物拍摄，按图发货。</p>"
+    "<p>2、满百  包邮，不作预留。</p>"
+    "<p>3、不到包邮条件订单，支付运费即发货，亦可留言寄存凑单，寄存时间最长不超15天。</p>"
+)
+
+
+def test_detail_from_payload_maps_commission_and_express():
+    auction = {
+        **DETAIL_PAYLOAD["auction"],
+        "commission_rate": 0.03,
+        "commission_min": 0,
+        "express_day": 1,
+        "express_desc": EXPRESS_DESC,
+        "desc_orginal": POLICY_DESC,
+    }
+
+    detail = gapi.detail_from_payload({**DETAIL_PAYLOAD, "auction": auction})
+
+    assert detail.commission_rate == 0.03
+    assert detail.commission_min == 0.0
+    assert detail.express_day == 1
+    assert detail.express_desc == EXPRESS_DESC  # 富文本原样存
+    assert detail.express_fee == 8.0  # 只取基础运费，忽略地区价
+    assert detail.express_free_amount == 100.0  # 「满百包邮」
+    assert detail.is_storage is True
+
+
+def test_express_parsers_handle_missing_text():
+    assert gapi.parse_express_fee(None) is None
+    assert gapi.parse_express_free_amount("") is None
+    assert gapi.parse_is_storage("") is False
+    assert gapi.parse_express_free_amount("满 200 元包邮") == 200.0
+
+
 def test_session_status_codes_map_to_three_states():
     for code, expected in ((0, "preview"), (1, "running"), (2, "closed")):
         assert gapi.SESSION_STATUS_BY_CODE[code] == expected
@@ -258,6 +299,30 @@ async def test_session_detail_sets_end_at_in_utc():
 
     assert detail.end_at == "2026-10-12T11:30:00Z"  # 截拍时间的 UTC ISO
     assert api.calls[-1] == (gapi.ACTION_GET, {"auction_id": 328115})
+
+
+@pytest.mark.asyncio
+async def test_session_detail_keeps_commission_and_express_fields():
+    """详情入口补 `end_at` 时不能把费率 / 运费字段丢掉（v17 回归）。"""
+    payload = {
+        **DETAIL_PAYLOAD,
+        "auction": {
+            **DETAIL_PAYLOAD["auction"],
+            "commission_rate": 0.03,
+            "commission_min": 0,
+            "express_day": 1,
+            "express_desc": EXPRESS_DESC,
+            "desc_orginal": POLICY_DESC,
+        },
+    }
+    api = _StubApi({1: [], 2: []}, detail=payload)
+
+    detail = await api.session_detail("328115")
+
+    assert detail.commission_rate == 0.03
+    assert detail.express_fee == 8.0
+    assert detail.express_free_amount == 100.0
+    assert detail.is_storage is True
 
 
 @pytest.mark.asyncio
@@ -360,6 +425,13 @@ def _detail(mxiqi_id: str) -> SessionDetail:
         card=_card(mxiqi_id),
         deposit=10.0,
         end_at=_today_end_at(),
+        commission_rate=0.03,
+        commission_min=0.0,
+        express_desc="运费 ¥8",
+        express_day=1,
+        express_fee=8.0,
+        express_free_amount=100.0,
+        is_storage=True,
         lots=[
             LotInfo(
                 mxiqi_id="1870684",
@@ -433,6 +505,8 @@ async def test_pipeline_collects_and_matches(temp_db):
     # 拍品去重键是「专场 id:站内拍品 id」，所以两条不会互相覆盖
     assert result.lots_stored == 2
     assert result.lots_recommended == 2
+    # 采集入口不再顺带回采终态（回采在控制页是独立功能）
+    assert result.sessions_finalized == 0
 
     cards = repository.list_coin_session_cards()
     assert len(cards) == 2
@@ -443,6 +517,16 @@ async def test_pipeline_collects_and_matches(temp_db):
     assert detail is not None
     assert detail.auction_at == _today_end_at()
     assert detail.auction_at_raw == "10月12日 星期一 19:30"
+    # 费率 / 运费 / 包邮门槛 / 寄存一并落库（plan §18.18.1 P1-8）
+    with db.connect() as conn:
+        row = conn.execute(
+            """
+            SELECT commission_rate, commission_min, express_desc, express_day,
+                   express_fee, express_free_amount, is_storage
+            FROM coin_sessions LIMIT 1
+            """
+        ).fetchone()
+    assert tuple(row) == (0.03, 0.0, "运费 ¥8", 1, 8.0, 100.0, 1)
 
 
 @pytest.mark.asyncio
@@ -568,3 +652,371 @@ async def test_pipeline_price_skips_already_priced_today(temp_db):
 
     assert len(api.sold_calls) == calls_after_first  # 当日已查过 → 不重复请求
     assert second.lots_pricing_skipped == first.lots_priced
+
+
+# ---------------------------------------------------------------- 终态回采（plan/coins.md §18.18）
+
+
+def test_lot_from_item_parses_terminal_fields():
+    """status 2/3 落终态；在拍（1）与未回采必须为空。"""
+    sold = gapi.lot_from_item(
+        {
+            "item_id": 1870684,
+            "name": "东印度公司1808年硬币",
+            "status": 2,
+            "price": 8800,
+            "price_start": 1500,
+            "won_user_id": 9001,
+            "end_time": "2026-10-21 14:00:01",
+        },
+        tz=SHANGHAI,
+    )
+    assert sold.outcome == "sold"
+    assert sold.final_price == 88.0
+    assert sold.winner_uid == "9001"
+    assert sold.closed_at == "2026-10-21T06:00:01Z"
+
+    unsold = gapi.lot_from_item(
+        {"item_id": 2, "name": "未成交拍品", "status": 3, "end_time": "2026-10-21 14:00:01"},
+        tz=SHANGHAI,
+    )
+    assert unsold.outcome == "unsold"
+    assert unsold.final_price is None
+
+    running = gapi.lot_from_item({"item_id": 3, "name": "在拍拍品", "status": 1}, tz=SHANGHAI)
+    assert running.outcome is None
+    assert running.closed_at is None
+
+
+def _hours_ago(hours: int) -> str:
+    return (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat().replace("+00:00", "Z")
+
+
+def _seed_ended_session() -> int:
+    """库里一个 10 小时前结束、状态仍是「进行中」、拍品还没有终态的专场。"""
+    session_id = repository.upsert_coin_session(
+        CoinSession(
+            id=None,
+            mxiqi_id="330227",
+            shop_id=None,
+            title="已结束专场",
+            status="running",
+            kind="timed",
+            auction_at=_hours_ago(10),
+            auction_at_raw="10月20日 星期二 20:00",
+            deposit=0.0,
+            lot_total=2,
+            view_count=10,
+            cover_urls=[],
+            fetched_at=_hours_ago(10),
+        )
+    )
+    for item_id, title in (("1870684", "东印度公司1808年硬币"), ("1870685", "另一枚硬币")):
+        repository.upsert_coin_lot(
+            CoinLot(
+                id=None,
+                session_id=session_id,
+                mxiqi_id=f"330227:{item_id}",
+                lot_no=None,
+                title=title,
+                start_price=15.0,
+                current_price=0.0,
+                image_urls=[],
+                tags={},
+                match_score=0.0,
+                is_recommended=False,
+                fetched_at=_hours_ago(10),
+            )
+        )
+    return session_id
+
+
+class _FinalizeGapi(_FakeGapi):
+    """列表返回空（本轮不采新场），只扮「已结束专场的详情」。"""
+
+    async def list_sessions(self):
+        return []
+
+    async def session_detail(self, mxiqi_id: str, *, fallback=None) -> SessionDetail:
+        self.detail_calls.append(mxiqi_id)
+        return SessionDetail(
+            card=replace(_card(mxiqi_id), status="closed"),
+            deposit=0.0,
+            end_at=_hours_ago(10),
+            lots=[
+                LotInfo(
+                    mxiqi_id="1870684",
+                    lot_no="Lot.1",
+                    title="东印度公司1808年硬币",
+                    start_price=15.0,
+                    current_price=88.0,
+                    image_urls=[],
+                    tags={},
+                    outcome="sold",
+                    final_price=88.0,
+                    winner_uid="9001",
+                    closed_at=_hours_ago(10),
+                ),
+                LotInfo(
+                    mxiqi_id="1870685",
+                    lot_no="Lot.2",
+                    title="另一枚硬币",
+                    start_price=15.0,
+                    current_price=None,
+                    image_urls=[],
+                    tags={},
+                    outcome="unsold",
+                    closed_at=_hours_ago(10),
+                ),
+            ],
+        )
+
+
+@pytest.mark.asyncio
+async def test_pipeline_finalizes_ended_session(temp_db):
+    """已结束专场：每场 1 次详情即落成交价/流拍/中拍人；补完不再重复抓。"""
+    session_id = _seed_ended_session()
+    cfg = _cfg()
+    api = _FinalizeGapi()
+
+    result = await coins_run(cfg, gapi=api, finalize_only=True)
+
+    assert result.sessions_finalized == 1
+    assert (result.lots_sold, result.lots_unsold) == (1, 1)
+    # 回采时同步拍场状态：进行中 → 已截拍
+    assert repository.get_coin_session_card(session_id).status == "closed"
+    lots = {lot.mxiqi_id: lot for lot in repository.list_coin_lots_for_matching()}
+    assert lots["330227:1870684"].outcome == "sold"
+    assert lots["330227:1870684"].final_price == 88.0
+    assert lots["330227:1870684"].winner_uid == "9001"
+    assert lots["330227:1870685"].outcome == "unsold"
+    assert lots["330227:1870685"].final_price is None
+
+    # 在拍场次重抓（终态全空）不能把已回采的终态擦掉
+    repository.upsert_coin_lot(
+        replace(lots["330227:1870684"], outcome=None, final_price=None,
+                winner_uid=None, closed_at=None)
+    )
+    again = {lot.mxiqi_id: lot for lot in repository.list_coin_lots_for_matching()}
+    assert again["330227:1870684"].outcome == "sold"
+    assert again["330227:1870684"].final_price == 88.0
+
+    # 全部落终态后再跑一轮：不再请求详情
+    second = await coins_run(cfg, gapi=api, finalize_only=True)
+    assert second.sessions_finalized == 0
+    assert api.detail_calls == ["330227"]
+
+    # 成交库：终态直接落 session_final，按 item_id 去重（不靠标题）
+    sales = repository.list_coin_sales()
+    assert len(sales) == 1
+    assert (sales[0].item_id, sales[0].price, sales[0].source) == ("1870684", 88.0, "session_final")
+    assert result.sales_session_final == 1
+    assert result.sales_search == 0
+
+
+def test_coin_sales_prefers_session_final(temp_db):
+    """同一 item_id：高置信行不被中置信覆盖，重复写入只有 1 行。"""
+    base = {
+        "id": None,
+        "title": "东印度公司1808年硬币",
+        "sold_at": "2026-10-20T12:00:00Z",
+        "session_id": None,
+        "shop_id": None,
+        "fetched_at": repository.utcnow(),
+    }
+    repository.upsert_coin_sales(
+        [CoinSale(item_id="42", price=10.0, keyword="东印度", source="sold_search", **base)]
+    )
+    repository.upsert_coin_sales(
+        [CoinSale(item_id="42", price=88.0, keyword=None, source="session_final", **base)]
+    )
+    assert repository.count_coin_sales_by_source() == {"session_final": 1}
+
+    # 中置信再写入：行数不增，价格与来源保持高置信
+    repository.upsert_coin_sales(
+        [CoinSale(item_id="42", price=9.0, keyword="东印度", source="sold_search", **base)]
+    )
+    row = repository.list_coin_sales()[0]
+    assert (row.source, row.price) == ("session_final", 88.0)
+
+
+# ---------------------------------------------------------------- 热度与同图识别（plan §18.18.1 P1-6 / P1-7）
+
+
+PREVIEW_CARD = {
+    "auction_id": 331783,
+    "auction_mode": 1,
+    "name": "实时专场",
+    "status": 1,
+    "start_time": "2026-10-22 20:00:00",
+    "auction_items": {
+        "items": [
+            {
+                "item_id": 7001,
+                "name": "预览拍品",
+                "price": 1200,
+                "price_start": 0,
+                "bid_num": 7,
+                "bid_user_num": 4,
+                "thumbs": [{"thumb": "V1/AUC/20261022/IMG/abc?x=1"}],
+            },
+            {"item_id": 7002, "name": "预览无热度", "price": 0},
+        ]
+    },
+}
+
+
+def test_card_preview_keeps_bid_counts_and_oss_keys():
+    card = gapi.card_from_auction(PREVIEW_CARD)
+
+    assert [lot.mxiqi_id for lot in card.preview_lots] == ["7001", "7002"]
+    first, second = card.preview_lots
+    assert (first.bid_num, first.bid_user_num, first.bid_source) == (7, 4, "preview")
+    assert first.image_keys == ["V1/AUC/20261022/IMG/abc"]  # 去 query
+    assert second.bid_num is None and second.bid_source is None
+
+
+def test_auction_get_lot_leaves_bid_columns_null():
+    """auction.get 的 item 没有 bid_num / bid_user_num，解析结果必须是 NULL。"""
+    lot = gapi.lot_from_item(
+        {
+            "item_id": 1,
+            "name": "详情拍品",
+            "price": 100,
+            "thumbs": [{"thumb": "https://oss.mxiqi.com/V1/AUC/20261022/IMG/x?w=2"}],
+        }
+    )
+
+    assert (lot.bid_num, lot.bid_user_num, lot.bid_source) == (None, None, None)
+    assert lot.image_keys == ["V1/AUC/20261022/IMG/x"]  # 去 base、去 query
+
+
+def test_sold_from_payload_keeps_bid_counts():
+    samples = gapi.sold_from_payload(
+        {
+            "auction_items": {
+                "items": [
+                    {
+                        "item_id": 7001,
+                        "name": "英国1960年",
+                        "price": 1200,
+                        "status": 2,
+                        "end_time": "2026-09-01 10:00:00",
+                        "bid_num": 5,
+                        "bid_user_num": 3,
+                    }
+                ]
+            }
+        },
+        SHANGHAI,
+    )
+
+    assert (samples[0].bid_num, samples[0].bid_user_num) == (5, 3)
+
+
+def _seed_running_session(mxiqi_id: str) -> int:
+    return repository.upsert_coin_session(
+        CoinSession(
+            id=None,
+            mxiqi_id=mxiqi_id,
+            shop_id=None,
+            title="测试专场",
+            status="running",
+            auction_at=None,
+            auction_at_raw=None,
+            deposit=None,
+            lot_total=None,
+            view_count=None,
+            cover_urls=[],
+            fetched_at=repository.utcnow(),
+            kind="live",
+        )
+    )
+
+
+def _bid_lot(
+    session_id: int,
+    mxiqi_id: str,
+    *,
+    bid_num: int | None = None,
+    bid_user_num: int | None = None,
+    source: str | None = None,
+    keys: tuple[str, ...] = (),
+) -> CoinLot:
+    return CoinLot(
+        id=None,
+        session_id=session_id,
+        mxiqi_id=mxiqi_id,
+        lot_no=None,
+        title="拍品",
+        start_price=0.0,
+        current_price=0.0,
+        image_urls=[],
+        tags={},
+        match_score=0.0,
+        is_recommended=False,
+        fetched_at=repository.utcnow(),
+        bid_num=bid_num,
+        bid_user_num=bid_user_num,
+        bid_source=source,
+        image_keys=list(keys),
+    )
+
+
+def test_coin_lot_bids_survive_detail_upsert_and_coverage_buckets(temp_db):
+    session_id = _seed_running_session("900001")
+    repository.upsert_coin_lot(
+        _bid_lot(
+            session_id,
+            "900001:7001",
+            bid_num=7,
+            bid_user_num=4,
+            source="preview",
+            keys=("V1/AUC/a", "V1/AUC/b"),
+        )
+    )
+    # 详情重抓（没有热度键）不能把已有值擦成 NULL
+    repository.upsert_coin_lot(_bid_lot(session_id, "900001:7001"))
+    lot = repository.list_coin_lots_for_matching()[0]
+    assert (lot.bid_num, lot.bid_user_num, lot.bid_source) == (7, 4, "preview")
+
+    # home.filter 按拍品 id 后缀回填；NULL 不覆盖已有值
+    repository.update_coin_lot_bids([("7001", None, 6)])
+    lot = repository.list_coin_lots_for_matching()[0]
+    assert (lot.bid_num, lot.bid_user_num, lot.bid_source) == (7, 6, "home_filter")
+
+    coverage = {row["source"]: row for row in repository.coin_lot_bid_coverage()}
+    assert coverage["home_filter"]["lots_with_bid"] == 1
+    assert coverage["home_filter"]["avg_bid_num"] == 7.0  # NULL 不参与均值
+
+
+def test_coin_lot_images_duplicate_groups(temp_db):
+    session_id = _seed_running_session("900002")
+    repository.upsert_coin_lot(_bid_lot(session_id, "900002:1", keys=("V1/AUC/same", "V1/AUC/x")))
+    repository.upsert_coin_lot(_bid_lot(session_id, "900002:2", keys=("V1/AUC/same",)))
+    repository.upsert_coin_lot(_bid_lot(session_id, "900002:3", keys=("V1/AUC/other",)))
+
+    groups = repository.coin_lot_image_duplicates()
+    assert [(row["oss_key"], row["lot_count"]) for row in groups] == [("V1/AUC/same", 2)]
+    assert repository.coin_lot_image_duplicate_lot_count() == 2
+
+    # 重抓时图集按当前结果重建
+    repository.upsert_coin_lot(_bid_lot(session_id, "900002:2", keys=("V1/AUC/new",)))
+    assert repository.coin_lot_image_duplicates() == []
+
+
+def test_v18_backfills_oss_keys_from_image_urls(temp_db):
+    """老库只有 image_urls：迁移要能把 URL 转成 OSS key（去 base、去 query）。"""
+    session_id = _seed_running_session("900003")
+    repository.upsert_coin_lot(
+        replace(
+            _bid_lot(session_id, "900003:1"),
+            image_urls=["https://oss.mxiqi.com/V1/AUC/old?w=1"],
+        )
+    )
+    with db.connect() as conn, conn:
+        v18.backfill_coin_lot_images(conn)
+
+    with db.connect() as conn:
+        keys = [row["oss_key"] for row in conn.execute("SELECT oss_key FROM coin_lot_images")]
+    assert keys == ["V1/AUC/old"]

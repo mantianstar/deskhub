@@ -190,6 +190,8 @@ class CoinsConfig:
     )
     # 收藏画像与推荐优先级（spec §14.17）
     collection: CoinCollectionConfig = field(default_factory=CoinCollectionConfig)
+    # 终态回采窗口：回看最近 N 天已结束的专场（0 = 不回采，见 plan/coins.md §18.18）
+    finalize_days: int = 1
 
 
 def _default_coins_config() -> CoinsConfig:
@@ -207,6 +209,7 @@ def _default_coins_config() -> CoinsConfig:
         price=CoinPriceConfig(status="成交", window_days=180, min_samples=3, statistic="median",
                               query_interval_seconds=0, max_queries_per_run=5),
         profile_llm=CoinProfileLLMConfig(prompt_version="coins-v1", batch_size=2, concurrency=1),
+        finalize_days=1,
     )
 
 
@@ -452,6 +455,7 @@ def _parse_coins(raw: dict[str, Any]) -> CoinsConfig:
         orders_xlsx=_resolve_path(_req_str(section, "orders_xlsx", where)),
         request_interval_seconds=_req_int(section, "request_interval_seconds", where, minimum=0),
         max_sessions_per_run=_req_int(section, "max_sessions_per_run", where),
+        finalize_days=_req_int(section, "finalize_days", where, minimum=0),
         match_threshold=_require_float(section, "match_threshold", where),
         gapi_base_url=_opt_str(section, "gapi_base_url", "https://gapi.mxiqi.com", where),
         price=CoinPriceConfig(

@@ -63,12 +63,18 @@
 
 {% macro lot_card(lot, reason=None, index=1) %}
 <section class="coin-lot" id="coin-lot-{{ lot.lot_id }}" data-search="{{ lot.lot_no or '' }} {{ lot.title or '' }}">
-  <h3 class="coin-lot-title">{{ lot.lot_no or ('Lot.' ~ index) }} {{ lot.title }}</h3>
+  <h3 class="coin-lot-title">{{ lot.lot_no or ('Lot.' ~ index) }} {{ lot.title }}{% if lot.outcome == 'sold' %}<span class="coin-lot-outcome coin-lot-outcome-sold">✓ 已成交</span>{% elif lot.outcome == 'unsold' %}<span class="coin-lot-outcome coin-lot-outcome-unsold">✕ 流拍</span>{% endif %}</h3>
   {% if reason %}<p class="coin-lot-reason">推荐原因：{{ reason }}</p>{% endif %}
 
   <div class="coin-lot-prices">
     <span>起价：<b>{{ lot.start_price | price }}</b> 元</span>
+    {% if lot.outcome == 'sold' %}
+    <span>中标价：<b>{{ lot.final_price | price }}</b> 元</span>
+    {% elif lot.outcome == 'unsold' %}
+    <span>无人出价</span>
+    {% else %}
     <span>当前价：<b>{{ lot.current_price | price }}</b> 元</span>
+    {% endif %}
   </div>
 
   <div class="coin-lot-ref">

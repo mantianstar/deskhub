@@ -68,6 +68,7 @@ Numista 类型页（估值 / 稀有度）────────┘            
 | `app/coins/recommend.py` | `build_recommendations`、`year_labels`、`match_lots`、`load_recommendations` |
 | `app/coins/search.py` | `search_lots`（全局拍品搜索：FTS 候选 + 推荐标签 + 排序） |
 | `app/coins/matcher.py` | `match_lot`、`rematch_all` |
+| `app/coins/coinmap.py` | `match_lot`、`remap_all`、`load_catalogue`（拍品→Numista 币种映射） |
 | `app/coins/profile.py` | `read_orders`、`parse_extraction`、`rebuild_profile` |
 | `app/coins/grades.py` | `normalize_country/year/denomination`、`build_combos` |
 | `app/coins/gapi.py` | `MxiqiGapi`、`card_from_auction`、`detail_from_payload` |

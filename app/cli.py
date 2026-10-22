@@ -18,7 +18,7 @@ from datetime import date
 from app import config, db, fetcher, llm, logging_setup, models, pipeline, repository, scorer
 from app.coins import numista as coins_numista
 from app.coins import numista_web as coins_numista_web
-from app.coins import explore as coins_explore
+from app.coins import coinmap as coins_coinmap
 from app.coins import pipeline as coins_pipeline
 from app.coins import profile as coins_profile
 from app.coins import translate_llm as coins_translate_llm
@@ -270,7 +270,11 @@ def _print_coins_result(result: coins_pipeline.CoinsRunResult) -> None:
         f"拍品：入库 {result.lots_stored}，命中推荐 {result.lots_recommended}\n"
         f"查价：成功 {result.lots_priced}，当日跳过 {result.lots_pricing_skipped}，"
         f"本轮上限推迟 {result.lots_pricing_deferred}，"
-        f"关键词太泛不报价 {result.lots_pricing_too_generic}，错误 {result.errors}"
+        f"关键词太泛不报价 {result.lots_pricing_too_generic}，错误 {result.errors}\n"
+        f"终态：回采 {result.sessions_finalized} 场，成交 {result.lots_sold}，"
+        f"未成交 {result.lots_unsold}\n"
+        f"成交库：session_final {result.sales_session_final} 条，"
+        f"sold_search {result.sales_search} 条"
     )
 
 
@@ -296,6 +300,56 @@ def cmd_coins_pipeline(args: argparse.Namespace) -> int:
     result = asyncio.run(coins_pipeline.run(cfg))
     _print_coins_result(result)
     return 0 if result.status == CoinFetchStatus.OK else 1
+
+
+def cmd_coins_quality(_: argparse.Namespace) -> int:
+    """打印热度覆盖率（按来源）与同 OSS key 的重复现状，用于定阈值。"""
+    _bootstrap()
+    coverage = repository.coin_lot_bid_coverage()
+    rows: list[tuple[str, ...]] = []
+    for row in coverage:
+        lots = int(row["lots"] or 0)
+        with_bid = int(row["lots_with_bid"] or 0)
+        avg = row["avg_bid_num"]
+        rows.append(
+            (
+                str(row["source"]),
+                str(lots),
+                str(with_bid),
+                f"{with_bid / lots:.1%}" if lots else "-",
+                "-" if avg is None else f"{avg:.2f}",
+                str(int(row["lots_with_user"] or 0)),
+            )
+        )
+    if rows:
+        _print_table(("热度来源", "拍品数", "有bid_num", "非空率", "bid均值", "有bid_user_num"), rows)
+    else:
+        print("没有拍品")
+
+    dupes = repository.coin_lot_image_duplicates(limit=10)
+    print()
+    if dupes:
+        _print_table(
+            ("oss_key", "拍品数"),
+            [(str(row["oss_key"]), str(row["lot_count"])) for row in dupes],
+        )
+    else:
+        print("没有同图重复的 OSS key")
+    print(f"\n同图重复涉及拍品 {repository.coin_lot_image_duplicate_lot_count()} 条")
+    return 0
+
+
+def cmd_coins_map(_: argparse.Namespace) -> int:
+    """重跑拍品 → Numista 币种映射，打印覆盖率与匹配方式分布。"""
+    _bootstrap()
+    result = coins_coinmap.remap_all()
+    rows = [(method, str(count)) for method, count in sorted(result.by_method.items())]
+    _print_table(("match_method", "拍品数"), rows)
+    print(
+        f"\n已映射系列 {result.lots_series_mapped}/{result.lots_total}，"
+        f"已映射单版 {result.lots_issue_mapped}/{result.lots_total}"
+    )
+    return 0
 
 
 # ---------------------------------------------------------------- Numista 参考库
@@ -565,6 +619,14 @@ def _build_parser() -> argparse.ArgumentParser:
     coins_pipeline = subparsers.add_parser("coins-pipeline", help="采集 → 匹配 → 定价（一整轮）")
     coins_pipeline.add_argument("--limit", type=int, default=None, help="本轮最多抓几个专场")
     coins_pipeline.set_defaults(func=cmd_coins_pipeline)
+
+    coins_map = subparsers.add_parser("coins-map", help="重跑拍品 → Numista 币种映射并打印覆盖率")
+    coins_map.set_defaults(func=cmd_coins_map)
+
+    coins_quality = subparsers.add_parser(
+        "coins-quality", help="打印拍品热度覆盖率（按来源）与同图重复现状"
+    )
+    coins_quality.set_defaults(func=cmd_coins_quality)
 
     coins_series = subparsers.add_parser(
         "coins-series", help="按国家/年份/面值从 Numista 查系列并落库（中文输入自动转英文）"

@@ -195,13 +195,14 @@ async def test_daily_coins_swallows_errors(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_daily_coins_skips_when_both_switches_off(tmp_path):
-    """采集与查价都关掉时，铜币那一轮直接跳过，不碰网关（plan §19）。"""
+async def test_daily_coins_skips_when_all_switches_off(tmp_path):
+    """采集、回采、查价都关掉时，铜币那一轮直接跳过，不碰网关（plan §19）。"""
     from dataclasses import replace
 
     cfg = _config(tmp_path)
     db.init_db(cfg.app.db_path)
     switches.toggle(switches.COINS_COLLECT)
+    switches.toggle(switches.COINS_FINALIZE)
     switches.toggle(switches.COINS_PRICE)
 
     enabled = replace(cfg, coins=replace(cfg.coins, enabled=True))

@@ -54,8 +54,9 @@ async def daily_pipeline(config: Config) -> None:
 async def daily_coins(config: Config) -> CoinsRunResult | None:
     """每天 08:00 的铜币任务；**与 `daily_pipeline` 互不传播失败**（spec §14.9）。
 
-    把「采集 / 查价」两个开关的组合映射到 `coins_pipeline.run` 的三个入口，
-    两个都开时走一整轮，省掉把匹配重算两遍。
+    「采集 / 回采 / 查价」三个开关各自决定跑不跑，顺序固定：
+    先采新场（否则回采没有新数据），再回采终态，最后查价。
+    逐段调用是为了让开关真正生效（合成一整轮会绕过回采开关）。
 
     就地兜住异常：网关一时不可用 / 限速被挡是**正常情况**，
     不该把一坨堆栈丢给 APScheduler —— 只记一条能看懂的错误，明天再试。
@@ -64,14 +65,28 @@ async def daily_coins(config: Config) -> CoinsRunResult | None:
         return None
 
     collect = switches.is_enabled(switches.COINS_COLLECT)
+    finalize = switches.is_enabled(switches.COINS_FINALIZE)
     price = switches.is_enabled(switches.COINS_PRICE)
-    if not (collect or price):
-        logger.info("铜币采集与查价都已停用，跳过 %s", DAILY_COINS_JOB_ID)
+    if not (collect or finalize or price):
+        logger.info("铜币采集 / 回采 / 查价都已停用，跳过 %s", DAILY_COINS_JOB_ID)
         return None
 
-    logger.info("定时任务触发：%s（采集=%s 查价=%s）", DAILY_COINS_JOB_ID, collect, price)
+    logger.info(
+        "定时任务触发：%s（采集=%s 回采=%s 查价=%s）",
+        DAILY_COINS_JOB_ID,
+        collect,
+        finalize,
+        price,
+    )
     try:
-        return await coins_pipeline.run(config, collect_only=not price, price_only=not collect)
+        result: CoinsRunResult | None = None
+        if collect:
+            result = await coins_pipeline.run(config, collect_only=True)
+        if finalize:
+            result = await coins_pipeline.run(config, finalize_only=True)
+        if price:
+            result = await coins_pipeline.run(config, price_only=True)
+        return result
     except Exception as exc:  # noqa: BLE001 - 任何失败都只记日志，不影响知识日报
         logger.warning("铜币定时任务失败，等下一次触发重试：%s", exc)
         return None

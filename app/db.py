@@ -29,6 +29,7 @@ FORWARD_ADDITIVE_UPGRADES = {
     ("8", "9"),
     ("9", "10"),
     ("11", "12"),
+    ("14", "15"),
 }
 
 _db_path: Path | None = None
@@ -98,6 +99,9 @@ def _check_schema_version(conn: sqlite3.Connection) -> None:
     if columns is not None:
         with conn:
             applied = migrations.apply_columns(conn, columns)
+            backfill = migrations.DATA_MIGRATIONS.get((current, models.SCHEMA_VERSION))
+            if backfill is not None:
+                backfill(conn)
             conn.execute(
                 "UPDATE schema_meta SET value = ? WHERE key = 'schema_version'",
                 (models.SCHEMA_VERSION,),

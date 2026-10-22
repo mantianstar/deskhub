@@ -232,7 +232,7 @@ CREATE INDEX IF NOT EXISTS idx_coin_runs ON coin_fetch_runs(kind, started_at DES
 |---|---|---|
 | `daily_coins` | 每天 `08:00` Asia/Shanghai | 与 `daily_pipeline` 同批但**独立任务**；`coalesce=True`、`misfire_grace_time=3600`、`max_instances=1` |
 
-- 采集与查价**各有一个开关**（`/control`，见 [core.md](./core.md) §19）；两个都关时这一轮直接跳过。
+- 采集、回采、查价**各有一个开关**（`/control`，见 [core.md](./core.md) §19）；都关时这一轮直接跳过。
 - 两个 `daily_*` 任务**互不传播失败**（spec/coins.md §14.9）：铜币采集挂掉不影响知识日报，反之亦然。
 - **不做启动补拉**（重启不抓取 / 不洗牌），见 [core.md](./core.md) §12 与 §19。
 
@@ -750,3 +750,118 @@ CREATE TABLE IF NOT EXISTS coin_collection_series_members (
 | 候选池 | 忽略后列表隐藏且重扫不复活；材质 / 尺寸容差过滤；采纳后信息页与采集管理页可见 |
 | 映射表 | 收藏系列 CRUD、成员增删 |
 | 页面 | 新建 → 映射 → 两个页面 200 且渲染名称/年份；推荐表按系列 / 推荐原因 / 是否命中筛选；候选默认取系列执政者、可切「全部」；空库空态 200 |
+
+## 18.18 拍场数据：站点字段实测与缺口（对应 spec/coins.md §14.18）
+
+**实测条件**（2026-10-21）：已结束专场 330227 / 在拍 331783 / 预告 331345。
+
+| 字段 | 归属 | 实测结果 |
+|---|---|---|
+| `status` | item | 1=在拍、2=成交、3=未成交；**流拍/未售出可判**（319/382 为 3） |
+| `price` / `price_start` | item | 成交价（或当前价）/ 起拍价，单位分；成交的 63 条全部有价 |
+| `won_user_id` | item | 成交时才有值（63/382） |
+| `end_time` | item | 已结束专场的 382 条全等于专场截拍时刻；在拍的限时专场则逐件不同（每件相隔几十秒）。**不能假设它是逐件落槌时间**，要按场次核对 |
+| `stat` | item | 三种场次的 `auction.get` 里全为 null |
+| `bid_num` / `bid_user_num` / `bid_users` | item（`ListAuction` / `home.filter`） | 实时专场 5/5 有值；成交搜索 21/21 有值；**`auction.get` 的 item 没有这些键**；限时专场预览为 null |
+| `attrs` | item | 极稀疏（1/382），且是「品相=实物拍摄，品相以图为准」这类文案 |
+| `attrs_aggs` | item（`ListAuction` / `home.filter`） | `ListAuction` 预览里是「评级公司 / 评级分数」；`home.filter` 成交条目 12/21 带「发行年份 / 国家地区」——**国家年份确实有，但在成交条目上更稳定** |
+| `home.filter` 条目 | — | 比 `get` 的 item 更全：`bid_num` / `bid_user_num` / `bid_users` 21/21，`won_user_info` 含匿名昵称与 `nickname_real`，`org_info` 带店铺，`price_start` 只 2/21 有值 |
+| `ListAuction` 翻页 | — | `page=2` 返回空、`pageSize=50`：**不可翻页**，单次最多 50 场 |
+| `org_info`（店铺） | auction / item | `auction.get` 最全（14 键）：`num_fans` / `num_items` / `deposit` / `level_income` / `status_verify`；`ListAuction` 卡 9 键（无粉丝数）；`home.filter` 7 键 |
+| 店铺历史总成交 | — | **站点没有**：`search_params` 传 `org_id` / `owner_id` / `org` 均被忽略；只能靠自采场次累加，口径是「我们见过的成交」 |
+| `commission_rate` / `commission_min` | auction | 有值（0.03 / 0），佣金可用 |
+| `express_desc` / `express_day` | auction | 有值；`express_desc` 富文本**原样存**，基础运费 / 满额包邮门槛 / 寄存从文本抽基础值（v17） |
+| `bids` | data（带 `item_id` 时） | 全量出价明细：`uid / name / bid_id / price / is_proxy / status / time`；实测 79 次出价 = 79 条，无分页；未成交时为 `null`；`time` 无年份、北京时间、分钟级 |
+| `bids.status` | 出价条目 | 2=当前最高（中标那条）、-1=已被超越；与 `item.status`（1/2/3）不是同一套语义 |
+| `auction_current_item` | data | 带 `item_id` 时返回该拍品的 `price / price_start / bid_num / status`，可交叉校验 `bids` 是否完整 |
+| 不带 `item_id` | data | 只返回「当前在拍那件」的 `bids`；已结束场次顶层没有这个键 |
+| `auction_items` | auction 卡 | 每张卡只嵌 **5 条**拍品预览，不是全量，不能替代 `auction.get` |
+
+### 18.18.1 缺口台账
+
+**P0（越早越好，覆盖写正在丢数据）**
+
+| 项 | 内容 | 状态 |
+|---|---|---|
+| 1. 出价明细（暂缓） | `coin_lot_bids(lot_id, bid_id UNIQUE, uid, price, is_proxy, bid_status, bid_at)` 方案不变。只能逐件请求（当日已截拍 2415 件 = 2415 次），换回出价次数/人数、精确落槌时刻与曲线；数据可回溯，日后只对命中的拍品取 | 2026-10-21 暂缓 |
+| 2. 拍品终态 | `coin_lots.outcome / final_price / winner_uid / closed_at`；每场 1 次 `auction.get` 拿全 | **2026-10-21 已落地**（见 18.18.2） |
+| 3. 成交明细表 | `coin_sales(item_id UNIQUE, title, price, sold_at, session_id, shop_id, keyword, source)`；**用 `item_id` 关联，不靠标题**（两处返回同一套 item 对象，重复命中天然去重）；`source` 记 `session_final`（高置信）/ `sold_search`（中置信） | **2026-10-21 已落地**（见 18.18.3） |
+| 4. 拍品→币种映射 | `coin_lots.series_numista_id` / `issue_numista_id` / 匹配方式与置信度。`attrs` 不能当主路径（382 条只 1 条带）；顺序：`attrs_aggs` 的「发行年份 / 国家地区」→ 标题抽取「国家 + 年份 + 面值」→ `grades.normalize_*` 统一 → `coin_series` 按 issuer + 年份区间 + denomination 匹配，唯一命中才落库 | **2026-10-22 已落地**（见 18.18.5） |
+
+**P1（显著提升解释力）**
+
+| 项 | 内容 | 状态 |
+|---|---|---|
+| 5. 品相与评级（缩窄） | 只解析评级盒（`PCGS/NGC + 分数`、是否评级）；裸币留空，按「是否评级」分桶，**不把「美品/极美」当品相**（卖家文案） | 待做 |
+| 6. 热度字段（部分可批量取） | 成交条目的 `bid_num` / `bid_user_num` / `bid_users` 在 `home.filter` 批量可得；只覆盖成交，流拍与在拍没有；关注数各处均无 | **2026-10-22 已落地**（见 18.18.6） |
+| 7. 复现识别 | 同图比对用 **OSS key**（`V1/AUC/...`，去 base、去 query）；重挂重拍会漏，故「图 key ∪ 归一化标题 + 店铺 + 起拍价」两路 | **图 key 已落地**（见 18.18.6；标题 / 店铺 / 起拍价一路未做） |
+| 8. 费率与到手价 | **可直取**：`commission_flag / commission_rate / commission_min`、`express_desc`（富文本原样存）、`express_day`；保险费忽略。`coin_sessions` 另存 `express_fee`（首个「运费 ¥N」）/ `express_free_amount`（满额包邮）/ `is_storage`（「寄存」）；`pricing.landed_price` = 成交价 + max(费率×价, 最低佣金) + 运费（达门槛免） | 已做 |
+
+**P2（成本高，后置）**：汇率快照不做（只做国内站）；图片分析不做（只保留评级盒解析）。
+
+### 18.18.2 P0-2 实现（schema 13 → 14）
+
+- 表：`coin_lots` 增 `outcome`（`sold` / `unsold`）、`final_price`、`winner_uid`、`closed_at`；
+  迁移登记在 `app/migrations/v14.py`（`COLUMNS` → `COLUMN_MIGRATIONS[(13, 14)]`）。
+- 解析：`gapi.lot_from_item` 把 `item.status` 2/3 映射为终态，只有 `sold` 才取 `price` 作成交价；
+  `closed_at` 取 `item.end_time` 并转 UTC（已是「场次截拍时刻」口径，见 spec §14.18.8）。
+- 触发：`pipeline._finalize` 在每轮采集后跑，取 `auction_at ∈ [now - finalize_days, now - 6h]`
+  且仍有 `outcome IS NULL` 拍品的专场；`fetched_at >= 本轮开始` 的场次跳过（本轮刚采过，数据是新的）；
+  仍在拍的拍品（`status=1`）不落终态，下一轮再取。
+- 写库：`repository.upsert_coin_lot` 对四个终态列用 `COALESCE(excluded.x, coin_lots.x)`，
+  在拍场次重抓不会擦掉已回采结果；`match_score` / `is_recommended` 仍只在首插写。
+- 配置：`coins.finalize_days`（默认 1，0 = 不回采）。
+- 请求量：每场 1 次 `auction.get`；2026-10-21 首次回采实测窗口内 79 场。
+
+### 18.18.3 P0-3 实现（schema 14 → 15）
+
+- 表：`coin_sales(id, item_id UNIQUE, title, price, sold_at, session_id, shop_id, keyword, source, fetched_at)`，
+  纯新增表，登记进 `db.FORWARD_ADDITIVE_UPGRADES`（`("14", "15")`）。
+- 高置信来源：每轮 `_finalize` 之后调用 `repository.list_coin_sold_lots()`（`outcome='sold'` 的拍品，
+  `item_id` 取 `mxiqi_id` 冒号后段，`shop_id` 由场次带出）→ `upsert_coin_sales`，**不额外请求站点**。
+- 中置信来源：`_price_recommended` 查到价后，用 `pricing.sales_from_ref(ref)` 解析取证 raw
+  （raw 现在含 `item_id` / `sold_at`）；缺 `item_id` 的旧证据直接跳过。
+- 冲突规则：`ON CONFLICT(item_id) DO UPDATE ... WHERE 已有行不是 session_final 或新行是 session_final`，
+  即中置信不覆盖高置信；`sold_at` / `session_id` / `shop_id` / `keyword` 用 COALESCE 补空。
+- 观测：`repository.count_coin_sales_by_source()`；CLI 与管道结束日志输出两档条数。
+
+### 18.18.4 建议的落地顺序
+
+1. P0-2（终态）与 P0-3（成交明细）→ 已落地；成交率、流拍与可回测价格基准可用。
+2. P0-1（`bids`）暂缓：数据可回溯，等真要看竞争强度再补。
+3. P0-4（币种映射）：**已落地**（§18.18.5），价格模型与「按币种聚合」的前提已具备。
+4. P1-5（评级盒）：价格模型的品相变量。
+5. 以上完成后再做 A 组模型与 F 组自动化输出。
+
+### 18.18.5 P0-4 实现（schema 15 → 16）
+
+- 表：`coin_lots` 增 `series_numista_id` / `issue_numista_id` / `match_method` / `confidence` /
+  `match_candidates`（JSON 候选集）；迁移登记在 `app/migrations/v16.py`。
+- 匹配（`app/coins/coinmap.py`）：国家、年份先取 `tags` 的「国家地区 / 发行年份」，
+  缺失再取标题里的 4 位公历年；两边都过 `grades.normalize_country` / `normalize_denomination`。
+  面值**必须**命中标题（数字边界见 `_has_value`，`1分` 不咬 `25分`），
+  否则只靠国家 + 年份会把「1 弗洛林」「5 先令」甚至纸币记到便士系列上。
+- 唯一命中才写 `issue_numista_id`；同年多版别时 issue 留空、候选写进 `match_candidates`；
+  多系列时 series / issue 都留空，`match_method` 记 `<attrs|title>_multi`，`confidence = 1/候选数`。
+- 置信度：属性路径 0.9、标题路径 0.7，单版唯一再 +0.05。
+- 触发：管道每轮匹配后跑 `coinmap.remap_all()`（只写有变化的行，不动 `match_score` / 页面）；
+  `python -m app.cli coins-map` 可手动重跑并打印「已映射 / 总数」与 `match_method` 分布。
+- 2026-10-22 首次：系列 57/41988、单版 14/41988；覆盖低是因为币库只有 38 个系列，
+  币库扩量后重跑即可。
+
+### 18.18.6 P1-6 / P1-7 实现（schema 17 → 18）
+
+- 表：`coin_lots` 增 `bid_num` / `bid_user_num` / `bid_source`（`preview` | `home_filter`，
+  NULL = 没有来源给过值）；新表 `coin_lot_images(lot_id, oss_key)`，`UNIQUE(lot_id, oss_key)`。
+  迁移登记在 `app/migrations/v18.py`；老库从 `coin_lots.image_urls` 回填 OSS key
+  （`DATA_MIGRATIONS[("17","18")]`，去 base、去 query）。
+- 来源与优先级：`ListAuction` 卡内嵌的 5 条预览（`SessionCard.preview_lots`）先写，
+  `auction.get` 详情随后覆盖正式字段；热度列一律 `COALESCE(excluded, 现有值)`，详情没有这两个键，
+  不会把预览值擦成 NULL。`home.filter` 的成交条目在 `_price_recommended` 里按 `item_id`
+  （`mxiqi_id` 冒号后的段）后缀回填，来源记 `home_filter`。
+- 口径：缺键就是 NULL，**不写 0**；`coin_lot_bid_coverage` 的 `AVG(bid_num)` 天然忽略 NULL。
+- 观测：`python -m app.cli coins-quality` 打印按来源的拍品数 / 非空率 / 均值 / `bid_user_num`，
+  以及同 OSS key 的分组 top10 与「至少一图重复」的拍品数。
+- 2026-10-22 首跑（补采 2 场 + 回填 41844 条有图拍品）：`preview` 10/10 非空、均值 4.30；
+  同图重复涉及 8687/41988 条（20.7%），最大单 key 覆盖 714 条（同一描述图跨场复用）——
+  阈值暂不写死，需再配合店铺 / 起拍价或只取首图收窄。

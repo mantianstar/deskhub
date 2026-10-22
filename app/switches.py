@@ -18,6 +18,7 @@ from app import repository
 KNOWLEDGE_FETCH = "knowledge_fetch"
 KNOWLEDGE_SCORE = "knowledge_score"
 COINS_COLLECT = "coins_collect"
+COINS_FINALIZE = "coins_finalize"
 COINS_PRICE = "coins_price"
 
 
@@ -45,6 +46,12 @@ FEATURES: tuple[Feature, ...] = (
         "调 LLM 给未打分的条目打分；**唯一花 token 的功能**",
     ),
     Feature(COINS_COLLECT, "铜币拍卖", "采集", "拉麦稀奇专场与拍品（走 gapi 网关，不花 token）"),
+    Feature(
+        COINS_FINALIZE,
+        "铜币拍卖",
+        "回采",
+        "截拍后回采拍品终态（成交价 / 流拍 / 中拍人）；每场 1 次详情，不花 token",
+    ),
     Feature(COINS_PRICE, "铜币拍卖", "查价", "查站内历史成交；每条间隔 15 秒，四件里最耗时"),
 )
 

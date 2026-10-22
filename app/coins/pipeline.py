@@ -18,9 +18,10 @@ import asyncio
 import logging
 import random
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 
 from app import repository
-from app.coins import matcher, pricing
+from app.coins import coinmap, matcher, pricing
 from app.coins import recommend as coins_recommend
 from app.coins.gapi import KIND_LIVE, GapiError, MxiqiGapi
 from app.config import Config
@@ -30,7 +31,11 @@ logger = logging.getLogger(__name__)
 
 RUN_KIND_SESSIONS = "sessions"
 RUN_KIND_DETAIL = "session_detail"
+RUN_KIND_FINALIZE = "session_finalize"
 RUN_KIND_PRICE = "price_search"
+
+# 终态回采的起抓缓冲：实时专场存的是开拍时间，等整场结束再取（plan/coins.md §18.18）
+FINALIZE_GRACE_HOURS = 6
 
 # 采集日志里的 target：采集走 gapi，写清用的哪个接口
 TARGET_LIST = "gapi:" + "miniprogram.auction.ListAuction"
@@ -52,6 +57,13 @@ class CoinsRunResult:
     lots_pricing_deferred: int = 0
     # 命中里没有「面值/品类」这类具体词 → 关键词太泛，**主动不报价**（spec §14.6 红线）
     lots_pricing_too_generic: int = 0
+    # 终态回采（plan/coins.md §18.18）：回采场次数、成交条数、未成交条数
+    sessions_finalized: int = 0
+    lots_sold: int = 0
+    lots_unsold: int = 0
+    # 成交库总量（按来源），用于核对 session_final 与拍品终态是否对齐
+    sales_session_final: int = 0
+    sales_search: int = 0
 
 
 def _record(
@@ -85,12 +97,14 @@ async def run(
     gapi: MxiqiGapi | None = None,
     collect_only: bool = False,
     price_only: bool = False,
+    finalize_only: bool = False,
 ) -> CoinsRunResult:
     """跑一轮铜币管道。
 
-    - 默认：采集 → 匹配 → 定价
-    - `collect_only=True`：只采集 + 匹配（不查价）
-    - `price_only=True`：只对已入库的推荐拍品查价（不采集）
+    - 默认：采集 → 回采终态 → 匹配 → 定价
+    - `collect_only=True`：只采集 + 匹配（不回采、不查价）
+    - `finalize_only=True`：只回采已结束专场的终态并同步成交库（不采集、不查价）
+    - `price_only=True`：只对已入库的推荐拍品查价（不采集、不回采）
     - `gapi`：注入替身（测试用）；不传就自己开一个（整个模块唯一的站点客户端）
     """
     started = repository.utcnow()
@@ -102,8 +116,44 @@ async def run(
     if owned:
         await api.__aenter__()
     try:
+        sessions_finalized = lots_sold = lots_unsold = 0
+        if finalize_only:
+            # 单独回采（运行控制的「回采」按钮 / 定时任务独立开关）
+            sessions_finalized, lots_sold, lots_unsold = await _finalize(config, api, started)
+            repository.upsert_coin_sales(repository.list_coin_sold_lots())
+            sales = repository.count_coin_sales_by_source()
+            logger.info(
+                "终态回采完成：%d 场（成交 %d / 未成交 %d）；成交库 session_final %d 条",
+                sessions_finalized,
+                lots_sold,
+                lots_unsold,
+                sales.get("session_final", 0),
+            )
+            return CoinsRunResult(
+                status=CoinFetchStatus.OK,
+                sessions_seen=0,
+                sessions_stored=0,
+                lots_stored=0,
+                lots_recommended=0,
+                lots_priced=0,
+                lots_pricing_skipped=0,
+                errors=0,
+                sessions_finalized=sessions_finalized,
+                lots_sold=lots_sold,
+                lots_unsold=lots_unsold,
+                sales_session_final=sales.get("session_final", 0),
+                sales_search=sales.get("sold_search", 0),
+            )
+
         if not price_only:
             sessions_seen, sessions_stored, lots_stored = await _collect(config, api, started)
+            if not collect_only:
+                # 终态回采：已结束的专场每场再取 1 次详情（plan/coins.md §18.18）
+                sessions_finalized, lots_sold, lots_unsold = await _finalize(config, api, started)
+                # 成交库（高置信来源）：直接消费刚回采到的终态，不额外请求站点
+                stored = repository.upsert_coin_sales(repository.list_coin_sold_lots())
+                if stored:
+                    logger.info("成交库：同步 %d 条终态成交（source=session_final）", stored)
 
         # 收藏画像优先：配了收藏系列映射就按推荐优先级匹配；否则回退旧的标签匹配
         recommend_result = coins_recommend.rematch_all(config)
@@ -126,7 +176,18 @@ async def run(
                 match_result.threshold,
             )
 
+        # 币种映射（plan §18.18.5）：独立于 match_score，只写 series/issue/置信度
+        mapping = coinmap.remap_all()
+        logger.info(
+            "拍品币种映射：系列 %d/%d，单版 %d；match_method %s",
+            mapping.lots_series_mapped,
+            mapping.lots_total,
+            mapping.lots_issue_mapped,
+            "、".join(f"{key} {count}" for key, count in sorted(mapping.by_method.items())) or "无",
+        )
+
         if collect_only:
+            sales = repository.count_coin_sales_by_source()
             return CoinsRunResult(
                 CoinFetchStatus.OK,
                 sessions_seen,
@@ -136,6 +197,11 @@ async def run(
                 0,
                 0,
                 errors,
+                sessions_finalized=sessions_finalized,
+                lots_sold=lots_sold,
+                lots_unsold=lots_unsold,
+                sales_session_final=sales.get("session_final", 0),
+                sales_search=sales.get("sold_search", 0),
             )
 
         priced, skipped, deferred, generic, price_errors = await _price_recommended(
@@ -146,9 +212,11 @@ async def run(
         if owned:
             await api.__aexit__(None, None, None)
 
+    sales = repository.count_coin_sales_by_source()
     logger.info(
         "铜币管道结束：专场 %d（入库 %d）拍品 %d 条，推荐 %d 条，"
-        "已查价 %d 条，跳过 %d 条，推迟 %d 条，关键词太泛不报价 %d 条",
+        "已查价 %d 条，跳过 %d 条，推迟 %d 条，关键词太泛不报价 %d 条，"
+        "终态回采 %d 场（成交 %d / 未成交 %d）；成交库 session_final %d 条、sold_search %d 条",
         sessions_seen,
         sessions_stored,
         lots_stored,
@@ -157,6 +225,11 @@ async def run(
         skipped,
         deferred,
         generic,
+        sessions_finalized,
+        lots_sold,
+        lots_unsold,
+        sales.get("session_final", 0),
+        sales.get("sold_search", 0),
     )
     return CoinsRunResult(
         status=CoinFetchStatus.OK,
@@ -169,6 +242,11 @@ async def run(
         errors=errors,
         lots_pricing_deferred=deferred,
         lots_pricing_too_generic=generic,
+        sessions_finalized=sessions_finalized,
+        lots_sold=lots_sold,
+        lots_unsold=lots_unsold,
+        sales_session_final=sales.get("session_final", 0),
+        sales_search=sales.get("sold_search", 0),
     )
 
 
@@ -251,9 +329,40 @@ async def _collect(config: Config, api: MxiqiGapi, started: str) -> tuple[int, i
                 view_count=detail.card.view_count,
                 cover_urls=detail.card.cover_urls,
                 fetched_at=repository.utcnow(),
+                commission_rate=detail.commission_rate,
+                commission_min=detail.commission_min,
+                express_desc=detail.express_desc,
+                express_day=detail.express_day,
+                express_fee=detail.express_fee,
+                express_free_amount=detail.express_free_amount,
+                is_storage=detail.is_storage,
             )
         )
         sessions_stored += 1
+
+        # 列表卡预览带 bid_num / bid_user_num（详情没有），先写；
+        # 同一条拍品的正式字段随后由详情覆盖，热度用 COALESCE 不会被清空
+        for lot in card.preview_lots:
+            repository.upsert_coin_lot(
+                CoinLot(
+                    id=None,
+                    session_id=session_id,
+                    mxiqi_id=f"{detail.card.mxiqi_id}:{lot.mxiqi_id}",
+                    lot_no=lot.lot_no,
+                    title=lot.title,
+                    start_price=lot.start_price,
+                    current_price=lot.current_price,
+                    image_urls=lot.image_urls,
+                    tags=lot.tags,
+                    match_score=0.0,
+                    is_recommended=False,
+                    fetched_at=repository.utcnow(),
+                    bid_num=lot.bid_num,
+                    bid_user_num=lot.bid_user_num,
+                    bid_source=lot.bid_source,
+                    image_keys=lot.image_keys,
+                )
+            )
 
         new_lots = 0
         for lot in detail.lots:
@@ -272,6 +381,10 @@ async def _collect(config: Config, api: MxiqiGapi, started: str) -> tuple[int, i
                     match_score=0.0,
                     is_recommended=False,
                     fetched_at=repository.utcnow(),
+                    bid_num=lot.bid_num,
+                    bid_user_num=lot.bid_user_num,
+                    bid_source=lot.bid_source,
+                    image_keys=lot.image_keys,
                 )
             )
             new_lots += 1
@@ -283,6 +396,103 @@ async def _collect(config: Config, api: MxiqiGapi, started: str) -> tuple[int, i
     # 否则会盖住「查价失败」那条，页面/日志就看不到真实状态了。
     _record(RUN_KIND_SESSIONS, TARGET_LIST, started, CoinFetchStatus.OK, items_new=sessions_stored)
     return len(cards), sessions_stored, lots_stored
+
+
+async def _finalize(config: Config, api: MxiqiGapi, run_started: str) -> tuple[int, int, int]:
+    """回采已结束专场的拍品终态，返回（场次, 成交条数, 未成交条数）。
+
+    每场只发 1 次 `auction.get`（详情一次给全拍品，plan/coins.md §18.18）；
+    只对已有终态的拍品写库，仍在拍的（`status=1`）留空，下一轮再取。
+    本轮刚采过的场次（`fetched_at >= run_started`）跳过，不重复请求。
+    """
+    days = config.coins.finalize_days
+    if days <= 0:
+        return 0, 0, 0
+
+    now = datetime.now(timezone.utc)
+    since = (now - timedelta(days=days)).isoformat().replace("+00:00", "Z")
+    before = (now - timedelta(hours=FINALIZE_GRACE_HOURS)).isoformat().replace("+00:00", "Z")
+    pending = repository.list_coin_sessions_pending_finalize(
+        since, before, run_started, config.coins.max_sessions_per_run
+    )
+    if not pending:
+        return 0, 0, 0
+    logger.info("终态回采：待补 %d 个已结束专场（近 %d 天）", len(pending), days)
+
+    interval = config.coins.request_interval_seconds
+    sessions_done = sold = unsold = 0
+    for index, (session_id, mxiqi_id) in enumerate(pending):
+        if index > 0 and interval > 0:
+            delay = random.uniform(interval * 0.6, interval * 1.4)
+            logger.info("终态回采限速：等 %.1f 秒", delay)
+            await asyncio.sleep(delay)
+
+        detail_started = repository.utcnow()
+        try:
+            detail = await api.session_detail(mxiqi_id)
+        except GapiError as exc:
+            logger.warning("终态回采失败 %s：%s", mxiqi_id, exc)
+            _record(
+                RUN_KIND_FINALIZE,
+                mxiqi_id,
+                detail_started,
+                CoinFetchStatus.HTTP_ERROR,
+                error=str(exc),
+            )
+            continue
+
+        batch_sold = batch_unsold = 0
+        for lot in detail.lots:
+            if lot.outcome is None:
+                continue  # 还在拍，等整场结束下一轮再取
+            repository.upsert_coin_lot(
+                CoinLot(
+                    id=None,
+                    session_id=session_id,
+                    mxiqi_id=f"{mxiqi_id}:{lot.mxiqi_id}",
+                    lot_no=lot.lot_no,
+                    title=lot.title,
+                    start_price=lot.start_price,
+                    current_price=lot.current_price,
+                    image_urls=lot.image_urls,
+                    tags=lot.tags,
+                    match_score=0.0,
+                    is_recommended=False,
+                    fetched_at=repository.utcnow(),
+                    outcome=lot.outcome,
+                    final_price=lot.final_price,
+                    winner_uid=lot.winner_uid,
+                    closed_at=lot.closed_at,
+                    bid_num=lot.bid_num,
+                    bid_user_num=lot.bid_user_num,
+                    bid_source=lot.bid_source,
+                    image_keys=lot.image_keys,
+                )
+            )
+            if lot.outcome == "sold":
+                batch_sold += 1
+            else:
+                batch_unsold += 1
+
+        # 拍场状态以站内为准：已截拍的专场同步成 closed，列表页与拍品页才有「已截拍」
+        if detail.card.status is not None:
+            repository.set_coin_session_status(session_id, detail.card.status)
+
+        sessions_done += 1
+        sold += batch_sold
+        unsold += batch_unsold
+        _record(
+            RUN_KIND_FINALIZE,
+            mxiqi_id,
+            detail_started,
+            CoinFetchStatus.OK,
+            items_new=batch_sold + batch_unsold,
+        )
+
+    logger.info(
+        "终态回采完成：%d 场，成交 %d 条，未成交 %d 条", sessions_done, sold, unsold
+    )
+    return sessions_done, sold, unsold
 
 
 async def _price_recommended(
@@ -367,6 +577,10 @@ async def _price_recommended(
             continue
 
         repository.upsert_coin_price_ref(ref)
+        # 成交搜索命中的条目同时进成交库（中置信，不覆盖 session_final）
+        repository.upsert_coin_sales(pricing.sales_from_ref(ref))
+        # home.filter 带热度，按拍品 id 回填（NULL 不覆盖已有值）
+        repository.update_coin_lot_bids(pricing.bid_updates_from_ref(ref))
         _record(RUN_KIND_PRICE, keyword, started, CoinFetchStatus.OK, items_new=ref.sample_count)
         priced += 1
 

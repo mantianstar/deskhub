@@ -118,6 +118,7 @@ def test_resolve_query_translates_chinese_to_numista_english():
         ("1便士", "1 penny"),
         ("半便士", "half penny"),
         ("25分", "25 cent"),
+        ("1 仙", "1 cent"),
         ("1000円", "1000 yen"),
         ("英镑", "pound"),
         ("一便士", "1 penny"),

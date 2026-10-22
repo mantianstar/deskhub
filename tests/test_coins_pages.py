@@ -492,6 +492,44 @@ def test_session_page_renders_shop_header_and_recommended_lots(web):
     assert 'class="coin-lot-img coin-zoom"' in page.text  # 点击可放大
 
 
+def test_session_page_shows_closed_status_and_lot_outcome(web):
+    """已截拍专场：状态显示「已截拍」，拍品标已成交 / 流拍并替换价签。"""
+    session_id = _seed_empty_session("已截拍小店", followed=False)
+    repository.set_coin_session_status(session_id, "closed")
+    now = repository.utcnow()
+    for mxiqi_id, title, outcome, price in (
+        ("closed-lot-1", "成交的硬币", "sold", 88.0),
+        ("closed-lot-2", "流拍的硬币", "unsold", None),
+    ):
+        repository.upsert_coin_lot(
+            CoinLot(
+                id=None,
+                session_id=session_id,
+                mxiqi_id=mxiqi_id,
+                lot_no=None,
+                title=title,
+                start_price=15.0,
+                current_price=price,
+                image_urls=[],
+                tags={},
+                match_score=0.0,
+                is_recommended=False,
+                fetched_at=now,
+                outcome=outcome,
+                final_price=price,
+            )
+        )
+
+    page = web.get(f"/coins/session/{session_id}")
+
+    assert page.status_code == 200
+    assert "已截拍" in page.text
+    assert "✓ 已成交" in page.text
+    assert "✕ 流拍" in page.text
+    assert "中标价：" in page.text and "88" in page.text
+    assert "无人出价" in page.text
+
+
 def test_session_page_has_lot_search_and_hide_rec_toggle(web):
     session_id = _seed_session()
 
