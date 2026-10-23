@@ -10,6 +10,125 @@
 
 ---
 
+## v1.64 — 2026-10-23 运行控制增加「匹配」手动重跑
+
+**起因**：改完收藏画像后想立刻重算今日拍品推荐位，原先只能重跑整轮采集（会请求站点）或手敲 Python。
+
+**改了什么**：`/control` 新增第六个功能「铜币拍卖·匹配」（`coins_match`），走 `tasks.run_coins_match`：画像优先调用 `recommend.rematch_all`，没配画像回退 `matcher.rematch_all`；纯本地重算，不采集、不回采、不查价。任务匹配已包含在采集 / 查价里，所以它只支持手动运行——页面标「仅手动」、不渲染启停按钮、不参与 08:00 定时任务。
+
+**验证**：新增 `test_match_is_manual_only`；`pytest tests -q` 全绿。
+
+**受影响**：spec/core.md §9、spec/knowledge.md、spec/coins.md §14.8、plan/core.md §19、plan/coins.md §18.9、README、tasks/control.md。
+
+---
+
+## v1.63 — 2026-10-23 修复收藏画像漏匹配未录公历年的品相
+
+**起因**：收藏系列「南非 · 乔治五世 · 1 便士」品相台账里有 1927、1929，画像却一个都没标成已有年份。
+
+**改了什么**：`_owned_years` 的公历年关联在查表未命中时不再直接判空——年份字段本身就是公历年（4 位）时按年份键匹配；
+公历年表只覆盖部分单版（部分单版没录 `gregorian_year`）时不再整段丢失匹配。
+
+**验证**：新增回归用例 `test_build_profile_matches_year_when_gregorian_year_missing`；`pytest tests -q` 全绿。
+
+受影响：`app/coins/collection.py`、`tests/test_coins_collection.py`
+
+## v1.62 — 2026-10-23 品相台账新增组合改为局部刷新
+
+**起因**：新增一个组合后整页跳回，刚填的查询条件和新增表单内容全被清空，接着录下一个要重填一遍。
+
+**改了什么**：结果区抽成片段模板 `coins/_grades_results.html`；新增组合表单改走 `fetch` 提交（带 `fragment=1` 与当前筛选条件），
+后端只返回按当前筛选重查的结果片段，前端替换结果区并重新绑定删除按钮；非 JS / 失败时仍退回原来的整页提交与跳转。
+
+**验证**：`pytest tests -q` 全绿。
+
+受影响：`app/templates/coins/grades.html`、`app/templates/coins/_grades_results.html`、`app/routers/coins.py`、`tests/test_coins_pages.py`、`spec/coins.md`
+
+## v1.61 — 2026-10-23 品相台账新增组合支持年号
+
+**起因**：手工新增组合时只能填年份数字，日本年号纪年（明治 6 年 / 大正 6 年）无法填成年号对应的公历年。
+
+**改了什么**：新增组合表单加可空的「年号」输入；填了年号且年份不是 4 位公历年时拼成 `年号 + 年份` 再按现有口径归一
+（`6` + `明治` → 1873），年号留空时行为不变。
+
+**验证**：`pytest tests -q` 全绿（375 条）。
+
+受影响：`app/templates/coins/grades.html`、`app/routers/coins.py`、`tests/test_coins_pages.py`、`spec/coins.md`、`plan/coins.md`
+
+## v1.60 — 2026-10-23 日本年号按公历年关联
+
+**起因**：日本系列里明治 6 年与大正 6 年的 `year` 都是 6，品相记录的年份也只有数字 6，无法区分，品相与系列关联错位。
+
+**改了什么**：`grades.normalize_year` 把日本年号换算成公历年（`明治十五年` → `1882`、`大正六年` → `1917`），
+其余年号口径不变；品相页新增「年号」列，由公历年反推（`1873` → `明治六年`），无公历年留空；
+画像的已有 / 需升级年份在系列有 `gregorian_year` 时按公历年关联；schema 19 → 20，
+迁移把旧品相记录的年号数字按历史订单原文反查成公历年。
+
+**验证**：`pytest tests -q` 全绿（374 条）；真实库里日本品相记录的年号数字可唯一反查的已替换为公历年。
+
+受影响：`app/coins/grades.py`、`app/coins/collection.py`、`app/models.py`、`app/templates/coins/grades.html`、
+`app/migrations/v20.py`、`tests/test_coins_pages.py`、`tests/test_coins_collection.py`、`spec/coins.md`、`plan/coins.md`
+
+## v1.59 — 2026-10-23 材质过滤识别中文「铜 (…)」写法
+
+**起因**：5670（日本 · 明治 · 1 钱）中文材质为「铜 (98% 铜, 1% 锡, 1% 锌)」，`is_bronze_or_copper` 只认单独的「铜」，导致该系列在收藏系列的成员候选里始终选不到，提交也会被 400 拒绝。
+
+**改了什么**：`is_bronze_or_copper` 的中文分支改为包含「铜」即通过，同时把黄铜 / 白铜与镍、银一起剔除；补用例覆盖新的正例与三个反例。
+
+**验证**：`pytest tests -q` 全绿；真实库中 5670 材质判定由 False 变 True。
+
+受影响：`app/coins/collection.py`、`tests/test_coins_collection.py`、`plan/coins.md`
+
+## v1.58 — 2026-10-23 系列库国家 / 面值口径统一
+
+**起因**：系列库里印度系列的发行方显示成「印度 - British」、面值显示成「四分之一 安那」，与品相页的「1⁄4 安娜」不一致。
+
+**改了什么**：词表加 `India - British` → `印度`、`¼ Anna` → `1⁄4 安娜`，`Anna` 统一译成 `安娜`；`grades.normalize_denomination` 把 `¼` / `四分之一` 统一成 `1⁄4`、`安那` 统一成 `安娜`（国家别名同步加 `印度 - British` → `印度`）；schema 18 → 19，迁移把已采集中文表里的旧写法就地修正。
+
+**验证**：`pytest tests -q` 全绿；真实库迁移后印度系列的国家为「印度」、面值为「1⁄4 安娜」。
+
+受影响：`app/coins/translate.py`、`app/coins/grades.py`、`app/migrations/v19.py`、`app/migrations/__init__.py`、`app/models.py`、`spec/coins.md`、`plan/coins.md`、`tests/test_coins_pages.py`、`tests/test_coins_translate.py`
+
+## v1.57 — 2026-10-23 采集中心支持按系列 ID 获取系列
+
+**起因**：已知道 Numista 系列 ID 时，仍要先填国家 / 年份 / 面值搜索，还会被面值过滤挡掉。
+
+**改了什么**：`numista.collect_series_by_id` 直接取 `/types/{id}` 详情并落英文 / 中文表（不过滤）；采集中心「采集新系列」下加「系列 ID」输入框，成功后跳系列详情页；非法 ID 就地提示。
+
+**验证**：`pytest tests -q` 全绿。
+
+受影响：`app/coins/numista.py`、`app/routers/coins.py`、`app/templates/coins/manage.html`、`app/static/style.css`、`spec/coins.md`、`tests/test_coins_numista.py`、`tests/test_coins_pages.py`
+
+## v1.56 — 2026-10-23 拍品终态改用印章图标
+
+**起因**：拍品标题后的「✓ 已成交 / ✕ 流拍」文字标签太轻，想还原拍场页面右上角的印章观感。
+
+**改了什么**：从用户提供的拍场截图里裁出「已成交」「流拍」两枚印章（去白底存为 `app/static/img/coin-lot-{sold,unsold}.png`），拍品卡标题行改为 flex，印章（48px 高）贴在卡片右上角、可越过标题行向下占位；原 `.coin-lot-outcome` 文字标签及其样式移除。
+
+**验证**：`pytest tests -q` 368 项全绿；页面用例改为断言两个图标文件名（原断言的是标签文字）。
+
+受影响：`app/templates/coins/session.html`、`app/static/style.css`、`tests/test_coins_pages.py`
+
+## v1.55 — 2026-10-22 采集中心增加查询按钮
+
+**起因**：采集中心只能直接「获取系列」，无法先用当前筛选条件查本地已采集的系列。
+
+**改了什么**：采集表单在「① 获取系列」前加「查询」按钮，以 GET 提交到 `/coins/manage`，按国家/年份/面值/材质筛选本地系列，不调用 Numista。
+
+**验证**：`pytest tests/test_coins_pages.py -q -k manage` 通过。
+
+**涉及**：`app/templates/coins/manage.html`、`tests/test_coins_pages.py`。
+
+## v1.54 — 2026-10-22 相似推荐上限 20 项并按页展示
+
+**起因**：今日推荐里 P1+P2 命中不足 5 条时触发的相似推荐最多只出 5 项，候选足够时展示不全。
+
+**改了什么**：触发规则不变（`min_results` 默认 5）；相似推荐卡上限改为 `similar_limit`（默认 20），第二轮同系列补拍品逻辑保留；`/coins/collection` 的相似推荐改为每页 5 项分页（`spage` 参数，锚点 `#similar`），与精准匹配分页互不影响。
+
+**验证**：`pytest tests/test_coins_collection.py -q` 34 通过；上限用例改为 22 个候选断言最多 20 项。
+
+**涉及**：`app/coins/recommend.py`、`app/routers/coins.py`、`app/templates/coins/collection.html`、`spec/coins.md`、`plan/coins.md`、`tests/test_coins_collection.py`。
+
 ## v1.53 — 2026-10-22 截拍场次状态与拍品终态展示
 
 **起因**：回采终态只写拍品，没同步拍场状态，已截拍专场在列表页与拍品页仍显示「进行中」；拍品也没有成交 / 流拍标识与中标签价。

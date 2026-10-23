@@ -153,6 +153,7 @@
     </section>
     {% endif %}
 
+    <div id="similar"></div>
     <section class="coin-rec-section">
       <h3 class="coin-rec-section-title">
         <span>相似推荐 <span class="coin-rec-hint">候选池国家年份面值、国家面值匹配</span></span>
@@ -162,6 +163,7 @@
       {% for item in similar_items %}
       {{ render_rec_card(item, "similar") }}
       {% endfor %}
+      {{ render_pager(similar_pager) }}
       {% else %}
       <div class="empty coin-empty-inline">暂无相似推荐。</div>
       {% endif %}

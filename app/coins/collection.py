@@ -55,14 +55,18 @@ def size_band(size_mm: float | None) -> str | None:
 
 
 def is_bronze_or_copper(composition: str | None) -> bool:
-    """材质限定 Bronze / Copper；铜镍合金（Copper-nickel）不算。"""
+    """材质限定 Bronze / Copper；铜镍 / 黄铜 / 白铜不算。
+
+    中文表会写成「铜 (98% 铜, 1% 锡, 1% 锌)」，不能只认单独的「铜」。
+    """
     text = (composition or "").strip().lower()
     if not text:
         return False
     if "bronze" in text or "青铜" in text:
         return True
-    if "copper" in text or text == "铜":
-        return "nickel" not in text and "silver" not in text and "镍" not in text and "银" not in text
+    if "copper" in text or "铜" in text:
+        excluded = ("nickel", "silver", "镍", "银", "黄铜", "白铜")
+        return not any(word in text for word in excluded)
     return False
 
 
@@ -94,8 +98,14 @@ def _same_identity(value: str | None, target: str) -> bool:
 
 
 def _parse_year(value: str | None) -> int | None:
-    text = coin_grades.normalize_year(value)
+    text = coin_grades.year_number(value)
     return int(text) if text.isdigit() else None
+
+
+def _parse_gregorian(value: str | None) -> int | None:
+    """年份里的公历年（日本年号已换算；`1910年` / `明治十五年` → 1910 / 1882）。"""
+    text = coin_grades.normalize_year(value)
+    return int(text) if len(text) == 4 and text.isdigit() else None
 
 
 def _rarity(values: CoinIssueValues | None) -> float | None:
@@ -156,32 +166,52 @@ def _collection_size(collection: CoinCollectionSeries, series_list: list[CoinSer
 
 def _owned_years(
     collection: CoinCollectionSeries,
-    years: list[int],
+    specs_by_year: dict[int, list[CoinYearSpec]],
     orders: list[CoinOrder],
     grades: list[CoinPurchaseGrade],
 ) -> tuple[list[int], list[int]]:
     """回填已有年份与需升级年份（品相为「差」）。
 
     匹配口径是「国家 + 年份 + 面值」：国家 / 面值先按 Numista 口径统一，再做宽松包含。
+    系列里有公历年时按公历年关联（日本年号：明治 6 年 = 1873、大正 6 年 = 1917）；
+    订单本身没有公历年（如裸数字 `6`）才退回年号数字。
     """
-    year_set = set(years)
+    year_set = set(specs_by_year)
+    gregorian_years = {
+        spec.gregorian_year: year
+        for year, specs in specs_by_year.items()
+        for spec in specs
+        if spec.gregorian_year is not None
+    }
     country = _norm_country(collection.country)
     denomination = _norm_denomination(collection.denomination)
     owned: set[int] = set()
     bad_grades: set[int] = set()
 
+    def matched_year(value: str | None) -> int | None:
+        gregorian = _parse_gregorian(value)
+        if gregorian is not None and gregorian_years:
+            matched = gregorian_years.get(gregorian)
+            if matched is not None:
+                return matched
+            # 公历年表可能只覆盖部分单版（如南非 1927 没录 gregorian_year）；
+            # 年份本身就是公历年时，直接按年份键匹配
+            return gregorian if gregorian in year_set else None
+        year = _parse_year(value)
+        return year if year in year_set else None
+
     for order in orders:
         if not (_same_identity(_norm_country(order.country), country) and _same_identity(_norm_denomination(order.denomination), denomination)):
             continue
-        year = _parse_year(order.era)
-        if year in year_set:
+        year = matched_year(order.era)
+        if year is not None:
             owned.add(year)
 
     for grade in grades:
         if not (_same_identity(_norm_country(grade.country), country) and _same_identity(_norm_denomination(grade.denomination), denomination)):
             continue
-        year = _parse_year(grade.era)
-        if year not in year_set:
+        year = matched_year(grade.era)
+        if year is None:
             continue
         owned.add(year)
         if grade.grade == "差":
@@ -216,7 +246,7 @@ def build_profile(
 
     specs_by_year = dict(sorted(specs_by_year.items()))
     years = sorted(specs_by_year)
-    owned, upgrade = _owned_years(collection, years, orders, grades)
+    owned, upgrade = _owned_years(collection, specs_by_year, orders, grades)
     missing = [year for year in years if year not in set(owned)]
     size_mm = _collection_size(collection, eligible)
     return CoinCollectionProfile(

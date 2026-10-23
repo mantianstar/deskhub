@@ -1,7 +1,7 @@
-"""五个可独立运行的功能：定时任务与管理页「立即运行」共用同一入口。
+"""六个可独立运行的功能：定时任务与管理页「立即运行」共用同一入口。
 
 为什么单开一层：`app/pipeline.run` 是「抓取 → 打分」一体的（CLI 出报用），
-而管理页要能**分开**跑抓取和打分，所以这里按功能拆成五个小函数。
+而管理页要能**分开**跑抓取和打分，所以这里按功能拆成六个小函数。
 
 手动触发（`trigger`）是**后台执行**：铜币查价一轮可能几分钟，
 不能把 HTTP 请求挂在那里等；跑完把一句摘要留在 `last_state` 里供页面显示。
@@ -15,7 +15,9 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 from app import fetcher, pipeline, repository, scorer, switches
+from app.coins import matcher as coins_matcher
 from app.coins import pipeline as coins_pipeline
+from app.coins import recommend as coins_recommend
 from app.config import Config
 
 logger = logging.getLogger(__name__)
@@ -59,6 +61,22 @@ async def run_coins_finalize(config: Config) -> str:
     )
 
 
+async def run_coins_match(config: Config) -> str:
+    """只重算拍品推荐位（不采集、不回采、不查价）。"""
+    # 与 coins_pipeline.run 的匹配段同口径：收藏画像优先，没配画像回退标签匹配
+    result = coins_recommend.rematch_all(config)
+    if result.profiles_total:
+        return (
+            f"推荐重算：拍品 {result.lots_total} 条，命中 {result.lots_recommended} 条"
+            f"（推荐项 {result.items_total} 个）"
+        )
+    legacy = coins_matcher.rematch_all(config)
+    return (
+        f"未配置收藏画像，回退标签匹配：拍品 {legacy.lots_total} 条，"
+        f"命中 {legacy.lots_recommended} 条"
+    )
+
+
 async def run_coins_price(config: Config) -> str:
     """只给已入库的推荐拍品查价。"""
     result = await coins_pipeline.run(config, price_only=True)
@@ -73,6 +91,7 @@ RUNNERS: dict[str, Callable[[Config], Awaitable[str]]] = {
     switches.KNOWLEDGE_SCORE: run_knowledge_score,
     switches.COINS_COLLECT: run_coins_collect,
     switches.COINS_FINALIZE: run_coins_finalize,
+    switches.COINS_MATCH: run_coins_match,
     switches.COINS_PRICE: run_coins_price,
 }
 

@@ -19,17 +19,23 @@ KNOWLEDGE_FETCH = "knowledge_fetch"
 KNOWLEDGE_SCORE = "knowledge_score"
 COINS_COLLECT = "coins_collect"
 COINS_FINALIZE = "coins_finalize"
+COINS_MATCH = "coins_match"
 COINS_PRICE = "coins_price"
 
 
 @dataclass(frozen=True)
 class Feature:
-    """一个可独立启停的功能：分组 + 名称 + 一句说明（说明要给到「花不花 token」）。"""
+    """一个可独立启停的功能：分组 + 名称 + 一句说明（说明要给到「花不花 token」）。
+
+    `scheduled=False` 表示只给「立即运行」手动触发，不参与每天 08:00 的定时任务
+    （铜币匹配已包含在采集 / 查价里，再定时跑一遍是重复劳动）。
+    """
 
     key: str
     group: str
     label: str
     detail: str
+    scheduled: bool = True
 
 
 FEATURES: tuple[Feature, ...] = (
@@ -51,6 +57,13 @@ FEATURES: tuple[Feature, ...] = (
         "铜币拍卖",
         "回采",
         "截拍后回采拍品终态（成交价 / 流拍 / 中拍人）；每场 1 次详情，不花 token",
+    ),
+    Feature(
+        COINS_MATCH,
+        "铜币拍卖",
+        "匹配",
+        "按收藏画像重算拍品推荐位；纯本地重算，不访问站点、不花 token（仅手动运行）",
+        scheduled=False,
     ),
     Feature(COINS_PRICE, "铜币拍卖", "查价", "查站内历史成交；每条间隔 15 秒，四件里最耗时"),
 )
@@ -91,6 +104,7 @@ def snapshot() -> list[dict[str, object]]:
             "label": feature.label,
             "detail": feature.detail,
             "enabled": states.get(feature.key, DEFAULT_ENABLED),
+            "scheduled": feature.scheduled,
         }
         for feature in FEATURES
     ]

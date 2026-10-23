@@ -636,6 +636,7 @@ body {
 .coin-facts .coin-fact.is-muted { color: var(--text-muted); text-decoration: line-through; }
 
 .coin-lot {
+  position: relative;
   padding: 16px 18px;
   margin-top: 14px;
   background: var(--surface);
@@ -645,31 +646,23 @@ body {
 
 .coin-lot-title {
   margin: 0 0 8px;
+  padding-right: 64px;
   font-size: 14.5px;
   font-weight: 600;
   overflow-wrap: anywhere;
 }
 
-.coin-lot-outcome {
-  margin-left: 6px;
-  padding: 1px 6px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  font-size: 11.5px;
-  font-weight: 500;
-  white-space: nowrap;
-  vertical-align: middle;
-}
-.coin-lot-outcome-sold { color: var(--score-high-fg); background: var(--score-high-bg); border-color: var(--score-high-border); }
-.coin-lot-outcome-unsold { color: var(--text-muted); background: var(--score-low-bg); border-color: var(--score-low-border); }
+/* 已成交 / 流拍 印章图标：绝对定位在卡片右上角，不参与行高，可越过标题压到下方几行 */
+.coin-lot-stamp { position: absolute; top: 14px; right: 16px; height: 48px; width: auto; }
 
-.coin-lot-reason { margin: 2px 0 8px; color: var(--accent); font-size: 13px; }
+.coin-lot-reason { margin: 2px 0 8px; padding-right: 64px; color: var(--accent); font-size: 13px; }
 
 .coin-lot-prices {
   display: flex;
   flex-wrap: wrap;
   gap: 20px;
   margin-bottom: 8px;
+  padding-right: 64px;
   font-size: 13px;
   color: var(--text-muted);
 }
@@ -1440,6 +1433,7 @@ img.coin-zoom { cursor: zoom-in; }
   border: 1px solid var(--border);
   border-radius: 8px;
 }
+.coin-new-collection .search-form + .search-form { margin-top: 8px; }
 .coin-progress {
   height: 6px;
   margin-top: 10px;

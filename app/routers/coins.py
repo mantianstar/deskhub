@@ -629,6 +629,20 @@ async def fetch_series(
     return _redirect(_manage_url(country, year, denomination, composition))
 
 
+@router.post("/coins/manage/fetch-series-by-id")
+async def fetch_series_by_id(request: Request, series_id: str = Form("")) -> Response:
+    """按 Numista 系列 ID 直接取系列详情并入库（不按国家 / 年份 / 面值过滤）。"""
+    text = series_id.strip()
+    if not text.isdigit():
+        return _render_manage(request, "", "", "", "", "系列 ID 必须是数字")
+    try:
+        await coins_numista.collect_series_by_id(config.get(), series_id=int(text))
+    except NumistaError as exc:
+        logger.warning("按 ID 获取系列失败：%s", exc)
+        return _render_manage(request, "", "", "", "", str(exc))
+    return _redirect(f"/coins/series/{int(text)}")
+
+
 @router.post("/coins/manage/fetch-issues")
 async def fetch_issues(
     request: Request,
@@ -745,15 +759,8 @@ def _attach_collection_names(combos) -> None:
         combo.collection_name = "、".join(dict.fromkeys(names))
 
 
-@router.get("/coins/grades")
-def grades_page(
-    request: Request,
-    country: str = "",
-    year: str = "",
-    denomination: str = "",
-    grade: str = "",
-) -> Response:
-    """品相录入页：查去重后的历史购买组合（不调接口），供人工录品相。"""
+def _grades_context(country: str, year: str, denomination: str, grade: str) -> dict:
+    """品相台账页与局部结果片段共用的上下文（筛选条件 + 去重组合 + 摘要计数）。"""
     all_combos = coins_grades.build_combos(
         repository.list_coin_orders(), repository.list_coin_purchase_grades()
     )
@@ -765,41 +772,77 @@ def grades_page(
         grade=grade or None,
     )
     _attach_collection_names(combos)
+    return {
+        "page_title": "品相台账",
+        "country": country,
+        "year": year,
+        "denomination": denomination,
+        "grade": grade,
+        "countries": coins_grades.countries_of(all_combos),
+        "denominations": coins_grades.denominations_of(all_combos),
+        "grades": COIN_PURCHASE_GRADES,
+        "combos": combos,
+        "graded_total": sum(1 for combo in combos if combo.grade),
+        "order_total": repository.count_coin_orders(),
+    }
+
+
+@router.get("/coins/grades")
+def grades_page(
+    request: Request,
+    country: str = "",
+    year: str = "",
+    denomination: str = "",
+    grade: str = "",
+) -> Response:
+    """品相录入页：查去重后的历史购买组合（不调接口），供人工录品相。"""
     return templates.TemplateResponse(
         request,
         "coins/grades.html",
-        {
-            "request": request,
-            "page_title": "品相台账",
-            "country": country,
-            "year": year,
-            "denomination": denomination,
-            "grade": grade,
-            "countries": coins_grades.countries_of(all_combos),
-            "denominations": coins_grades.denominations_of(all_combos),
-            "grades": COIN_PURCHASE_GRADES,
-            "combos": combos,
-            "graded_total": sum(1 for combo in combos if combo.grade),
-            "order_total": repository.count_coin_orders(),
-        },
+        {"request": request, **_grades_context(country, year, denomination, grade)},
     )
 
 
 @router.post("/coins/grades/add")
 def add_grade(
+    request: Request,
     country: str = Form(...),
     year: str = Form(...),
+    era_name: str = Form(""),
     denomination: str = Form(...),
     grade: str = Form(""),
     next: str = Form(""),
+    fragment: str = Form(""),
+    filter_country: str = Form(""),
+    filter_year: str = Form(""),
+    filter_denomination: str = Form(""),
+    filter_grade: str = Form(""),
 ) -> Response:
-    """手工新增一条历史订单里没有的组合（国家 + 年份 + 面值 + 品相四项必填）。"""
-    key_country, key_era, key_denomination = _normalize_grade(country, year, denomination)
+    """手工新增一条历史订单里没有的组合（国家 + 年份 + 面值 + 品相四项必填，年号可空）。
+
+    年号只用于年号纪年的年份换算（`年份=6` + `年号=明治` → 公历 1873）；
+    年份本身是 4 位公历年时忽略年号。
+    带 `fragment=1` 时（页面局部刷新）只返回结果片段，按当前筛选条件重查，不跳转。
+    """
+    raw_year = year.strip()
+    era = raw_year if not era_name.strip() or (len(raw_year) == 4 and raw_year.isdigit()) else f"{era_name.strip()}{raw_year}"
+    key_country, key_era, key_denomination = _normalize_grade(country, era, denomination)
     if not (key_country and key_era and key_denomination):
         return Response(status_code=400)
     if grade not in COIN_PURCHASE_GRADES:
         return Response(status_code=400)
     repository.upsert_coin_purchase_grade(key_country, key_era, key_denomination, grade)
+    if fragment:
+        return templates.TemplateResponse(
+            request,
+            "coins/_grades_results.html",
+            {
+                "request": request,
+                **_grades_context(
+                    filter_country, filter_year, filter_denomination, filter_grade
+                ),
+            },
+        )
     return _redirect(next if next.startswith("/coins/") else "/coins/grades")
 
 
@@ -876,6 +919,7 @@ def save_grades(
 
 COIN_COLLECTION_PAGE_SIZE = 20
 COIN_RECOMMEND_PAGE_SIZE = 20
+COIN_SIMILAR_PAGE_SIZE = 5
 COIN_PROFILE_PAGE_SIZE = 10
 COIN_MEMBER_CANDIDATE_LIMIT = 50
 COIN_REASON_LABELS = {1: "稀缺年份", 2: "差品升级", 4: "年份匹配", 5: "面值探索"}
@@ -913,6 +957,7 @@ def _collection_page_url(
     page: int,
     ppage: int,
     *,
+    spage: int = 0,
     series: str = "",
     reason: str = "",
     hit: str = "",
@@ -923,6 +968,7 @@ def _collection_page_url(
         {
             "page": page if page > 1 else 0,
             "ppage": ppage if ppage > 1 else 0,
+            "spage": spage if spage > 1 else 0,
             "series": series,
             "reason": reason,
             "hit": hit,
@@ -1126,6 +1172,7 @@ def collection_page(
     request: Request,
     page: str = "",
     ppage: str = "",
+    spage: str = "",
     series: str = "",
     reason: str = "",
     hit: str = "1",
@@ -1162,6 +1209,9 @@ def collection_page(
     )
     profile_items, profile_page, profile_total_pages = _paginate(
         profiles, ppage, COIN_PROFILE_PAGE_SIZE
+    )
+    similar_paged, similar_page, similar_total_pages = _paginate(
+        similar_view, spage, COIN_SIMILAR_PAGE_SIZE
     )
 
     item_pager = {
@@ -1211,6 +1261,33 @@ def collection_page(
             anchor="profiles",
         )
         if profile_page < profile_total_pages
+        else "",
+    }
+
+    similar_pager = {
+        "page": similar_page,
+        "total_pages": similar_total_pages,
+        "prev_url": _collection_page_url(
+            page_no,
+            profile_page,
+            spage=similar_page - 1,
+            series=series,
+            reason=reason,
+            hit=hit,
+            anchor="similar",
+        )
+        if similar_page > 1
+        else "",
+        "next_url": _collection_page_url(
+            page_no,
+            profile_page,
+            spage=similar_page + 1,
+            series=series,
+            reason=reason,
+            hit=hit,
+            anchor="similar",
+        )
+        if similar_page < similar_total_pages
         else "",
     }
 
@@ -1312,8 +1389,9 @@ def collection_page(
             "profile_pager": profile_pager,
             "precise_items": paged_items,
             "precise_total": len(precise_view),
-            "similar_items": similar_view,
+            "similar_items": similar_paged,
             "similar_total": len(similar_view),
+            "similar_pager": similar_pager,
             "item_pager": item_pager,
             "item_total": len(items),
             "filtered_total": filtered_total,

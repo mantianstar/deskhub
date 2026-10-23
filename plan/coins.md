@@ -232,7 +232,7 @@ CREATE INDEX IF NOT EXISTS idx_coin_runs ON coin_fetch_runs(kind, started_at DES
 |---|---|---|
 | `daily_coins` | 每天 `08:00` Asia/Shanghai | 与 `daily_pipeline` 同批但**独立任务**；`coalesce=True`、`misfire_grace_time=3600`、`max_instances=1` |
 
-- 采集、回采、查价**各有一个开关**（`/control`，见 [core.md](./core.md) §19）；都关时这一轮直接跳过。
+- 采集、回采、查价**各有一个定时开关**（`/control`，见 [core.md](./core.md) §19）；都关时这一轮直接跳过。匹配不参与定时任务，运行控制页提供「匹配」手动重跑（纯本地重算推荐位）。
 - 两个 `daily_*` 任务**互不传播失败**（spec/coins.md §14.9）：铜币采集挂掉不影响知识日报，反之亦然。
 - **不做启动补拉**（重启不抓取 / 不洗牌），见 [core.md](./core.md) §12 与 §19。
 
@@ -565,6 +565,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS uidx_coin_purchase_grades
 - **为什么不写 `coin_orders.condition`**：那是**订单级**、由 LLM 抽的**包浆描述**（如「巧克力包浆」），
   覆盖成 好/普通/差 会污染画像（`condition` 是画像维度之一）并影响每日推荐。本表**与画像 / 推荐无关**，只作人工参考。
 - **一个组合一行**：去重键就是 `(country, era, denomination)`；重存为覆盖（upsert），选「未录入」则删行。
+- **手工新增**：多一个可空的「年号」输入；非空且年份不是 4 位公历年时拼成 `年号 + 年份` 再走 `normalize_year`
+  （`6` + `明治` → `明治6` → `1873`）。
 
 **统一（`app/coins/grades.py`，纯函数）**
 
@@ -573,13 +575,14 @@ CREATE UNIQUE INDEX IF NOT EXISTS uidx_coin_purchase_grades
 
 - `normalize_country`：去殖民时期前缀（`英属新西兰` → `新西兰`、`荷属东印度` → `东印度`；
   真库里 182 个国家里有 36 个带 `英属 / 法属 / 荷属 / 葡属 / 德属` 前缀）；去掉后会变空则原样保留。
-- `normalize_year`：去「年 / 年度」后缀只留纯数字（`1910年` → `1910`）；**年号纪年**取年号后的年份数字
-  （中文数字转阿拉伯，`明治十五年` → `15`、`民国31年` → `31`、`康德元年` → `1`）；只有年号没有年份数字的
-  （`光绪`）**原样保留**。
+- `normalize_year`：去「年 / 年度」后缀只留纯数字（`1910年` → `1910`）；**日本年号**换算成**公历年**
+  （`明治十五年` → `1882`、`大正六年` → `1917`，与 `coin_issues.gregorian_year` 对齐）；
+  其余年号取年号后的年份数字（中文数字转阿拉伯，`民国31年` → `31`、`康德元年` → `1`）；只有年号没有年份数字的
+  （`光绪`）**原样保留**。品相页年号列由公历年反推（`1873` → `明治六年`），非日本 / 无公历年留空。
 - `normalize_denomination`：前导数字（阿拉伯 / 中文含大写 `壹贰伍拾` / 分数 `1/4`、`¼`、`2½`）→ 阿拉伯数字，
   与单位之间加一个空格：`1便士`→`1 便士`、`一分`→`1 分`、`二十文`→`20 文`、`壹圆`→`1 圆`、
-  `1/4安娜`→`1/4 安娜`、`¼安娜`→`四分之一 安娜`、`半便士`→`半 便士`；
-  **认不出前导数字的原样保留**（`当制钱十文` / `大便士` / `克朗`）。
+  `1/4安娜`→`1⁄4 安娜`、`¼安娜`→`1⁄4 安娜`、`四分之一安娜`→`1⁄4 安娜`、`半便士`→`半 便士`；
+  `安那` 统一写成 `安娜`；**认不出前导数字的原样保留**（`当制钱十文` / `大便士` / `克朗`）。
 - `build_combos(orders, grades)`：按统一后的三元组去重计数（**只取三者齐全**的行），
   LEFT JOIN 已录品相；**已录品相但没有对应订单的组合（手工新增的）也作为一行**（`order_count = 0`）。
 - `filter_combos(combos, country, era, denomination, grade)`：国家 / 年份 / 面值的查询词也先按同一口径统一，再用
@@ -606,13 +609,16 @@ delete_coin_purchase_grade(country, era, denomination) -> bool     # 选「未�
 | 方法 | 路径 | 职责 | 模板 |
 |---|---|---|---|
 | GET | `/coins/grades` | `build_combos` + `filter_combos`（国家 / 年份 / 面值 / 品相，均可空）→ 组合表；每行补派生列「所属收藏系列」（按国家 + 面值匹配收藏系列，不落库） | `coins/grades.html` |
-| POST | `/coins/grades/add` | 手工新增一条组合（四项必填；统一后 upsert） | 302 → `/coins/grades` |
+| POST | `/coins/grades/add` | 手工新增一条组合（四项必填；统一后 upsert）；带 `fragment=1` 时只返回结果片段 `coins/_grades_results.html`（按随请求带上来的 `filter_*` 重查） | 302 → `/coins/grades`；fragment → 200 片段 |
 | POST | `/coins/grades/delete` | 删整行：`order_ids_for_combo` 反查订单 → `delete_coin_orders` + `delete_coin_purchase_grade` | 302 → 回查询页（带原筛选条件） |
 | POST | `/coins/grades/save` | 保存整表：逐行 upsert / 删；键不完整或品相非法 → 400（整批不落库） | 302 → 回查询页（带原筛选条件） |
 
 - **保存用「按行对齐的重复字段」**：每行 `<input type="hidden" name="country/era/denomination">` + `<select name="grade">`，
   四组字段按行序一一对应（浏览器原生表单即可，无需 JS）；另带 `filter_*` 三个隐藏字段，保存后重定向回同样的筛选结果。
   提交值落库前**再过一遍统一**（幂等，防止手改表单）。
+- **新增组合走局部刷新**：结果区抽成 `coins/_grades_results.html`（整页与片段共用），表单 `submit` 由 JS 拦截，
+  `fetch` POST 时附上查询表单当前的 `filter_*` 与 `fragment=1`，响应只替换 `#grades-results` 并重新绑定删除按钮；
+  上方查询条件与表单里填的内容保持不动。无 JS / 请求失败时回退原生提交（302）。
 - **品相取值**：`models.COIN_PURCHASE_GRADES = ("好","普通","差")`；下拉另有空值「未录入」（= 清除）。
 - **删整行不能是嵌套 form**（行在「保存」大表单里，HTML 不允许嵌套表单）：故删按钮是 `type="button"`，
   页内二次确认后由**原生 JS 动态建一个隐藏表单**提交 `/coins/grades/delete`（连带把 `filter_*` 一起带上）。
@@ -690,6 +696,8 @@ CREATE TABLE IF NOT EXISTS coin_collection_series_members (
   同一年按 `(有发行量, mintage, numista_id)` 降序取第一条。
 - `rarity = frequency / 100`；`price_estimates = {VF: value_vf, XF: value_xf}`。
 - 已有年份：`coin_orders` + `coin_purchase_grades` 按统一后的「国家 + 年份 + 面值」宽松匹配；
+  系列里有 `gregorian_year` 时按公历年关联（明治 6 年 = 1873、大正 6 年 = 1917），
+  订单本身没有公历年（裸数字）才退回年号数字；
   需升级年份：已有年份中 `grade == "差"`。
 - 收藏系列尺寸：显式 `size_mm` 优先，否则取成员 series 尺寸中位数。
 
@@ -701,8 +709,9 @@ CREATE TABLE IF NOT EXISTS coin_collection_series_members (
 - P4：仅当前两层与当日拍品的**匹配条数** < `min_results`（没有当日拍品时按推荐项数兜底）；
   候选来自 `load_explore_profiles()` → `explore.load_candidate_profiles()`（候选池状态为候选 / 采纳，忽略除外），
   取候选的缺失年份；按尺寸差升序、`-rarity` 升序；只保留当日确有命中（国家 + 年份 + 面值）的候选，
-  排除精准匹配已命中的拍品；第一轮不同系列各一条、每卡 1 条拍品；不足 `min_results` 时第二轮
+  排除精准匹配已命中的拍品；第一轮不同系列各一条、每卡 1 条拍品，相似推荐卡最多 20 张；不足 `min_results` 时第二轮
   把同系列更多拍品追加到该系列卡（不新开卡），拍品总数补满；同一条拍品只归属一条推荐。
+  页面按每页 5 项分页（`COIN_SIMILAR_PAGE_SIZE`）。
 - P5：P4 命中不足 `min_results` 时用剩余名额补齐，候选与 P4 同源，命中口径放宽为国家 + 面值；
   系列去重与两轮补满规则同 P4；**搜索词只拼国家 + 面值**；卡片标签「年份匹配」/「面值探索」。
 - 匹配：拍品标题需同时命中 `country`、任一年份写法、任一面值写法；日本年号由
@@ -739,7 +748,7 @@ CREATE TABLE IF NOT EXISTS coin_collection_series_members (
 | 用例 | 断言 |
 |---|---|
 | 尺寸分档 | 24.9→小、25→中、30→大、35→超大 |
-| 材质 / 精制过滤 | Bronze/Copper/青铜/铜通过；Copper-nickel/银剔除；`is_proof` 或单版备注 Proof 剔除 |
+| 材质 / 精制过滤 | Bronze/Copper/青铜/铜（含「铜 (98% 铜…)」描述）通过；Copper-nickel/黄铜/白铜/银剔除；`is_proof` 或单版备注 Proof 剔除 |
 | 年份规格 | 同年多版取最大发行量；Frequency 0.6% → rarity 0.006；精制版不参与 |
 | 画像 | 已有/缺失/升级年份正确；银币与精制年份不进入年份列表 |
 | P1 | 首/末年位置权重 1.5；稀缺权重 1/rarity |

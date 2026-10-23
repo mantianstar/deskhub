@@ -34,8 +34,8 @@ _CN_DIGITS = {
 }
 _CN_UNITS = {"十": 10, "拾": 10, "百": 100, "佰": 100, "千": 1000, "仟": 1000}
 
-# 前导分数符号 → Numista 中文口径（与 `translate.GLOSSARY` 的 ½→半、¼→四分之一 一致）
-_LEADING_FRACTION = {"½": "半", "¼": "四分之一", "¾": "四分之三"}
+# 前导分数符号 → 展示口径（`¼` 与系列库的 1⁄4 安娜 统一）
+_LEADING_FRACTION = {"½": "半", "¼": "1⁄4", "¾": "四分之三"}
 
 # 前导数字：整数 / 小数 / 「1/4」「1⁄4」这类分数，可带尾随 ½¼¾（如 `2½盾`）
 _LEADING_ARABIC = re.compile(r"^\s*(\d+(?:\.\d+)?(?:\s*[/⁄]\s*\d+)?[½¼¾]?)")
@@ -44,6 +44,15 @@ _TRAILING_YEAR_SUFFIX = re.compile(r"\s*年度?\s*$")
 # 年号纪年末尾的年份数字（`明治十五年` / `民国31年` / `康德元年`）；`元` 表示第一年
 _TRAILING_YEAR_NUMBER = re.compile(
     r"([0-9]+|[零〇一二两三四五六七八九十百千壹贰貳叁肆伍陆陸柒捌玖拾佰仟]+|元)$"
+)
+
+# 日本年号起始公历年：品相 / 画像按公历年关联，避免「明治6年」与「大正6年」都是 6
+_JP_ERAS: tuple[tuple[str, int], ...] = (
+    ("明治", 1868),
+    ("大正", 1912),
+    ("昭和", 1926),
+    ("平成", 1989),
+    ("令和", 2019),
 )
 
 
@@ -77,7 +86,7 @@ _COLONIAL_PREFIXES = (
 )
 
 # 去完殖民前缀后仍与 Numista 发行方命名不一致的别名（泽西岛 → 泽西）
-_COUNTRY_ALIASES = {"泽西岛": "泽西", "根西岛": "根西"}
+_COUNTRY_ALIASES = {"泽西岛": "泽西", "根西岛": "根西", "印度 - British": "印度"}
 
 
 def normalize_country(value: str | None) -> str:
@@ -90,10 +99,58 @@ def normalize_country(value: str | None) -> str:
     return _COUNTRY_ALIASES.get(text, text)
 
 
-def normalize_year(value: str | None) -> str:
-    """年份：去「年 / 年度」后缀只留数字；年号纪年取年份数字（`明治十五年` → `15`）。
+def _era_number(text: str) -> int | None:
+    """年号后的年份数字（`明治十五年` → 15、`康德元年` → 1）；认不出返回 None。"""
+    match = _TRAILING_YEAR_NUMBER.search(text)
+    if not match:
+        return None
+    digits = match.group(1)
+    if digits.isdigit():
+        return int(digits)
+    return _cn_numeral_to_int("一" if digits == "元" else digits)
 
-    年号纪年的数字与 Numista 的 `year` 同口径（如明治十五年 = 15），中文数字转阿拉伯数字；
+
+def _gregorian_from_japanese_era(text: str) -> int | None:
+    """日本年号纪年 → 公历年（`明治十五年` → 1882）；非日本年号返回 None。"""
+    for name, start in _JP_ERAS:
+        index = text.find(name)
+        if index < 0:
+            continue
+        number = _era_number(text[index + len(name) :].strip())
+        if number is not None:
+            return start + number - 1
+    return None
+
+
+def _to_cn_numeral(number: int) -> str:
+    """1~99 → 中文数字（明治六年 / 明治十五年）。"""
+    digits = "零一二三四五六七八九"
+    if number < 10:
+        return digits[number]
+    if number < 20:
+        return "十" + (digits[number % 10] if number % 10 else "")
+    if number < 100:
+        return digits[number // 10] + "十" + (digits[number % 10] if number % 10 else "")
+    return str(number)
+
+
+def year_number(value: str | None) -> str:
+    """年号纪年的年份数字（`明治十五年` → `15`），供没有公历年的系列回退匹配。"""
+    text = (value or "").strip()
+    if not text:
+        return text
+    stripped = _TRAILING_YEAR_SUFFIX.sub("", text)
+    if stripped.isdigit():
+        return stripped
+    number = _era_number(stripped)
+    return str(number) if number is not None else text
+
+
+def normalize_year(value: str | None) -> str:
+    """年份：去「年 / 年度」后缀只留数字；日本年号纪年换算成公历年。
+
+    `明治十五年` → `1882`、`大正六年` → `1917`，与系列的 `gregorian_year` 同口径；
+    其他年号仍取年份数字（`康德四年` → `4`、`民国六十二年` → `62`）；
     只有年号没有年份数字（`光绪`）或认不出数字的原样保留。
     """
     text = (value or "").strip()
@@ -102,20 +159,35 @@ def normalize_year(value: str | None) -> str:
     stripped = _TRAILING_YEAR_SUFFIX.sub("", text)
     if stripped.isdigit():
         return stripped
-    match = _TRAILING_YEAR_NUMBER.search(stripped)
-    if match:
-        digits = match.group(1)
-        if digits.isdigit():
-            return digits
-        number = _cn_numeral_to_int("一" if digits == "元" else digits)
-        if number is not None:
-            return str(number)
-    return text
+    gregorian = _gregorian_from_japanese_era(stripped)
+    if gregorian is not None:
+        return str(gregorian)
+    number = _era_number(stripped)
+    return str(number) if number is not None else text
+
+
+def japanese_era_label(country: str | None, era: str | None) -> str:
+    """日本品相行的年号 + 年号年份（`1873` → `明治六年`）；无公历年 / 非日本返回空串。"""
+    text = (country or "").strip().lower()
+    if "日本" not in text and "japan" not in text:
+        return ""
+    year = (era or "").strip()
+    if len(year) != 4 or not year.isdigit():
+        return ""
+    value = int(year)
+    name, start = "", 0
+    for zh, begin in _JP_ERAS:
+        if value >= begin:
+            name, start = zh, begin
+    if not name:
+        return ""
+    number = value - start + 1
+    return f"{name}{'元' if number == 1 else _to_cn_numeral(number)}年"
 
 
 def normalize_denomination(value: str | None) -> str:
     """面值：前导数字转阿拉伯数字、与单位之间加一个空格；认不出前导数字的原样保留。"""
-    text = (value or "").strip()
+    text = (value or "").strip().replace("安那", "安娜")
     if not text:
         return text
 
@@ -123,10 +195,14 @@ def normalize_denomination(value: str | None) -> str:
         rest = text[1:].strip()
         return f"半 {rest}" if rest else text
 
-    if text[0] in _LEADING_FRACTION:  # ½便士 / ¼安娜 → 半 便士 / 四分之一 安娜
+    if text[0] in _LEADING_FRACTION:  # ½便士 / ¼安娜 → 半 便士 / 1⁄4 安娜
         rest = text[1:].strip()
         word = _LEADING_FRACTION[text[0]]
         return f"{word} {rest}" if rest else word
+
+    if text.startswith("四分之一"):  # 四分之一安娜 → 1⁄4 安娜（与 ¼ 同口径）
+        rest = text[len("四分之一") :].strip()
+        return f"1⁄4 {rest}" if rest else "1⁄4"
 
     match = _LEADING_ARABIC.match(text)
     if match:
@@ -181,6 +257,7 @@ def build_combos(
             denomination=key[2],
             order_count=counts.get(key, 0),
             grade=graded.get(key),
+            era_label=japanese_era_label(key[0], key[1]),
         )
         for key in sorted(set(counts) | set(graded))
     ]

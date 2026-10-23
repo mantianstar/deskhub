@@ -16,7 +16,9 @@
     选<strong>未录入</strong>则清除该行的记录。品相只作参考，不参与画像与推荐。<br>
     国家 / 年份 / 面值统一成 <strong>Numista 口径</strong>：<code>英属新西兰</code> → <code>新西兰</code>、
     <code>1910年</code> → <code>1910</code>、<code>1便士</code> → <code>1 便士</code>、<code>一分</code> → <code>1 分</code>；
-    年号纪年取年份数字（<code>明治十五年</code> → <code>15</code>），只有年号没有数字的原样保留。<br>
+    年号纪年：日本年号按<strong>公历年</strong>关联（<code>明治十五年</code> → <code>1882</code>、
+    <code>大正六年</code> → <code>1917</code>），其余年号取年份数字（<code>康德四年</code> → <code>4</code>），
+    只有年号没有数字的原样保留。<br>
     行尾<strong>删除</strong>用于清掉错误数据：<strong>连该组合的历史订单一起删</strong>（需二次确认）；
     重跑 <code>coins-parse-orders</code> 会把 <code>orders.xlsx</code> 里的订单重新导回来。
   </p>
@@ -63,6 +65,9 @@
     <label class="field">年份
       <input class="search-input" type="text" name="year" required placeholder="如 1910">
     </label>
+    <label class="field">年号
+      <input class="search-input" type="text" name="era_name" placeholder="如 明治（可空）">
+    </label>
     <label class="field">面值
       <input class="search-input" type="text" name="denomination" required
              list="coin-order-denomination-options" placeholder="如 1 便士" autocomplete="off">
@@ -78,63 +83,9 @@
   <p class="form-hint">四项都必填；年份 / 面值同样按上面的 Numista 口径统一后入库。</p>
 </form>
 
-{% if combos %}
-<form method="post" action="/coins/grades/save">
-  <input type="hidden" name="filter_country" value="{{ country }}">
-  <input type="hidden" name="filter_year" value="{{ year }}">
-  <input type="hidden" name="filter_denomination" value="{{ denomination }}">
-  <div class="table-wrap">
-    <table class="sources-table coin-grade-table">
-      <thead>
-        <tr>
-          <th>国家</th>
-          <th class="nowrap">年份</th>
-          <th>面值</th>
-          <th>所属收藏系列</th>
-          <th class="nowrap">品相</th>
-          <th class="nowrap">操作</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for combo in combos %}
-        <tr>
-          <td>{{ combo.country }}</td>
-          <td class="nowrap">{{ combo.era }}</td>
-          <td>{{ combo.denomination }}</td>
-          <td class="coin-grade-collection">{{ combo.collection_name or '—' }}</td>
-          <td class="nowrap">
-            <input type="hidden" name="country" value="{{ combo.country }}">
-            <input type="hidden" name="era" value="{{ combo.era }}">
-            <input type="hidden" name="denomination" value="{{ combo.denomination }}">
-            <select name="grade" aria-label="品相">
-              <option value=""{{ ' selected' if not combo.grade else '' }}>未录入</option>
-              {% for grade in grades %}
-              <option value="{{ grade }}"{{ ' selected' if combo.grade == grade else '' }}>{{ grade }}</option>
-              {% endfor %}
-            </select>
-          </td>
-          <td class="nowrap coin-grade-del">
-            <button class="btn btn-ghost js-grade-del" type="button"
-                    data-country="{{ combo.country }}"
-                    data-era="{{ combo.era }}"
-                    data-denomination="{{ combo.denomination }}"
-                    title="删除整行：清掉该组合的全部历史订单与品相记录">删除</button>
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-  <div class="coin-grade-actions">
-    <button class="btn btn-primary" type="submit">保存</button>
-  </div>
-</form>
-{% else %}
-<div class="empty">
-  没有可录入的历史记录。先在「铜币画像」跑
-  <code>python -m app.cli coins-parse-orders</code> 从 <code>data/orders.xlsx</code> 生成订单。
+<div id="grades-results">
+{% include "coins/_grades_results.html" %}
 </div>
-{% endif %}
 {% endblock %}
 
 {% block scripts %}
@@ -142,6 +93,10 @@
 // 「删除整行」的页内二次确认：第一次点变「确认删除」（旁边给「取消」），再点才真提交。
 // 行在「保存」大表单里，删不了嵌套 form，所以确认后动态建一个隐藏表单再提交。
 (function () {
+  var results = document.getElementById('grades-results');
+  var addForm = document.querySelector('form[action="/coins/grades/add"]');
+  var filterForm = document.querySelector('form[action="/coins/grades"]');
+
   function resetAll() {
     document.querySelectorAll('button.js-grade-del').forEach(function (btn) {
       delete btn.dataset.confirming;
@@ -177,21 +132,50 @@
     form.submit();
   }
 
-  document.querySelectorAll('button.js-grade-del').forEach(function (btn) {
-    btn.addEventListener('click', function () {
-      if (btn.dataset.confirming === '1') { submitDelete(btn); return; }
-      resetAll();
-      btn.dataset.confirming = '1';
-      btn.classList.add('btn-danger');
-      btn.textContent = '确认删除';
-      var cancel = document.createElement('button');
-      cancel.type = 'button';
-      cancel.className = 'btn btn-ghost js-grade-del-cancel';
-      cancel.textContent = '取消';
-      cancel.addEventListener('click', resetAll);
-      btn.after(cancel);
+  // 结果区会被局部替换，替换后需要重新绑一次删除按钮
+  function bindDeleteButtons() {
+    if (!results) { return; }
+    results.querySelectorAll('button.js-grade-del').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        if (btn.dataset.confirming === '1') { submitDelete(btn); return; }
+        resetAll();
+        btn.dataset.confirming = '1';
+        btn.classList.add('btn-danger');
+        btn.textContent = '确认删除';
+        var cancel = document.createElement('button');
+        cancel.type = 'button';
+        cancel.className = 'btn btn-ghost js-grade-del-cancel';
+        cancel.textContent = '取消';
+        cancel.addEventListener('click', resetAll);
+        btn.after(cancel);
+      });
     });
-  });
+  }
+
+  // 「新增组合」局部提交：只换下方的结果区，上方筛选条件与表单里填的内容都不动
+  if (addForm && results) {
+    addForm.addEventListener('submit', function (event) {
+      event.preventDefault();
+      var data = new FormData(addForm);
+      ['country', 'year', 'denomination', 'grade'].forEach(function (name) {
+        var src = filterForm && filterForm.querySelector('[name="' + name + '"]');
+        data.set('filter_' + name, src ? src.value : '');
+      });
+      data.set('fragment', '1');
+      fetch('/coins/grades/add', { method: 'POST', body: data })
+        .then(function (resp) {
+          if (!resp.ok) { throw new Error(resp.status); }
+          return resp.text();
+        })
+        .then(function (html) {
+          results.innerHTML = html;
+          bindDeleteButtons();
+        })
+        .catch(function () { addForm.submit(); });  // 局部刷新失败 → 退回整页提交
+    });
+  }
+
+  bindDeleteButtons();
 })();
 </script>
 {% endblock %}

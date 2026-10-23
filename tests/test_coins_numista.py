@@ -385,6 +385,19 @@ async def test_collect_series_stores_english_and_chinese_tables(temp_db):
 
 
 @pytest.mark.asyncio
+async def test_collect_series_by_id_stores_series_without_filters(temp_db):
+    cfg = config_module.load()
+    api = _StubClient()
+
+    info = await numista.collect_series_by_id(cfg, series_id=670, client=api)
+
+    assert info.numista_id == 670
+    assert api.calls == [("/types/670", {})]  # 只取详情，不搜 /types
+    assert repository.get_coin_series(670) is not None
+    assert repository.get_coin_series(670, cn=True) is not None
+
+
+@pytest.mark.asyncio
 async def test_collect_issues_stores_both_tables_idempotently(temp_db):
     cfg = config_module.load()
     api = _StubClient()

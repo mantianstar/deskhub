@@ -21,6 +21,7 @@
 | [x] M17-B | 执行入口 + 启动链路：`app/tasks.py`（四功能 + 手动触发）；删掉 `startup_fetch` / `startup_coins`；`daily_*` 按开关执行 | plan §11.1/§11.2/§19.4、`app/scheduler.py`、`app/main.py` | `app/tasks.py`、`app/scheduler.py`、`app/main.py` | M17-A | 启动日志无「启动补拉」；两个 daily job 仍注册；关掉的开关那一轮跳过 |
 | [x] M17-C | 页面：`/control`（开关 + 运行状态 + 最近结果 + 立即运行）+ 导航入口 | plan §19.5、`app/templates/sources.html`（样式参照） | `app/routers/control.py`、`app/templates/control.html`、`app/templates/base.html` | M17-B | 页面列出四个功能；启停 302；未知功能 404；「立即运行」忽略开关、后台跑完结果回显 |
 | [x] M17-D | 测试 + 文档回写 | plan/core.md §19.6、spec/core.md §9 / spec/coins.md §14.8、tasks.md | `tests/test_control.py`、`tests/test_scheduler.py`、`tests/conftest.py`、spec.md、plan.md、tasks.md、README.md | M17-C | `pytest` 267 passed；spec↔plan↔tasks↔README 无跑偏 |
+| [x] M17-E | 「匹配」进入运行控制（仅手动）：开关定义 + `run_coins_match`（画像优先，无画像回退标签匹配）+ 页面「仅手动」 | plan §19.2/§19.4/§19.5、spec §9 | `app/switches.py`、`app/tasks.py`、`app/templates/control.html`、`tests/test_control.py` | M17-D | 页面列出六个功能；匹配行无启停按钮、可立即运行；`pytest tests -q` 全绿 |
 
 ## 验证证据
 

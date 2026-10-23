@@ -12,7 +12,7 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Callable
 
-from app.migrations import v4, v8, v11, v12, v13, v14, v16, v17, v18
+from app.migrations import v4, v8, v11, v12, v13, v14, v16, v17, v18, v19, v20
 
 # (from_version, to_version) -> {表名: {列名: 列定义}}
 COLUMN_MIGRATIONS: dict[tuple[str, str], dict[str, dict[str, str]]] = {
@@ -24,12 +24,16 @@ COLUMN_MIGRATIONS: dict[tuple[str, str], dict[str, dict[str, str]]] = {
     ("15", "16"): v16.COLUMNS,
     ("16", "17"): v17.COLUMNS,
     ("17", "18"): v18.COLUMNS,
+    ("18", "19"): {},
+    ("19", "20"): {},
 }
 
 # (from_version, to_version) -> 建表之外还要跑一次的数据回填
 DATA_MIGRATIONS: dict[tuple[str, str], Callable[[sqlite3.Connection], None]] = {
     ("11", "12"): v12.rebuild_coin_lot_fts,
     ("17", "18"): v18.backfill_coin_lot_images,
+    ("18", "19"): v19.normalize_series_labels,
+    ("19", "20"): v20.upgrade_japanese_grade_years,
 }
 
 

@@ -36,6 +36,7 @@
           {% for name in compositions %}<option value="{{ name }}"></option>{% endfor %}
         </datalist>
       </label>
+      <button class="btn btn-ghost" type="submit" formmethod="get" formaction="/coins/manage">查询</button>
       <button class="btn btn-primary" type="submit">① 获取系列</button>
     </div>
     <details class="coin-disclosure">
@@ -47,6 +48,15 @@
         需本机开着带调试端口的 Chrome。<strong>重复操作是覆盖更新</strong>，不会重复累加。
       </p>
     </details>
+  </form>
+  <form class="search-form" method="post" action="/coins/manage/fetch-series-by-id">
+    <div class="search-row search-row-labeled">
+      <label class="field">系列 ID
+        <input class="search-input" type="text" name="series_id" required inputmode="numeric"
+               placeholder="Numista 系列 ID，如 670" autocomplete="off">
+      </label>
+      <button class="btn btn-primary" type="submit">按系列 ID 获取</button>
+    </div>
   </form>
 </details>
 

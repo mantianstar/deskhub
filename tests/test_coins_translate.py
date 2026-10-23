@@ -75,6 +75,13 @@ class _StubClient(numista.NumistaClient):
 # ---------------------------------------------------------------- 纯函数：解析
 
 
+def test_glossary_unifies_india_and_anna():
+    assert translate.to_zh("India - British") == "印度"
+    assert translate.to_zh("¼ Anna") == "1⁄4 安娜"
+    assert translate.to_zh("Quarter Anna") == "1⁄4 安娜"
+    assert translate.to_zh("½ Anna") == "半 安娜"
+
+
 def test_parse_series_texts_tolerates_fences_and_partial_fields():
     raw = '```json\n{"title": "1 便士 - 维多利亚", "comments": "标准重量。", "unknown": "x"}\n```'
     parsed = translate_llm.parse_series_texts(

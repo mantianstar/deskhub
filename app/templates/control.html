@@ -35,7 +35,8 @@
             <span class="source-url">{{ row.detail }}</span>
           </td>
           <td>
-            {% if row.enabled %}<span class="state state-on">启用</span>{% else %}<span class="state state-off">停用</span>{% endif %}
+            {% if not row.scheduled %}<span class="state state-off">仅手动</span>
+            {% elif row.enabled %}<span class="state state-on">启用</span>{% else %}<span class="state state-off">停用</span>{% endif %}
           </td>
           <td>
             {% if row.running %}<span class="state state-on">运行中</span>{% else %}<span class="state state-off">空闲</span>{% endif %}
@@ -49,9 +50,11 @@
             {% endif %}
           </td>
           <td class="row-actions">
+            {% if row.scheduled %}
             <form method="post" action="/control/{{ row.key }}/toggle">
               <button class="btn btn-ghost" type="submit">{% if row.enabled %}停用{% else %}启用{% endif %}</button>
             </form>
+            {% endif %}
             <form method="post" action="/control/{{ row.key }}/run">
               <button class="btn btn-ghost" type="submit">立即运行</button>
             </form>

@@ -52,6 +52,7 @@ def test_all_features_enabled_by_default(tmp_path):
         switches.KNOWLEDGE_SCORE,
         switches.COINS_COLLECT,
         switches.COINS_FINALIZE,
+        switches.COINS_MATCH,
         switches.COINS_PRICE,
     ]
     for feature in switches.FEATURES:
@@ -84,6 +85,14 @@ def test_control_page_lists_all_features(web):
     for feature in switches.FEATURES:
         assert feature.label in resp.text
         assert feature.group in resp.text
+
+
+def test_match_is_manual_only(web):
+    """「匹配」只给立即运行：标「仅手动」，不渲染启停按钮。"""
+    text = web.get("/control").text
+    assert "仅手动" in text
+    assert f"/control/{switches.COINS_MATCH}/toggle" not in text
+    assert f"/control/{switches.COINS_MATCH}/run" in text
 
 
 def test_toggle_endpoint_flips_and_redirects(web):

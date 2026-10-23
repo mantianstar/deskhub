@@ -56,7 +56,7 @@ nohup .venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8765 > data/logs/uv
 | `/m/agent`、`/m/bigdata` | 入口视图：只列该入口的今日精选 |
 | `/search` | 历史搜索：关键词（标题 + 摘要）+ 时间范围 + 入口筛选 + 分页；筛选条件都在 URL 上，可收藏 / 分享。**时间范围按「发布时间」筛** |
 | `/sources` | 源管理：每个源可「启用 / 停用」「立即抓取」；连续失败 `>= 3` 的源标红（悬停看最后一次 `error` 与 `http_status`）。界面启停只在本进程存活期内有效，重启会被 `config/sources.yaml` 覆盖回来 |
-| `/control` | 运行控制：五个功能开关（控制每天 08:00 的定时任务，存库、重启保留）+ 各自的「立即运行」（手动跑一次、忽略开关、后台执行） |
+| `/control` | 运行控制：六个功能（五个定时开关 + 仅手动的铜币匹配）的「立即运行」；开关控制每天 08:00 的定时任务，存库、重启保留（手动跑一次、忽略开关、后台执行） |
 | `/funds` | 占位页，只显示「未启用」 |
 | `/coins`、`/coins/profile`、`/coins/collection`、`/coins/collections`、`/coins/grades`、`/coins/info`、`/coins/manage` | 铜币各入口，见下 |
 

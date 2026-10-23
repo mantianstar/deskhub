@@ -1,0 +1,60 @@
+{# 品相台账结果区：整页渲染与「新增组合」的局部刷新共用（fragment 请求只返回这一段）。 #}
+{% if combos %}
+<form method="post" action="/coins/grades/save">
+  <input type="hidden" name="filter_country" value="{{ country }}">
+  <input type="hidden" name="filter_year" value="{{ year }}">
+  <input type="hidden" name="filter_denomination" value="{{ denomination }}">
+  <div class="table-wrap">
+    <table class="sources-table coin-grade-table">
+      <thead>
+        <tr>
+          <th>国家</th>
+          <th class="nowrap">年份</th>
+          <th class="nowrap">年号</th>
+          <th>面值</th>
+          <th>所属收藏系列</th>
+          <th class="nowrap">品相</th>
+          <th class="nowrap">操作</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for combo in combos %}
+        <tr>
+          <td>{{ combo.country }}</td>
+          <td class="nowrap">{{ combo.era }}</td>
+          <td class="nowrap">{{ combo.era_label }}</td>
+          <td>{{ combo.denomination }}</td>
+          <td class="coin-grade-collection">{{ combo.collection_name or '—' }}</td>
+          <td class="nowrap">
+            <input type="hidden" name="country" value="{{ combo.country }}">
+            <input type="hidden" name="era" value="{{ combo.era }}">
+            <input type="hidden" name="denomination" value="{{ combo.denomination }}">
+            <select name="grade" aria-label="品相">
+              <option value=""{{ ' selected' if not combo.grade else '' }}>未录入</option>
+              {% for grade in grades %}
+              <option value="{{ grade }}"{{ ' selected' if combo.grade == grade else '' }}>{{ grade }}</option>
+              {% endfor %}
+            </select>
+          </td>
+          <td class="nowrap coin-grade-del">
+            <button class="btn btn-ghost js-grade-del" type="button"
+                    data-country="{{ combo.country }}"
+                    data-era="{{ combo.era }}"
+                    data-denomination="{{ combo.denomination }}"
+                    title="删除整行：清掉该组合的全部历史订单与品相记录">删除</button>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="coin-grade-actions">
+    <button class="btn btn-primary" type="submit">保存</button>
+  </div>
+</form>
+{% else %}
+<div class="empty">
+  没有可录入的历史记录。先在「铜币画像」跑
+  <code>python -m app.cli coins-parse-orders</code> 从 <code>data/orders.xlsx</code> 生成订单。
+</div>
+{% endif %}

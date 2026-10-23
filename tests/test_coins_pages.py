@@ -493,7 +493,7 @@ def test_session_page_renders_shop_header_and_recommended_lots(web):
 
 
 def test_session_page_shows_closed_status_and_lot_outcome(web):
-    """已截拍专场：状态显示「已截拍」，拍品标已成交 / 流拍并替换价签。"""
+    """已截拍专场：状态显示「已截拍」，拍品右侧标已成交 / 流拍图标并替换价签。"""
     session_id = _seed_empty_session("已截拍小店", followed=False)
     repository.set_coin_session_status(session_id, "closed")
     now = repository.utcnow()
@@ -524,8 +524,8 @@ def test_session_page_shows_closed_status_and_lot_outcome(web):
 
     assert page.status_code == 200
     assert "已截拍" in page.text
-    assert "✓ 已成交" in page.text
-    assert "✕ 流拍" in page.text
+    assert "coin-lot-sold.png" in page.text
+    assert "coin-lot-unsold.png" in page.text
     assert "中标价：" in page.text and "88" in page.text
     assert "无人出价" in page.text
 
@@ -1018,6 +1018,7 @@ def test_manage_page_renders_form_and_results(web):
     _seed_series()
     page = web.get("/coins/manage", params={"country": "英国", "year": "1808"})
     assert page.status_code == 200
+    assert 'formaction="/coins/manage">查询</button>' in page.text
     assert "① 获取系列" in page.text
     assert "② 获取年份信息" in page.text
     assert "③ 获取年份估值" in page.text
@@ -1106,6 +1107,25 @@ def test_manage_fetch_series_calls_collect_and_redirects(web, monkeypatch):
     assert resp.status_code == 302
     assert resp.headers["location"].startswith("/coins/manage?")
     assert calls == [("英国", 1808, "1便士")]
+
+
+def test_manage_fetch_series_by_id_calls_collect_and_redirects(web, monkeypatch):
+    calls: list[int] = []
+
+    async def fake_collect_series_by_id(_config, *, series_id, **_kw):
+        calls.append(series_id)
+
+    monkeypatch.setattr(coins_numista, "collect_series_by_id", fake_collect_series_by_id)
+    resp = web.post(
+        "/coins/manage/fetch-series-by-id", data={"series_id": "670"}, follow_redirects=False
+    )
+    assert resp.status_code == 302
+    assert resp.headers["location"] == "/coins/series/670"
+    assert calls == [670]
+
+    bad = web.post("/coins/manage/fetch-series-by-id", data={"series_id": "abc"})
+    assert "系列 ID 必须是数字" in bad.text
+    assert calls == [670]
 
 
 def test_manage_fetch_issues_calls_collect_and_redirects(web, monkeypatch):
@@ -1341,6 +1361,8 @@ def test_normalize_country_to_numista_style():
     assert coins_grades.normalize_country("泽西岛") == "泽西"
     assert coins_grades.normalize_country("英属泽西岛") == "泽西"
     assert coins_grades.normalize_country("根西岛") == "根西"
+    # 系列库的旧译文 → 与 Numista 发行方统一
+    assert coins_grades.normalize_country("印度 - British") == "印度"
     # 没有前缀 / 会变空 → 原样
     assert coins_grades.normalize_country("英国") == "英国"
     assert coins_grades.normalize_country("  英国 ") == "英国"
@@ -1352,14 +1374,26 @@ def test_normalize_year_to_numista_style():
     assert coins_grades.normalize_year("1910年") == "1910"
     assert coins_grades.normalize_year("1959") == "1959"
     assert coins_grades.normalize_year(" 1910 ") == "1910"
-    # 年号纪年 → 取年份数字（与 Numista 的 year 对齐）
+    # 日本年号 → 公历年（与系列 gregorian_year 对齐，明治 6 年与大正 6 年不再都是 6）
+    assert coins_grades.normalize_year("明治十五年") == "1882"
+    assert coins_grades.normalize_year("明治15年") == "1882"
+    assert coins_grades.normalize_year("大正六年") == "1917"
+    assert coins_grades.normalize_year("昭和元年") == "1926"
+    # 其他年号仍取年份数字（与 Numista 的 year 对齐）
     assert coins_grades.normalize_year("康德四年") == "4"
     assert coins_grades.normalize_year("康德元年") == "1"
-    assert coins_grades.normalize_year("明治十五年") == "15"
-    assert coins_grades.normalize_year("明治15年") == "15"
     assert coins_grades.normalize_year("民国六十二年") == "62"
     # 只有年号、没有年份数字 → 原样保留
     assert coins_grades.normalize_year("光绪") == "光绪"
+
+
+def test_japanese_era_label():
+    assert coins_grades.japanese_era_label("日本", "1873") == "明治六年"
+    assert coins_grades.japanese_era_label("日本", "1917") == "大正六年"
+    assert coins_grades.japanese_era_label("日本", "1912") == "大正元年"
+    # 没有公历年 / 非日本 → 空
+    assert coins_grades.japanese_era_label("日本", "6") == ""
+    assert coins_grades.japanese_era_label("英国", "1873") == ""
 
 
 def test_normalize_denomination_to_numista_style():
@@ -1374,7 +1408,9 @@ def test_normalize_denomination_to_numista_style():
     assert coins_grades.normalize_denomination("拾分") == "10 分"
     assert coins_grades.normalize_denomination("1/4安娜") == "1⁄4 安娜"
     assert coins_grades.normalize_denomination("1/12先令") == "1⁄12 先令"
-    assert coins_grades.normalize_denomination("¼安娜") == "四分之一 安娜"
+    assert coins_grades.normalize_denomination("¼安娜") == "1⁄4 安娜"
+    assert coins_grades.normalize_denomination("四分之一安娜") == "1⁄4 安娜"
+    assert coins_grades.normalize_denomination("四分之一 安那") == "1⁄4 安娜"
     assert coins_grades.normalize_denomination("½便士") == "半 便士"
     # 已是统一写法 → 幂等
     assert coins_grades.normalize_denomination("1 便士") == "1 便士"
@@ -1444,6 +1480,29 @@ def test_grades_page_lists_combos_with_dropdown(web):
     # 展示的是统一后的值
     assert "<td>1 分</td>" in page.text
     assert "<td>新西兰</td>" in page.text
+
+
+def test_grades_page_shows_gregorian_year_and_era_for_japanese_coins(web):
+    """日本年号按公历年成行，年号列显示「年号 + 年号年份」。"""
+    for order_no, era in (("J1", "明治六年"), ("J2", "大正六年")):
+        repository.upsert_coin_order(
+            CoinOrder(
+                order_no=order_no,
+                shop_name="小铺",
+                item_name="日本2钱",
+                price=10.0,
+                country="日本",
+                era=era,
+                denomination="2钱",
+            )
+        )
+    assert [(c.era, c.era_label) for c in _combos()] == [
+        ("1873", "明治六年"),
+        ("1917", "大正六年"),
+    ]
+    page = web.get("/coins/grades")
+    assert "1873" in page.text and "1917" in page.text
+    assert "明治六年" in page.text and "大正六年" in page.text
 
 
 def test_grades_page_derives_collection_series(web):
@@ -1567,6 +1626,50 @@ def test_grades_add_creates_combo_and_normalizes(web):
     assert [
         (c.country, c.era, c.denomination, c.order_count, c.grade) for c in _combos()
     ][-1] == ("英国", "1910", "1 便士", 0, "普通")
+
+
+def test_grades_add_fragment_returns_results_only(web):
+    """新增组合局部刷新：只返回按当前筛选条件重查的结果片段，不跳转。"""
+    _seed_orders()
+    resp = web.post(
+        "/coins/grades/add",
+        data={
+            "country": "英国",
+            "year": "1910",
+            "denomination": "1便士",
+            "grade": "普通",
+            "fragment": "1",
+            "filter_country": "英国",
+            "filter_year": "",
+            "filter_denomination": "",
+            "filter_grade": "",
+        },
+        follow_redirects=False,
+    )
+    assert resp.status_code == 200
+    # 只有结果区：没有页面骨架、查询表单、新增组合表单
+    assert '<table class="sources-table coin-grade-table">' in resp.text
+    assert 'action="/coins/grades/add"' not in resp.text
+    assert 'action="/coins/grades"' not in resp.text
+    # 筛选条件沿用（保存表单的隐藏字段）
+    assert 'name="filter_country" value="英国"' in resp.text
+    # 新增的组合出现在结果里，其他国家的组合被筛掉
+    assert "1910" in resp.text
+    assert "印度" not in resp.text
+
+
+def test_grades_add_uses_era_name_to_normalize_year(web):
+    """新增组合填年号：年份=6 + 年号=明治 → 公历 1873。"""
+    resp = web.post(
+        "/coins/grades/add",
+        data={"country": "日本", "year": "6", "era_name": "明治", "denomination": "2钱", "grade": "好"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 302
+    assert [
+        (g.country, g.era, g.denomination, g.grade)
+        for g in repository.list_coin_purchase_grades()
+    ] == [("日本", "1873", "2 钱", "好")]
 
 
 def test_grades_add_validates_input(web):

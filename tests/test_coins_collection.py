@@ -209,7 +209,10 @@ def test_composition_filter():
     assert collection.is_bronze_or_copper("Bronze")
     assert collection.is_bronze_or_copper("Copper")
     assert collection.is_bronze_or_copper("青铜")
+    assert collection.is_bronze_or_copper("铜 (98% 铜, 1% 锡, 1% 锌)")
     assert not collection.is_bronze_or_copper("Copper-nickel")
+    assert not collection.is_bronze_or_copper("黄铜")
+    assert not collection.is_bronze_or_copper("白铜 (75% 铜, 25% 镍)")
     assert not collection.is_bronze_or_copper("Silver")
     assert not collection.is_bronze_or_copper(None)
 
@@ -276,6 +279,70 @@ def test_build_profile_owned_missing_and_upgrade():
     assert profile.missing_years == [1863, 1864]
     assert profile.upgrade_years == [1861]  # 只有「差」需要升级
     assert profile.size_band == "大"
+
+
+def test_build_profile_matches_japanese_years_by_gregorian_year():
+    """明治 6 年（1873）与大正 6 年（1917）的 Numista year 都是 6，按公历年关联。"""
+    now = repository.utcnow()
+    meiji = CoinCollectionSeries(
+        id=1,
+        collection_key="jp-meiji-2sen",
+        name="日本 · 明治 · 2 钱",
+        country="日本",
+        ruler="明治",
+        denomination="2 钱",
+        size_mm=None,
+        size_band=None,
+        created_at=now,
+        updated_at=now,
+    )
+    profile = collection.build_profile(
+        meiji,
+        [_series(1, issuer="日本", ruler="明治", denomination="2 钱", min_year=6, max_year=6)],
+        issues_by_series={1: [_issue(11, 1, year=6, gregorian_year=1873)]},
+        values_by_series={},
+        orders=[
+            CoinOrder("1", None, "日本大正六年2钱", 10.0, country="日本", era="大正六年", denomination="2钱"),
+        ],
+        grades=[
+            CoinPurchaseGrade(None, "日本", "1873", "2 钱", "好", now),
+        ],
+    )
+
+    # 大正六年不落到明治六年的 6；品相里的 1873 才命中
+    assert profile.years == [6]
+    assert profile.owned_years == [6]
+    assert profile.missing_years == []
+
+
+def test_build_profile_matches_year_when_gregorian_year_missing():
+    """公历年只覆盖部分单版时，没录 gregorian_year 的年份仍按年份本身匹配（南非 1927 / 1929）。"""
+    now = repository.utcnow()
+    no_gregorian_1927 = _issue(12, 1, year=1927)
+    no_gregorian_1927.gregorian_year = None
+    no_gregorian_1929 = _issue(13, 1, year=1929)
+    no_gregorian_1929.gregorian_year = None
+    profile = collection.build_profile(
+        _collection(),
+        [_series(1)],
+        issues_by_series={
+            1: [
+                _issue(11, 1, year=1923),
+                no_gregorian_1927,
+                no_gregorian_1929,
+            ]
+        },
+        values_by_series={},
+        orders=[],
+        grades=[
+            CoinPurchaseGrade(None, "英国", "1927", "1 便士", "好", now),
+            CoinPurchaseGrade(None, "英国", "1929", "1 便士", "差", now),
+        ],
+    )
+
+    assert profile.owned_years == [1927, 1929]
+    assert profile.missing_years == [1923]
+    assert profile.upgrade_years == [1929]
 
 
 def test_build_profile_excludes_non_bronze_and_proof_years():
@@ -426,8 +493,8 @@ def test_priority_four_tops_up_when_items_enough_but_matches_short():
     assert len([item for item in items if item.priority == 1]) == 6
 
 
-def test_priority_four_caps_at_min_results_across_series():
-    """给了当日拍品时，多个候选系列各出一条，最多 min_results 个。"""
+def test_priority_four_caps_at_similar_limit_across_series():
+    """给了当日拍品时，多个候选系列各出一条，最多 similar_limit（默认 20）个。"""
     primary = _profile(key="uk-victoria-penny", years=[1860], owned=[])
     similars = [
         _profile(
@@ -437,7 +504,7 @@ def test_priority_four_caps_at_min_results_across_series():
             years=[1879 + index],
             owned=[],
         )
-        for index in range(1, 7)
+        for index in range(1, 23)
     ]
     lots = [
         CoinTodayLot(
@@ -451,7 +518,7 @@ def test_priority_four_caps_at_min_results_across_series():
             session_title="",
             auction_at=None,
         )
-        for index in range(1, 7)
+        for index in range(1, 23)
     ]
 
     items = recommend.build_recommendations(
@@ -463,8 +530,7 @@ def test_priority_four_caps_at_min_results_across_series():
     )
 
     fours = [item for item in items if item.priority == 4]
-    assert len(fours) == 5
-    assert {item.year for item in fours} == {1880, 1881, 1882, 1883, 1884}
+    assert len(fours) == 20
 
 
 def test_similar_tops_up_same_series_with_multiple_lots():

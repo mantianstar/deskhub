@@ -19,6 +19,7 @@ from app import config, db, fetcher, llm, logging_setup, models, pipeline, repos
 from app.coins import numista as coins_numista
 from app.coins import numista_web as coins_numista_web
 from app.coins import coinmap as coins_coinmap
+from app.coins import explore as coins_explore
 from app.coins import pipeline as coins_pipeline
 from app.coins import profile as coins_profile
 from app.coins import translate_llm as coins_translate_llm

@@ -456,7 +456,7 @@ CREATE TABLE IF NOT EXISTS schema_meta (key TEXT PRIMARY KEY, value TEXT NOT NUL
 
 ### 19.2 开关模型
 
-五个功能各有独立开关（key 即 `feature_switches.key`）：
+五个定时功能各有独立开关（key 即 `feature_switches.key`）；另有「匹配」只支持手动运行：
 
 | key | 分组 | 功能 | 花 token |
 |---|---|---|---|
@@ -464,6 +464,7 @@ CREATE TABLE IF NOT EXISTS schema_meta (key TEXT PRIMARY KEY, value TEXT NOT NUL
 | `knowledge_score` | 知识聚合 | 给待打分条目打分 | **是**（唯一） |
 | `coins_collect` | 铜币拍卖 | 采集专场与拍品（gapi） | 否 |
 | `coins_finalize` | 铜币拍卖 | 回采已结束专场的拍品终态（成交 / 流拍 / 成交价 / 中拍人） | 否 |
+| `coins_match` | 铜币拍卖 | 按收藏画像重算拍品推荐位（**仅手动**，不参与定时任务） | 否 |
 | `coins_price` | 铜币拍卖 | 查站内历史成交 | 否 |
 
 - **只影响每天 08:00 的定时任务**；`/control` 的「立即运行」是手动触发，**忽略开关**。
@@ -488,7 +489,7 @@ repository 两个接口：`feature_switch_states()`（读全部 → `dict[str, b
 
 ### 19.4 执行入口（`app/tasks.py`）
 
-五个功能各一个「跑一次 → 返回一句摘要」的函数，**定时任务与管理页共用**：
+六个功能各一个「跑一次 → 返回一句摘要」的函数，**定时任务与管理页共用**：
 
 | 函数 | 做什么 |
 |---|---|
@@ -496,7 +497,11 @@ repository 两个接口：`feature_switch_states()`（读全部 → `dict[str, b
 | `run_knowledge_score` | `scorer.run_pending()` |
 | `run_coins_collect` | `coins_pipeline.run(collect_only=True)`（采集 + 匹配，不回采） |
 | `run_coins_finalize` | `coins_pipeline.run(finalize_only=True)`（只回采终态并同步成交库） |
+| `run_coins_match` | `recommend.rematch_all()`（画像优先；没配画像回退 `matcher.rematch_all()`）；不采集 / 不回采 / 不查价 |
 | `run_coins_price` | `coins_pipeline.run(price_only=True)` |
+
+`coins_match` 在开关定义里标 `scheduled=False`：页面显示「仅手动」、不渲染启停按钮，`daily_coins` 不调用它
+（匹配已包含在采集与查价里，再定时跑一遍是重复劳动）。
 
 `daily_coins` 按开关**依次调用三段**（采集 → 回采 → 查价），不再合成一整轮 —— 否则回采开关不生效。
 手动触发走 `trigger(config, key)`：`asyncio.create_task` **后台执行**（铜币查价一轮可能几分钟，不能挂住 HTTP 请求），
@@ -508,7 +513,7 @@ repository 两个接口：`feature_switch_states()`（读全部 → `dict[str, b
 
 | 路由 | 动作 |
 |---|---|
-| `GET /control` | 五个功能的开关状态 + 运行状态（运行中 / 空闲）+ 最近一次结果 |
+| `GET /control` | 六个功能的开关状态（「匹配」标「仅手动」）+ 运行状态（运行中 / 空闲）+ 最近一次结果 |
 | `POST /control/{key}/toggle` | 启停取反（302 回本页）；未知 key → 404 |
 | `POST /control/{key}/run` | 立即跑一次（302 回本页，后台执行）；未知 key → 404 |
 
@@ -517,8 +522,8 @@ repository 两个接口：`feature_switch_states()`（读全部 → `dict[str, b
 
 ### 19.6 测试
 
-- `tests/test_control.py`：默认全开、toggle 落库（重读仍保留）、未知 key 当未启用、页面列出五个功能、
-  启停 302 与状态翻转、未知功能 404、「立即运行」忽略开关且后台跑完把结果留在页面上。
+- `tests/test_control.py`：默认全开、toggle 落库（重读仍保留）、未知 key 当未启用、页面列出六个功能、
+  「匹配」标「仅手动」且无启停按钮、启停 302 与状态翻转、未知功能 404、「立即运行」忽略开关且后台跑完把结果留在页面上。
 - `tests/test_scheduler.py`：`daily_pipeline` 按开关执行（关掉抓取只打分、两个都关整轮无事）、
   抓取失败仍向上抛给 APScheduler、`daily_coins` 采集 / 回采 / 查价都关时跳过、网关失败仍就地兜住。
 - `tests/conftest.py`：`no_scheduler` 只挡 `scheduler.start`（补拉已不存在）。

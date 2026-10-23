@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-SCHEMA_VERSION = "18"
+SCHEMA_VERSION = "20"
 
 # 所有时间列存 UTC ISO8601 字符串（SQLite 无原生时间类型）
 DDL = """
@@ -598,6 +598,8 @@ class CoinOrderCombo:
     grade: str | None
     # 派生展示字段（不落库）：命中的收藏系列名，按国家 + 面值匹配
     collection_name: str = ""
+    # 派生展示字段（不落库）：日本年号的「年号 + 年号年份」（如 明治六年），无公历年为空
+    era_label: str = ""
 
 
 @dataclass

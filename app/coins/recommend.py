@@ -257,6 +257,7 @@ def build_recommendations(
     config: CoinCollectionConfig | None = None,
     rarity_floor: float = 0.005,
     min_results: int = 5,
+    similar_limit: int = 20,
     top_upgrades_per_series: int = 3,
     denomination_tiers: tuple[tuple[str, ...], ...] = (),
 ) -> list[CoinRecommendation]:
@@ -400,7 +401,8 @@ def build_recommendations(
         )
 
     if similar_lots is not None:
-        # 先匹配再取数：排除精准命中的拍品；第一轮每卡 1 条，第二轮按剩余名额多条
+        # 先匹配再取数：排除精准命中的拍品；第一轮每卡 1 条（卡数不超过 similar_limit），
+        # 第二轮按剩余名额多条
         pool = [lot for lot in similar_lots if lot.id not in (exclude_lot_ids or set())]
         added_lots = 0
         used_series: set[str] = set()
@@ -410,7 +412,9 @@ def build_recommendations(
 
         def add(item: CoinRecommendation, *, new_card: bool) -> bool:
             nonlocal added_lots
-            if added_lots >= min_results:
+            if new_card and len(series_cards) >= similar_limit:
+                return False
+            if not new_card and added_lots >= min_results:
                 return False
             series_key = item.collection.collection_key
             key = (series_key, item.year)

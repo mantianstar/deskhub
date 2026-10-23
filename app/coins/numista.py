@@ -759,6 +759,29 @@ async def collect_series(
             await api.__aexit__(None, None, None)
 
 
+async def collect_series_by_id(
+    config: Config,
+    *,
+    series_id: int,
+    client: NumistaClient | None = None,
+    llm_client: llm.LLMClient | None = None,
+) -> SeriesInfo:
+    """按系列号直接取详情并落库（不按面值 / 材质过滤，已知系列 ID 时用）。"""
+    owned = client is None
+    api = client or NumistaClient(config)
+    if owned:
+        await api.__aenter__()
+    try:
+        async with _translator(config, llm_client) as translator:
+            info = await api.type_detail(series_id)
+            await _store_series(info, repository.utcnow(), llm_client=translator)
+            logger.info("Numista 系列（按 ID）：%s → %s", series_id, info.title)
+            return info
+    finally:
+        if owned:
+            await api.__aexit__(None, None, None)
+
+
 async def collect_issues(
     config: Config,
     *,
