@@ -22,7 +22,6 @@ from app.models import (
     CoinIssue,
     CoinIssueValues,
     CoinLot,
-    CoinOrder,
     CoinPurchaseGrade,
     CoinRecommendation,
     CoinSeries,
@@ -264,10 +263,6 @@ def test_build_profile_owned_missing_and_upgrade():
             ]
         },
         values_by_series={1: [_values(12, 1, frequency=0.6, vf=10.0, xf=30.0)]},
-        orders=[
-            CoinOrder("1", None, "英国1860年1便士", 10.0, country="英国", era="1860年", denomination="1便士"),
-            CoinOrder("2", None, "英国1862年1便士", 10.0, country="英国", era="1862", denomination="1 便士"),
-        ],
         grades=[
             CoinPurchaseGrade(None, "英国", "1861", "1 便士", "差", repository.utcnow()),
             CoinPurchaseGrade(None, "英国", "1862", "1 便士", "好", repository.utcnow()),
@@ -275,8 +270,9 @@ def test_build_profile_owned_missing_and_upgrade():
     )
 
     assert profile.years == [1860, 1861, 1862, 1863, 1864]
-    assert profile.owned_years == [1860, 1861, 1862]
-    assert profile.missing_years == [1863, 1864]
+    # 已有年份只看品相（好 / 普通 / 差）；1860 未录品相，按实物缺失计入缺失年份
+    assert profile.owned_years == [1861, 1862]
+    assert profile.missing_years == [1860, 1863, 1864]
     assert profile.upgrade_years == [1861]  # 只有「差」需要升级
     assert profile.size_band == "大"
 
@@ -301,9 +297,6 @@ def test_build_profile_matches_japanese_years_by_gregorian_year():
         [_series(1, issuer="日本", ruler="明治", denomination="2 钱", min_year=6, max_year=6)],
         issues_by_series={1: [_issue(11, 1, year=6, gregorian_year=1873)]},
         values_by_series={},
-        orders=[
-            CoinOrder("1", None, "日本大正六年2钱", 10.0, country="日本", era="大正六年", denomination="2钱"),
-        ],
         grades=[
             CoinPurchaseGrade(None, "日本", "1873", "2 钱", "好", now),
         ],
@@ -333,7 +326,6 @@ def test_build_profile_matches_year_when_gregorian_year_missing():
             ]
         },
         values_by_series={},
-        orders=[],
         grades=[
             CoinPurchaseGrade(None, "英国", "1927", "1 便士", "好", now),
             CoinPurchaseGrade(None, "英国", "1929", "1 便士", "差", now),
@@ -356,7 +348,6 @@ def test_build_profile_excludes_non_bronze_and_proof_years():
             2: [_issue(21, 2, year=1860, mintage=999999)],
         },
         values_by_series={},
-        orders=[],
         grades=[],
     )
 

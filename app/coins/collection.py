@@ -4,8 +4,9 @@
 1. `coin_collection_series[_members]` 手工把多个 Numista series 合并成一个收藏系列；
 2. 只保留材质为 Bronze / Copper 的系列，并剔除精制币（Proof）；
 3. 按年份聚合单版：同一年多个普制版别时取**发行量最大**的一条；
-4. 历史订单（`coin_orders`）与人工品相（`coin_purchase_grades`）按
-   「国家 + 年份 + 面值」回填「已有年份」；品相为「差」的年份进入需升级列表。
+4. 人工品相（`coin_purchase_grades`）按「国家 + 年份 + 面值」回填「已有年份」：
+   品相按 好 / 普通 / 差 三个值匹配，为「差」的年份另外进入需升级列表；
+   未录入品相（有订单但实物缺失）不视为已有，计入缺失年份。
 
 职责边界：本模块不依赖 FastAPI；SQL 一律走 `app.repository`。
 """
@@ -25,7 +26,6 @@ from app.models import (
     CoinCollectionSeries,
     CoinIssue,
     CoinIssueValues,
-    CoinOrder,
     CoinPurchaseGrade,
     CoinSeries,
     CoinYearSpec,
@@ -167,14 +167,15 @@ def _collection_size(collection: CoinCollectionSeries, series_list: list[CoinSer
 def _owned_years(
     collection: CoinCollectionSeries,
     specs_by_year: dict[int, list[CoinYearSpec]],
-    orders: list[CoinOrder],
     grades: list[CoinPurchaseGrade],
 ) -> tuple[list[int], list[int]]:
     """回填已有年份与需升级年份（品相为「差」）。
 
+    已有年份只看人工品相（好 / 普通 / 差）；未录入品相的组合即使有订单也按实物缺失处理，
+    不计入已有年份，从而落进缺失年份。
     匹配口径是「国家 + 年份 + 面值」：国家 / 面值先按 Numista 口径统一，再做宽松包含。
     系列里有公历年时按公历年关联（日本年号：明治 6 年 = 1873、大正 6 年 = 1917）；
-    订单本身没有公历年（如裸数字 `6`）才退回年号数字。
+    品相记录本身没有公历年（如裸数字 `6`）才退回年号数字。
     """
     year_set = set(specs_by_year)
     gregorian_years = {
@@ -200,13 +201,6 @@ def _owned_years(
         year = _parse_year(value)
         return year if year in year_set else None
 
-    for order in orders:
-        if not (_same_identity(_norm_country(order.country), country) and _same_identity(_norm_denomination(order.denomination), denomination)):
-            continue
-        year = matched_year(order.era)
-        if year is not None:
-            owned.add(year)
-
     for grade in grades:
         if not (_same_identity(_norm_country(grade.country), country) and _same_identity(_norm_denomination(grade.denomination), denomination)):
             continue
@@ -226,7 +220,6 @@ def build_profile(
     *,
     issues_by_series: dict[int, list[CoinIssue]],
     values_by_series: dict[int, list[CoinIssueValues]],
-    orders: list[CoinOrder],
     grades: list[CoinPurchaseGrade],
 ) -> CoinCollectionProfile:
     """组装一个收藏系列的画像。"""
@@ -246,7 +239,7 @@ def build_profile(
 
     specs_by_year = dict(sorted(specs_by_year.items()))
     years = sorted(specs_by_year)
-    owned, upgrade = _owned_years(collection, specs_by_year, orders, grades)
+    owned, upgrade = _owned_years(collection, specs_by_year, grades)
     missing = [year for year in years if year not in set(owned)]
     size_mm = _collection_size(collection, eligible)
     return CoinCollectionProfile(
@@ -271,7 +264,6 @@ def build_profiles(
     *,
     issues_by_series: dict[int, list[CoinIssue]],
     values_by_series: dict[int, list[CoinIssueValues]],
-    orders: list[CoinOrder],
     grades: list[CoinPurchaseGrade],
 ) -> list[CoinCollectionProfile]:
     """批量组装画像；没有成员映射的收藏系列也会返回（空画像）。"""
@@ -293,7 +285,6 @@ def build_profiles(
                 member_series,
                 issues_by_series=issues_by_series,
                 values_by_series=values_by_series,
-                orders=orders,
                 grades=grades,
             )
         )
@@ -332,7 +323,6 @@ def load_profiles() -> list[CoinCollectionProfile]:
         series_cn,
         issues_by_series=issues_by_series,
         values_by_series=values_by_series,
-        orders=repository.list_coin_orders(),
         grades=repository.list_coin_purchase_grades(),
     )
 

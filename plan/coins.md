@@ -230,7 +230,7 @@ CREATE INDEX IF NOT EXISTS idx_coin_runs ON coin_fetch_runs(kind, started_at DES
 
 | job | 触发 | 说明 |
 |---|---|---|
-| `daily_coins` | 每天 `08:00` Asia/Shanghai | 与 `daily_pipeline` 同批但**独立任务**；`coalesce=True`、`misfire_grace_time=3600`、`max_instances=1` |
+| `daily_coins` | 每天 `07:00` Asia/Shanghai | 与 `daily_pipeline` 同批但**独立任务**；`coalesce=True`、`misfire_grace_time=3600`、`max_instances=1` |
 
 - 采集、回采、查价**各有一个定时开关**（`/control`，见 [core.md](./core.md) §19）；都关时这一轮直接跳过。匹配不参与定时任务，运行控制页提供「匹配」手动重跑（纯本地重算推荐位）。
 - 两个 `daily_*` 任务**互不传播失败**（spec/coins.md §14.9）：铜币采集挂掉不影响知识日报，反之亦然。
@@ -563,7 +563,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS uidx_coin_purchase_grades
 ```
 
 - **为什么不写 `coin_orders.condition`**：那是**订单级**、由 LLM 抽的**包浆描述**（如「巧克力包浆」），
-  覆盖成 好/普通/差 会污染画像（`condition` 是画像维度之一）并影响每日推荐。本表**与画像 / 推荐无关**，只作人工参考。
+  覆盖成 好/普通/差 会污染画像（`condition` 是画像维度之一）并影响每日推荐。本表是画像「已有年份」的**唯一依据**（未录入即计入缺失年份）。
 - **一个组合一行**：去重键就是 `(country, era, denomination)`；重存为覆盖（upsert），选「未录入」则删行。
 - **手工新增**：多一个可空的「年号」输入；非空且年份不是 4 位公历年时拼成 `年号 + 年份` 再走 `normalize_year`
   （`6` + `明治` → `明治6` → `1873`）。
@@ -695,9 +695,10 @@ CREATE TABLE IF NOT EXISTS coin_collection_series_members (
 - 成员 series 先过滤材质；单版按 `year` 聚合，剔除 `is_proof` 或单版备注含 Proof/精制的条目；
   同一年按 `(有发行量, mintage, numista_id)` 降序取第一条。
 - `rarity = frequency / 100`；`price_estimates = {VF: value_vf, XF: value_xf}`。
-- 已有年份：`coin_orders` + `coin_purchase_grades` 按统一后的「国家 + 年份 + 面值」宽松匹配；
+- 已有年份：只看 `coin_purchase_grades`（好 / 普通 / 差）按统一后的「国家 + 年份 + 面值」宽松匹配；
+  未录入（有订单但实物缺失）不计入已有年份；
   系列里有 `gregorian_year` 时按公历年关联（明治 6 年 = 1873、大正 6 年 = 1917），
-  订单本身没有公历年（裸数字）才退回年号数字；
+  品相记录本身没有公历年（裸数字）才退回年号数字；
   需升级年份：已有年份中 `grade == "差"`。
 - 收藏系列尺寸：显式 `size_mm` 优先，否则取成员 series 尺寸中位数。
 

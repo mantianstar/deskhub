@@ -10,6 +10,16 @@
 
 ---
 
+## v1.66 — 2026-10-25 画像已有年份改由品相决定
+
+**起因**：有订单不等于手里有实物（未录入品相的往往是实物缺失），按订单算已有年份会把缺失年份误判成已集齐。
+
+**改了什么**：`app/coins/collection.py` 的 `_owned_years` 只按 `coin_purchase_grades` 的 好 / 普通 / 差 匹配已有年份（`差` 仍进需升级），未录入即计入缺失年份；`build_profile` / `build_profiles` / `load_profiles` 与 `app/coins/explore.py` 不再读取 `coin_orders`。同步改写 spec §14.16 / §14.17.3、plan §18.17，更新 `tests/test_coins_collection.py` 的画像用例。
+
+**验证结论**：`pytest tests -q` 全绿；原用例中「1860 有订单无品相」从已有改为缺失。
+
+---
+
 ## v1.65 — 2026-10-25 定时任务提前到 07:00
 
 **起因**：10-25 那轮 08:00 因本机睡眠被 defer 到 08:14 才补跑、又被多次 DarkWake 打断，直到 09:07 才结束；用户要求把触发点提前到 07:00。

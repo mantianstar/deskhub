@@ -167,7 +167,6 @@ def load_candidate_profiles() -> list[CoinCollectionProfile]:
     candidates = repository.list_coin_explore_candidates()
     if not candidates:
         return []
-    orders = repository.list_coin_orders()
     grades = repository.list_coin_purchase_grades()
     now = repository.utcnow()
     profiles: list[CoinCollectionProfile] = []
@@ -195,7 +194,6 @@ def load_candidate_profiles() -> list[CoinCollectionProfile]:
             [series],
             issues_by_series={series.numista_id: issues},
             values_by_series={},
-            orders=orders,
             grades=grades,
         )
         if profile.years:
