@@ -42,7 +42,7 @@ nohup .venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8765 > data/logs/uv
 启动时依次执行：加载日志 → 校验配置 → 初始化数据库 → 同步源清单 → 启动调度器。配置校验失败会直接退出并打印原因。
 
 **重启不再自动抓取 / 打分 / 采集**（2026-10-15 起）：本机经常重启，而一轮自动补拉就是一次真实抓取外加一次 LLM 打分。
-现在只在每天 `08:00`（`config.app.timezone`）自动跑，且五个环节（知识抓取 / 打分、铜币采集 / 回采 / 查价）**各自可关**。
+现在只在每天 `07:00`（`config.app.timezone`）自动跑，且五个环节（知识抓取 / 打分、铜币采集 / 回采 / 查价）**各自可关**。
 那一刻本机没开机也不要紧：一小时内（`misfire_grace_time=3600`）起来会补跑一次。
 要立刻跑一轮，去 <http://127.0.0.1:8765/control> 点「立即运行」，或手工跑下面的 CLI。
 
@@ -56,7 +56,7 @@ nohup .venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8765 > data/logs/uv
 | `/m/agent`、`/m/bigdata` | 入口视图：只列该入口的今日精选 |
 | `/search` | 历史搜索：关键词（标题 + 摘要）+ 时间范围 + 入口筛选 + 分页；筛选条件都在 URL 上，可收藏 / 分享。**时间范围按「发布时间」筛** |
 | `/sources` | 源管理：每个源可「启用 / 停用」「立即抓取」；连续失败 `>= 3` 的源标红（悬停看最后一次 `error` 与 `http_status`）。界面启停只在本进程存活期内有效，重启会被 `config/sources.yaml` 覆盖回来 |
-| `/control` | 运行控制：六个功能（五个定时开关 + 仅手动的铜币匹配）的「立即运行」；开关控制每天 08:00 的定时任务，存库、重启保留（手动跑一次、忽略开关、后台执行） |
+| `/control` | 运行控制：六个功能（五个定时开关 + 仅手动的铜币匹配）的「立即运行」；开关控制每天 07:00 的定时任务，存库、重启保留（手动跑一次、忽略开关、后台执行） |
 | `/funds` | 占位页，只显示「未启用」 |
 | `/coins`、`/coins/profile`、`/coins/collection`、`/coins/collections`、`/coins/grades`、`/coins/info`、`/coins/manage` | 铜币各入口，见下 |
 
@@ -207,8 +207,12 @@ curl -s 127.0.0.1:8765/healthz | python3 -m json.tool
 .venv/bin/python -m app.cli coins-parse-orders        # 解析 data/orders.xlsx → 画像（调 LLM，一次性）
 .venv/bin/python -m app.cli coins-rebuild-profile     # 只用已入库订单重算画像标签（不调 LLM）
 .venv/bin/python -m app.cli coins-tags                # 打印画像标签表格
-.venv/bin/python -m app.cli coins-pipeline --limit 20 # 采集 → 匹配 → 定价 一整轮
+.venv/bin/python -m app.cli coins-pipeline            # 采集 → 匹配 → 定价 一整轮（全量）
+.venv/bin/python -m app.cli coins-pipeline --limit 20 # 只采前 20 个专场（试跑用）
 ```
+
+`--limit` 覆盖配置里的 `coins.max_sessions_per_run`（默认 80），只采当日场次的前 N 个；
+正式跑不要加，否则排在后面的专场当天就漏掉了。
 
 `purge` 删的是 `--before` 那天 `00:00`（业务时区）之前**抓到的**条目（`fetched_at`），
 `item_scores` 随外键级联删除，`sources` / `fetch_runs` 保留；不带 `--yes` 时只打印将删除的条数。

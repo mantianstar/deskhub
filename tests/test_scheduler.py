@@ -62,8 +62,8 @@ def _config(tmp_path: Path) -> Config:
 
 
 @pytest.mark.asyncio
-async def test_daily_job_fires_at_8am_local_with_plan_settings(tmp_path):
-    """每日任务：08:00 业务时区，coalesce / misfire_grace_time / max_instances 按 plan §11.2。"""
+async def test_daily_job_fires_at_7am_local_with_plan_settings(tmp_path):
+    """每日任务：07:00 业务时区，coalesce / misfire_grace_time / max_instances 按 plan §11.2。"""
     active = scheduler.start(_config(tmp_path))
     try:
         job = active.get_job(scheduler.DAILY_JOB_ID)
@@ -73,7 +73,7 @@ async def test_daily_job_fires_at_8am_local_with_plan_settings(tmp_path):
         assert job.max_instances == 1
 
         fields = {field.name: str(field) for field in job.trigger.fields}
-        assert fields["hour"] == "8"
+        assert fields["hour"] == "7"
         assert fields["minute"] == "0"
         assert str(job.trigger.timezone) == "Asia/Shanghai"
     finally:
@@ -82,7 +82,7 @@ async def test_daily_job_fires_at_8am_local_with_plan_settings(tmp_path):
 
 @pytest.mark.asyncio
 async def test_missed_run_within_grace_still_fires(tmp_path):
-    """08:00 那一刻本机没醒：只要还在 grace 内，进程起来后照样补跑，而不是被丢掉。"""
+    """07:00 那一刻本机没醒：只要还在 grace 内，进程起来后照样补跑，而不是被丢掉。"""
     active = scheduler.start(_config(tmp_path))
     fired = asyncio.Event()
 
@@ -128,7 +128,7 @@ async def test_run_missed_beyond_grace_is_dropped(tmp_path):
 
 @pytest.mark.asyncio
 async def test_daily_pipeline_respects_switches(tmp_path, monkeypatch):
-    """每天 08:00 那一轮按开关走：关掉抓取就只打分，两个都关就什么都不做（plan §19）。"""
+    """每天 07:00 那一轮按开关走：关掉抓取就只打分，两个都关就什么都不做（plan §19）。"""
     cfg = _config(tmp_path)
     db.init_db(cfg.app.db_path)
 

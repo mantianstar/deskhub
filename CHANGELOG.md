@@ -10,6 +10,18 @@
 
 ---
 
+## v1.65 — 2026-10-25 定时任务提前到 07:00
+
+**起因**：10-25 那轮 08:00 因本机睡眠被 defer 到 08:14 才补跑、又被多次 DarkWake 打断，直到 09:07 才结束；用户要求把触发点提前到 07:00。
+
+**改了什么**：`app/scheduler.py` 的 `DAILY_HOUR` 由 8 改为 7，`daily_pipeline` 与 `daily_coins` 的 cron 触发点同步变为每天 07:00（业务时区）；`misfire_grace_time` 等参数不变。
+
+**验证**：`pytest tests/test_scheduler.py -q` 7 passed。
+
+**受影响**：app/scheduler.py、tests/test_scheduler.py。
+
+---
+
 ## v1.64 — 2026-10-23 运行控制增加「匹配」手动重跑
 
 **起因**：改完收藏画像后想立刻重算今日拍品推荐位，原先只能重跑整轮采集（会请求站点）或手敲 Python。

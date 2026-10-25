@@ -11,6 +11,9 @@ data/coin_images/
 # 画像结果已落库（coin_orders / coin_profile_tags），重算时把文件放回 data/ 即可。
 data/orders.xlsx
 
+# 临时查询语句
+data/临时查询.sql
+
 # 密钥
 .env
 

@@ -62,7 +62,7 @@ respx
 
 ```
                     ┌──────────────── APScheduler (AsyncIOScheduler) ─────────────────┐
-                    │  job: daily_pipeline (每天 08:00 Asia/Shanghai，按开关执行)       │
+                    │  job: daily_pipeline (每天 07:00 Asia/Shanghai，按开关执行)       │
                     └───────────────────────────┬─────────────────────────────────────┘
                                                 │
                     ┌───────────────────────────▼─────────────────────────────────────┐
@@ -337,11 +337,11 @@ CREATE TABLE IF NOT EXISTS schema_meta (key TEXT PRIMARY KEY, value TEXT NOT NUL
 
 | job | 触发 | 说明 |
 |---|---|---|
-| `daily_pipeline` | 每天 `08:00` Asia/Shanghai | 按开关跑「抓取」与「打分」（§19） |
-| `daily_coins` | 每天 `08:00` Asia/Shanghai | 按开关跑「采集」与「查价」；与知识日报互不传播失败（§18.9） |
+| `daily_pipeline` | 每天 `07:00` Asia/Shanghai | 按开关跑「抓取」与「打分」（§19） |
+| `daily_coins` | 每天 `07:00` Asia/Shanghai | 按开关跑「采集」与「查价」；与知识日报互不传播失败（§18.9） |
 
 - 两个 job 跑之前都读 `feature_switches`：对应开关关着就跳过，日志里能看到「已停用，跳过」（§19）。
-- `misfire_grace_time=3600`：本机 08:05 才醒，任务仍然执行而不是被丢弃。
+- `misfire_grace_time=3600`：本机早上醒得晚，任务仍然执行而不是被丢弃。
 - `max_instances=1`：手工 CLI 与定时任务重叠时不并跑（`items` 的 UNIQUE 冲突只是兜底）。
 - 「抓取与打分之间等 1 秒」只留在 `pipeline.run` 里（CLI 出报用）；定时任务拆成两步执行，不经过它。
 
@@ -376,12 +376,12 @@ CREATE TABLE IF NOT EXISTS schema_meta (key TEXT PRIMARY KEY, value TEXT NOT NUL
 | 14 | feed 完全不给时间时，从条目 URL 路径里的 `YYYY/MM/DD` 反解发布日期 | 美团技术团队的 feed 实测如此：`<item>` 里只有 `title`/`link`/`description`/`content:encoded`，没有 `pubDate`/`dc:date`（channel 级那个是 feed 生成时间，不是文章时间）。M1 记下了「该源 10 条 `published_at` 为 NULL」，M4 做搜索时暴露后果：这些条目在时间筛选下永远搜不到，卡片也从没显示过发布时间；用户核对文章页后发现**页面上有发布日期**（`2026-07-24`），而 URL 路径恰好是 `/2026/07/24/`，逐条对得上。故按 URL 反解，不抓详情页（plan §16 禁止浏览器渲染抓取，这不违反）。站点只给到「日」粒度，取当日 00:00Z，页面按东八区显示成同日 08:00，日期不漂。兜底只在 feed 无任何时间字段时触发，有真时间优先；数字凑不出合法日期仍为 NULL。这是解析兜底，不是 plan §16 禁止的「插件式数据源抽象」 |
 | 15 | `startup_fetch` 在 `app/scheduler.py` 里定义，但由 lifespan 用 `asyncio.create_task` 直接调起，**不注册成 APScheduler 的 job** | §11.1 第 6 步写的是 `asyncio.create_task(pipeline.run())`（不 await），§11.2 的任务清单又把它列成一条 job（「启动后立即（一次性）」），两处措辞不一致。按 §11.1 实现：首轮抓取要尽早开始，走调度器反而多一层「等 `start()` 完成」的时序。**代价**：它的失败不会进 APScheduler 的 job 统计，所以它自己就地兜住异常并打堆栈 —— 否则 `create_task` 抛出的异常只会变成 `Task exception was never retrieved`，服务还在跑但没人知道这轮抓挂了。`daily_pipeline` 仍在调度器里，失败由 APScheduler 记录 |
 | 16 | `cli purge` 的两点补充：① 不带 `--yes` 只预览（打印将删除条数）不删；② 切日按 `config.app.timezone`（复用 `day_bounds_utc`） | §11.3 只给了命令形式 `purge --before YYYY-MM-DD [--yes]`，没说 `--yes` 缺省时是交互确认还是直接删，也没说日期按哪个时区切。选预览而非交互确认，是为了在脚本里也安全；时区取业务时区，与日报/搜索同一口径，否则会出现「页面按东八区算 09-23、purge 却按 UTC 切日」的错位。实测（库副本）：`--before 2026-09-23` 预览 112 条且 `items` 保持 149，`--yes` 后 `items` 149 → 37、`item_scores` 147 → 35（外键级联）、`sources` 7 与 `fetch_runs` 25 不变；非法日期 `2026-13-99` 打印明确错误并返回退出码 1 |
-| 17 | 新增 `tests/conftest.py`（`no_scheduler` 夹具）与 `tests/test_scheduler.py` | §4 的目录树只列了 4 个测试文件。`lifespan` 接上调度器后，`TestClient` 走 lifespan 的用例会真的去抓 6 个源，破坏 §13.1「测试不发真实网络请求」这条前提；故在 conftest 里把 `scheduler.start` 换成空壳（2026-10-15 起启动补拉已取消，`startup_fetch` 不再需要挡），由 `web` 这类夹具显式请求。`test_scheduler.py` 单独放调度器用例：它是 §13.1 之外的新增覆盖（触发点 08:00 Asia/Shanghai、`coalesce` / `misfire_grace_time=3600` / `max_instances=1`、错过 grace 就不补跑、启动补拉就地兜异常） |
+| 17 | 新增 `tests/conftest.py`（`no_scheduler` 夹具）与 `tests/test_scheduler.py` | §4 的目录树只列了 4 个测试文件。`lifespan` 接上调度器后，`TestClient` 走 lifespan 的用例会真的去抓 6 个源，破坏 §13.1「测试不发真实网络请求」这条前提；故在 conftest 里把 `scheduler.start` 换成空壳（2026-10-15 起启动补拉已取消，`startup_fetch` 不再需要挡），由 `web` 这类夹具显式请求。`test_scheduler.py` 单独放调度器用例：它是 §13.1 之外的新增覆盖（触发点 07:00 Asia/Shanghai、`coalesce` / `misfire_grace_time=3600` / `max_instances=1`、错过 grace 就不补跑、启动补拉就地兜异常） |
 | 18 | **放宽「不做浏览器渲染抓取 / 不做反爬对抗」——仅对铜币拍卖模块生效**（spec §14.3） | §16 的不做清单原写死这两条，前提是知识聚合只走 RSS。铜币拍卖的目标站（麦稀奇）实测是 JS 单页应用 + 阿里云滑块验证，直连只返回约 1.3KB 验证页（2026-10-09 实测），httpx 路径不可用。用户明确「修改需求，需要反爬」。故新增 §18 一章，仅该模块允许 Playwright 渲染与会话复用；**知识聚合一行未改**，验证码自动破解仍不做 |
 | 19 | 新增依赖 `openpyxl` | spec §14.2 要读 `orders.xlsx`。`openpyxl` 只读一个工作表，不引 `pandas`（§2 的技术选型一贯「单用户无收益就不引重依赖」）。~~`playwright`~~ 已在 2026-10-12 改走 gapi 后移除 |
 | 20 | 新增 `app/coins/*`、`app/routers/coins.py`、`config.yaml` 的 `coins:` 段、`data/mxiqi-profile/`（gitignore） | spec §14 要求一个与知识聚合**完全独立**的模块。放成 `app/coins/` 子包是「站点耦合只落一处」的落地方式（§18.2），不违反 §16「不做插件式数据源抽象」——那里禁止的是**可插拔的数据层抽象**，这里只有一个写死的实现 |
 | 21 | `schema_version` 1 → 2（新增 `coin_*` 表，纯 `CREATE TABLE IF NOT EXISTS`，无 ALTER） | spec §14.5 新增 7 张 `coin_*` 表。§6.2 的迁移策略要求加列写 `migrations/vN.py`；本次只建新表、不动旧表，故只需在 `db.init_db()` 里补建并抬版本号 |
-| 22 | **取消「启动补拉」**，新增功能开关与管理页 `/control`（`app/switches.py` / `app/tasks.py` / `app/routers/control.py`），`schema_version` 5 → 6（只新增 `feature_switches` 表） | spec §9 原本要求「服务启动时立即执行一次抓取」以覆盖休眠漏跑，但代价很直接：本机**经常重启**，每重启一次就真去抓一遍全部源、并把待打分条目重新喂一遍 LLM —— 那是整个系统唯一烧 token 的地方（2026-10-15 用户提出「现在需要经常重启，避免不必要的花费」）。改为：重启不做任何事；四个功能（抓取 / 打分 / 铜币采集 / 铜币查价）各有开关（存库、重启保留），控制每天 08:00 的定时任务；管理页另有「立即运行」（手动触发、忽略开关、后台执行）。spec §9/§14.8 与 plan §11.1/§11.2 已同步修订 |
+| 22 | **取消「启动补拉」**，新增功能开关与管理页 `/control`（`app/switches.py` / `app/tasks.py` / `app/routers/control.py`），`schema_version` 5 → 6（只新增 `feature_switches` 表） | spec §9 原本要求「服务启动时立即执行一次抓取」以覆盖休眠漏跑，但代价很直接：本机**经常重启**，每重启一次就真去抓一遍全部源、并把待打分条目重新喂一遍 LLM —— 那是整个系统唯一烧 token 的地方（2026-10-15 用户提出「现在需要经常重启，避免不必要的花费」）。改为：重启不做任何事；四个功能（抓取 / 打分 / 铜币采集 / 铜币查价）各有开关（存库、重启保留），控制每天 07:00 的定时任务；管理页另有「立即运行」（手动触发、忽略开关、后台执行）。spec §9/§14.8 与 plan §11.1/§11.2 已同步修订 |
 
 除此之外，数据表字段与 spec §5 完全一致（仅补了必要索引与 `CHECK` 约束）；`coin_*` 七表的 DDL 见 §18.7。
 
@@ -443,7 +443,7 @@ CREATE TABLE IF NOT EXISTS schema_meta (key TEXT PRIMARY KEY, value TEXT NOT NUL
 2. **打分并发与重试**：默认并发 3、失败重试 1 次。若你的厂商 API 有严格 RPM 限制，需下调并发。
 3. **服务端口**：默认 `8765`（避开 8000/3000 常见占用）。若与本机其他服务冲突请指定。
 
-其余参数均已按 spec §11 的你的设定落进 `config/config.yaml`（08:00 出报、全量保留 + 手动 purge、`deepseek-v4-flash`）。
+其余参数均已按 spec §11 的你的设定落进 `config/config.yaml`（07:00 出报、全量保留 + 手动 purge、`deepseek-v4-flash`）。
 
 
 ## 19. 运行控制与功能开关（v1.6 增补；对应 spec §9）
@@ -467,7 +467,7 @@ CREATE TABLE IF NOT EXISTS schema_meta (key TEXT PRIMARY KEY, value TEXT NOT NUL
 | `coins_match` | 铜币拍卖 | 按收藏画像重算拍品推荐位（**仅手动**，不参与定时任务） | 否 |
 | `coins_price` | 铜币拍卖 | 查站内历史成交 | 否 |
 
-- **只影响每天 08:00 的定时任务**；`/control` 的「立即运行」是手动触发，**忽略开关**。
+- **只影响每天 07:00 的定时任务**；`/control` 的「立即运行」是手动触发，**忽略开关**。
 - 默认全部启用（`app/switches.py` 的 `DEFAULT_ENABLED`）；库里没有记录的功能按默认值算，
   **不往库里写默认值** —— 这样以后改默认值能直接生效。
 - 未知 key 一律当「未启用」，避免拼错 key 反而静默跑起来。

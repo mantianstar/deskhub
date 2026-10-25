@@ -425,7 +425,7 @@ CREATE INDEX IF NOT EXISTS idx_coin_explore_status
   ON coin_explore_candidates(status);
 
 -- ============ 功能开关（管理页 /control）============
--- 控制「各类任务是否自动执行」：关掉后每天 08:00 的定时任务不再跑它。
+-- 控制「各类任务是否自动执行」：关掉后每天 07:00 的定时任务不再跑它。
 -- 页面上的「立即运行」是手动触发，忽略这张表（见 app/switches.py）。
 -- 启动补拉已取消：重启本身不执行任何任务，会读这张表的只有定时任务。
 CREATE TABLE IF NOT EXISTS feature_switches (

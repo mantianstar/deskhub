@@ -2,7 +2,7 @@
 
 两个每日任务，跑之前都**先看功能开关**（管理页 /control 启停）：
 
-- `daily_pipeline`：每天 `08:00`（`config.app.timezone`）出报；抓取与打分各自看开关。
+- `daily_pipeline`：每天 `07:00`（`config.app.timezone`）出报；抓取与打分各自看开关。
 - `daily_coins`：铜币的每日任务，采集与查价各自看开关；与知识聚合**互不传播失败**
   （spec §14.8/§14.9）：任一条挂掉不影响另一条。
 
@@ -28,13 +28,13 @@ logger = logging.getLogger(__name__)
 
 DAILY_JOB_ID = "daily_pipeline"
 DAILY_COINS_JOB_ID = "daily_coins"
-DAILY_HOUR = 8
-# 本机 08:05 才醒，这一轮仍要执行而不是被丢弃（plan §11.2）
+DAILY_HOUR = 7
+# 本机早上醒得晚，这一轮仍要执行而不是被丢弃（plan §11.2）
 MISFIRE_GRACE_SECONDS = 3600
 
 
 async def daily_pipeline(config: Config) -> None:
-    """每天 08:00：按开关跑抓取与打分，两个都关就什么都不做。
+    """每天 07:00：按开关跑抓取与打分，两个都关就什么都不做。
 
     不吞异常：交给 APScheduler 记录（job 不会被摘掉），与改造前一致。
     """
@@ -52,7 +52,7 @@ async def daily_pipeline(config: Config) -> None:
 
 
 async def daily_coins(config: Config) -> CoinsRunResult | None:
-    """每天 08:00 的铜币任务；**与 `daily_pipeline` 互不传播失败**（spec §14.9）。
+    """每天 07:00 的铜币任务；**与 `daily_pipeline` 互不传播失败**（spec §14.9）。
 
     「采集 / 回采 / 查价」三个开关各自决定跑不跑，顺序固定：
     先采新场（否则回采没有新数据），再回采终态，最后查价。
@@ -110,7 +110,7 @@ def _cron_job(scheduler: AsyncIOScheduler, func, config: Config, job_id: str) ->
 def start(config: Config) -> AsyncIOScheduler:
     """建调度器、注册每日任务并启动。
 
-    时区取 `config.app.timezone`，所以 `08:00` 是本地时间；`coalesce=True` 让「错过多次」
+    时区取 `config.app.timezone`，所以 `07:00` 是本地时间；`coalesce=True` 让「错过多次」
     只补跑一次，`max_instances=1` 让定时任务不与上一轮重叠（plan §11.2 / §18.9）。
     """
     scheduler = AsyncIOScheduler(timezone=config.app.tz)
