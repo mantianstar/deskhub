@@ -29,7 +29,7 @@
 4. 任务卡与回执是**对话内的证据**，不是可选项；没有它们，本轮视为未按规则执行。
 5. **回复前自检**：这次会改仓库吗？会 → 任务卡写了吗？不会 → 不写卡。
 6. **调用过子代理才追加对话记录**（`data/conversations/{YYYY-MM-DD}.md`，按天追加）；没调用不写文件、不留空轮。
-   只记入口与出口，格式见 [conversation-log.md](./.trae/agents/conversation-log.md)。
+   只记入口与出口，格式见 [conversation-log.md](./docs/conversation-log.md)。
 
 ---
 

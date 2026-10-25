@@ -10,6 +10,30 @@
 
 ---
 
+## v1.70 — 2026-10-25 子代理配置入库、清理 agent-insight 残留
+
+**起因**：`.trae/agents/` 下三个子代理配置从未提交过，换机器 clone 后 RULES §零 的派发流程（planner / page-prototyper / bug-reproducer）会整体失效；同时 IDE 的 agent-insight 功能在仓库根留下 `package.json` / `package-lock.json`，与 Python 项目无关。
+
+**改了什么**：`bug-reproducer.md`、`page-prototyper.md`、`planner.md` 纳入版本控制；删除 `package.json`、`package-lock.json`（agent-insight 已卸载）。
+
+**验证结论**：`git ls-files .trae` 能列出三个代理文件；仓库根不再有 npm 清单文件。
+
+**影响文件**：`.trae/agents/*.md`（新增入库）、`CHANGELOG.md`。
+
+---
+
+## v1.69 — 2026-10-25 对话记录约定移出 agents 目录
+
+**起因**：`.trae/agents/` 下每个 `.md` 都会被注册成子代理，纯格式约定的 `conversation-log.md` 因此变成一个没有 name / description 的空壳代理，挂在可选列表里。
+
+**改了什么**：`.trae/agents/conversation-log.md` → `docs/conversation-log.md`（git mv 保留历史）；`RULES.md` §零.6 的指路链接同步改为 `./docs/conversation-log.md`。正文与格式约定未改。
+
+**验证结论**：`grep conversation-log` 仓库内只剩 `RULES.md` 与 `CHANGELOG` 的历史条目；`.trae/agents/` 仅余 `bug-reproducer` / `page-prototyper` / `planner` 三个带 frontmatter 的代理。
+
+**影响文件**：`RULES.md`、`docs/conversation-log.md`（移入）。
+
+---
+
 ## v1.68 — 2026-10-25 日常速查提到 PROJECT_MAP 顶部
 
 **起因**：日常小改每次都要读 `RULES.md` 全文（144 行）才能拿到五轮模板与变更边界，成本压在最常走的路径上。
