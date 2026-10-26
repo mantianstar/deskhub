@@ -1334,10 +1334,10 @@ def upsert_coin_lot(lot: CoinLot) -> int:
             """
             INSERT INTO coin_lots
                 (session_id, mxiqi_id, lot_no, title, start_price, current_price,
-                 outcome, final_price, winner_uid, closed_at,
+                 outcome, final_price, winner_uid, closed_at, category_code, is_graded,
                  image_urls, tags, match_score, is_recommended,
                  bid_num, bid_user_num, bid_source, fetched_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(mxiqi_id) DO UPDATE SET
                 session_id    = excluded.session_id,
                 lot_no        = excluded.lot_no,
@@ -1348,6 +1348,10 @@ def upsert_coin_lot(lot: CoinLot) -> int:
                 final_price   = COALESCE(excluded.final_price, coin_lots.final_price),
                 winner_uid    = COALESCE(excluded.winner_uid, coin_lots.winner_uid),
                 closed_at     = COALESCE(excluded.closed_at, coin_lots.closed_at),
+                -- 分类只在详情 / 回填带得到；缺键时不能擦掉已有值（plan §18.19.4）
+                category_code = COALESCE(excluded.category_code, coin_lots.category_code),
+                -- 评级判定只由标题得出，标题每次重抓都会覆盖，这里直接跟随
+                is_graded     = excluded.is_graded,
                 image_urls    = excluded.image_urls,
                 tags          = excluded.tags,
                 -- 热度只有预览 / 成交搜索带；auction.get 传 NULL，不能擦掉已有值
@@ -1367,6 +1371,8 @@ def upsert_coin_lot(lot: CoinLot) -> int:
                 lot.final_price,
                 lot.winner_uid,
                 lot.closed_at,
+                lot.category_code,
+                lot.is_graded if lot.is_graded is not None else 0,
                 _dump(lot.image_urls),
                 _dump(lot.tags),
                 lot.match_score,
@@ -1447,6 +1453,177 @@ def update_coin_lot_bids(
             )
             total += cursor.rowcount
         return total
+
+
+# ---------------------------------------------------------------- 拍品分类（v21）
+
+
+def upsert_coin_categories(rows: Sequence[tuple[str, str, int]]) -> None:
+    """按 `code` upsert 分类字典的 `name` / `sort`（plan §18.19.4）。
+
+    `fetched_at` 保留首次写入时间，重复同步只更新 `updated_at`。
+    """
+    if not rows:
+        return
+    now = utcnow()
+    with db.connect() as conn, conn:
+        conn.executemany(
+            """
+            INSERT INTO coin_categories (code, name, sort, fetched_at, updated_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(code) DO UPDATE SET
+                name       = excluded.name,
+                sort       = excluded.sort,
+                updated_at = excluded.updated_at
+            """,
+            [(code, name, sort, now, now) for code, name, sort in rows],
+        )
+
+
+def update_coin_lot_categories(updates: Sequence[tuple[str, str]]) -> int:
+    """按 `mxiqi_id` 只写 `category_code`，返回受影响行数（历史回填用）。
+
+    `updates` 是 `(mxiqi_id, category_code)`；COALESCE 保证站点缺分类时
+    不擦掉库里已有的值（plan §18.19.5「只写 category_code，不动其他列」）。
+    """
+    if not updates:
+        return 0
+    with db.connect() as conn, conn:
+        cursor = conn.executemany(
+            """
+            UPDATE coin_lots
+               SET category_code = COALESCE(?, category_code)
+             WHERE mxiqi_id = ?
+            """,
+            [(code, mxiqi_id) for mxiqi_id, code in updates],
+        )
+        return cursor.rowcount
+
+
+def list_coin_sessions_pending_category(
+    since: str, limit: int | None = None
+) -> list[tuple[int, str]]:
+    """待回填分类的专场：返回 `(session_id, mxiqi_id)`。
+
+    按 `fetched_at` 升序（先补入库早的老场次）；`since` 是 `fetched_at` 下界；
+    仍有 `category_code IS NULL` 拍品的场次才进来 —— 已全覆盖的场次直接跳过。
+    `limit=None` 表示不限（SQLite 的 `LIMIT -1`）。
+    """
+    with db.connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT s.id, s.mxiqi_id
+            FROM coin_sessions s
+            WHERE s.fetched_at >= ?
+              AND EXISTS (
+                  SELECT 1 FROM coin_lots l
+                  WHERE l.session_id = s.id AND l.category_code IS NULL
+              )
+            ORDER BY s.fetched_at ASC
+            LIMIT ?
+            """,
+            (since, -1 if limit is None else limit),
+        ).fetchall()
+    return [(int(row["id"]), row["mxiqi_id"]) for row in rows]
+
+
+def coin_lot_category_coverage() -> dict[str, int]:
+    """拍品分类覆盖率：总数 / 有分类 / 无分类。"""
+    with db.connect() as conn:
+        row = conn.execute(
+            """
+            SELECT COUNT(*) AS lots,
+                   SUM(CASE WHEN category_code IS NOT NULL THEN 1 ELSE 0 END) AS categorized
+              FROM coin_lots
+            """
+        ).fetchone()
+    lots = int(row["lots"] or 0)
+    categorized = int(row["categorized"] or 0)
+    return {"lots": lots, "categorized": categorized, "uncategorized": lots - categorized}
+
+
+def coin_category_fallback_codes() -> list[str]:
+    """字典外的分类码（落库时以 `name = code` 兜底的那些），供回填后核对。"""
+    with db.connect() as conn:
+        rows = conn.execute(
+            "SELECT code FROM coin_categories WHERE name = code ORDER BY code"
+        ).fetchall()
+    return [row["code"] for row in rows]
+
+
+def list_coin_categories(level1: str | None = None) -> list[sqlite3.Row]:
+    """分类字典（可按一级前缀过滤，如 `110`），供分析页的下拉使用。"""
+    sql = "SELECT code, name FROM coin_categories"
+    params: list[str] = []
+    if level1:
+        sql += " WHERE code LIKE ?"
+        params.append(level1 + "%")
+    sql += " ORDER BY sort"
+    with db.connect() as conn:
+        return conn.execute(sql, params).fetchall()
+
+
+def list_coin_lot_analysis_rows(
+    *,
+    level1: str = "110",
+    category_code: str | None = None,
+    only_ungraded: bool = True,
+    days: int | None = None,
+    shop_id: int | None = None,
+) -> list[sqlite3.Row]:
+    """分析页的拍品行（只读；plan §18.19.7）。
+
+    - `level1`：一级分类前缀（硬币 `110`）；
+    - `category_code`：切到某个二级分类；
+    - `only_ungraded`：默认只看裸币，`COALESCE(is_graded, 0) = 0`；
+    - `days`：按专场展示时间（缺失回落 `fetched_at`）取近 N 天；
+    - `shop_id`：只看某店铺。
+    """
+    conditions = ["substr(l.category_code, 1, 3) = ?"]
+    params: list[object] = [level1]
+    if category_code:
+        conditions.append("l.category_code = ?")
+        params.append(category_code)
+    if only_ungraded:
+        conditions.append("COALESCE(l.is_graded, 0) = 0")
+    if days is not None:
+        since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat().replace("+00:00", "Z")
+        conditions.append("COALESCE(s.auction_at, l.fetched_at) >= ?")
+        params.append(since)
+    if shop_id is not None:
+        conditions.append("s.shop_id = ?")
+        params.append(shop_id)
+    with db.connect() as conn:
+        return conn.execute(
+            f"""
+            SELECT l.id, l.title, l.start_price, l.final_price, l.outcome,
+                   l.category_code, COALESCE(c.name, l.category_code, '未分类') AS category_name,
+                   l.is_graded, l.session_id, s.shop_id, s.auction_at, l.closed_at,
+                   COALESCE(sh.name, '未知店铺') AS shop_name,
+                   iv.value_f AS numista_value
+              FROM coin_lots l
+              JOIN coin_sessions s ON s.id = l.session_id
+              LEFT JOIN coin_categories c ON c.code = l.category_code
+              LEFT JOIN coin_shops sh ON sh.id = s.shop_id
+              LEFT JOIN coin_issue_values iv ON iv.numista_id = l.issue_numista_id
+             WHERE {' AND '.join(conditions)}
+             ORDER BY l.id
+            """,
+            params,
+        ).fetchall()
+
+
+def list_coin_analysis_shops() -> list[sqlite3.Row]:
+    """分析页的店铺下拉：只列「我们见过的场次」里的店铺（spec §14.19.4）。"""
+    with db.connect() as conn:
+        return conn.execute(
+            """
+            SELECT DISTINCT sh.id, sh.name
+              FROM coin_shops sh
+              JOIN coin_sessions s ON s.shop_id = sh.id
+             ORDER BY sh.name
+            """
+        ).fetchall()
 
 
 def coin_lot_bid_coverage() -> list[sqlite3.Row]:
@@ -1618,6 +1795,8 @@ def _row_to_coin_lot(row: sqlite3.Row) -> CoinLot:
         bid_num=row["bid_num"],
         bid_user_num=row["bid_user_num"],
         bid_source=row["bid_source"],
+        category_code=row["category_code"],
+        is_graded=row["is_graded"],
     )
 
 

@@ -10,6 +10,115 @@
 
 ---
 
+## v1.84 — 2026-10-27 Hook 补审计日志与回归用例
+
+**起因**：v1.82 的两个门禁脚本本身判定正确，但 10-26 22:51–23:06 的 98 次请求里有 37 次读取、21 个文件（`gapi.py` 读 4 次、`repository.py`/`style.css`/`analysis.py` 各 3 次，最大单份 2,650 行），23:04:40 还整读了 1,293 行的 `CHANGELOG.md`——说明 Hook 在 Trae 侧没被加载，而当时**没有任何途径能直接确认**，只能事后翻 usage 反推；`tests/test_rules_guard.py` 也只覆盖 v1.81 的三条机械校验，Hook 脚本坏掉不会被发现。
+
+**改了什么**：
+- `guard_read.py` / `guard_stop.py` 新增 `audit()`：每次调用都往 `data/hook_audit.log` 追加一行 JSON（`ts / hook / object / decision / detail`），放行与拒绝都记；写不进去只吞掉异常，不影响判定。路径可用 `DESKHUB_HOOK_AUDIT` 覆盖（测试用）。
+- `tests/test_rules_guard.py` 新增 4 条子进程用例：大文件不带宽限 → deny；`limit=120` → allow；缺回执 → block；回执齐全 → allow，并各自断言审计行。
+- `.gitignore` 忽略 `data/hook_audit.log`（本机运行时产物）。
+
+**验证结论**：`pytest tests/test_rules_guard.py -q` → 6 passed, 1 skipped。假 stdin 实跑 `guard_read.py` 读 `CHANGELOG.md` 得到 deny，审计行 `{"object": "CHANGELOG.md", "decision": "deny", "detail": "total=1293 offset=0"}`。
+
+**生效前提（仍未满足）**：Trae 设置里 Hook 运行方式需选「本地自动运行」并新开对话；`data/hook_audit.log` 出现新行即为已生效，没有新行即为未加载。
+
+**影响文件**：`.trae/hooks/guard_read.py`、`.trae/hooks/guard_stop.py`、`tests/test_rules_guard.py`、`.gitignore`、`CHANGELOG.md`。spec / plan 无变更。
+
+---
+
+## v1.83 — 2026-10-26 铜币分析：裸币判定 + 分类分析页
+
+**起因**：plan §18.19 的分类能力只落了 schema 与采集映射，还差最后两步——「排除评级盒」的判定口径和能用上它的分析页，所以分析页一直开不出来。
+
+**改了什么**：
+- 裸币判定：新增 `app/coins/graded.py`（`is_graded_title`，标题正则 `PCGS|NGC|公博|华夏|保粹|爱藏|闻德|众诚|评级|盒`）作为唯一判定源；v22 给 `coin_lots` 加 `is_graded INTEGER`，采集时写、历史走 `v22.backfill_is_graded` 纯本地回填（不请求站点）。
+- 迁移：`app/migrations/v22.py` 登记进 `COLUMN_MIGRATIONS` / `DATA_MIGRATIONS`；额外登记 `("20","22")` 合并快照，隔一版的 v20 库也能一次升上来。
+- 采集链路：`gapi.lot_from_item` 映射 `is_graded`，`pipeline` 三处透传，`upsert_coin_lot` 用 `excluded.is_graded` 跟随标题覆盖。
+- 分析页：新增 `GET /coins/analysis` + `coins/analysis.html` + 导航入口「分析」；只读 `coin_lots`，默认硬币（`substr(category_code,1,3)='110'`）+ 裸币（`COALESCE(is_graded,0)=0`），支持二级分类 / 时间窗 / 店铺 / 口径切换；五个区块按 spec §14.19.4 口径（成交率不含在拍、价格用中位数、样本 < 5 置灰显示「样本不足」）。
+
+**验证结论**：`pytest tests -q` → 428 passed, 1 skipped。新增 `tests/test_coins_analysis.py` 覆盖标题判定、v22 建列 / 升级 / 幂等 / 本地回填、采集映射与 upsert 跟随、分析页默认口径 / 分类切换 / 含评级盒 / 样本不足占位；`tests/test_coins_categories.py` 的版本断言随 SCHEMA_VERSION 21 → 22 更新。
+
+**影响文件**：`app/models.py`、`app/coins/graded.py`、`app/migrations/v22.py`、`app/migrations/__init__.py`、`app/coins/gapi.py`、`app/coins/pipeline.py`、`app/coins/analysis.py`、`app/repository.py`、`app/routers/coins.py`、`app/templates/coins/analysis.html`、`app/templates/coins/_macros.html`、`app/static/style.css`、`tests/test_coins_analysis.py`（新增）、`tests/test_coins_categories.py`、`plan/coins.md`、`spec/coins.md`、`PROJECT_MAP.md`。
+
+---
+
+## v1.82 — 2026-10-26 规则从「读得到」升级为「拦得住」
+
+**起因**：RULES.md 只在需要时被读到，实际仍出现过整份读大文件、同类动作没合并；把规则常驻进上下文只能提高遵守概率，拦不住违规动作。
+
+**改了什么**：
+- 新增 `.trae/rules/project-rules.md`（`alwaysApply: true`），常驻开工门禁、每轮回执、读取 / 输出 / 轮次边界；细则与预算仍以 RULES.md 为唯一源。
+- 新增 `.trae/hooks.json` 和两个 Hook 脚本：`PreToolUse(Read)` 拒绝「>200 行且未带 limit」的整份读并回传分段读理由；`Stop` 在回复缺「回执：」或 token 成本清单时阻断收尾。
+- 生效前提：Hook 运行方式选「本地自动运行」（沙箱读不到工作区文件行数），新开对话后加载。
+
+**验证结论**：假 stdin 覆盖 6 条分支（大文件无 limit 拒绝、limit=120 放行、小文件放行、limit=500 拒绝、缺回执阻断、带回执放行）全部符合预期；`pytest tests/test_rules_guard.py -q` 通过。
+
+**影响文件**：`.trae/rules/project-rules.md`、`.trae/hooks.json`、`.trae/hooks/guard_read.py`、`.trae/hooks/guard_stop.py`（均新增）、`CHANGELOG.md`。spec / plan 无变更。
+
+---
+
+## v1.81 — 2026-10-26 规则门禁变成可跑的校验
+
+**起因**：`§零.6` 这类引用漂移、RULES 篇幅超限、改完忘写 CHANGELOG，都靠人眼发现；v1.79 的 `docs/conversation-log.md` 就是手工才抓到的。
+
+**改了什么**：
+- 新增 `tests/test_rules_guard.py`，三条机械校验：RULES.md ≤100 行；RULES.md 内部 `§x.y` 引用必须指向真实章节 / 条目；暂存区有改动时必须同批带上 `CHANGELOG.md`（没 `git add` 过东西时跳过，不进 `.git/hooks`）。
+
+**验证结论**：`pytest tests -q` → 409 passed / 1 skipped（跳过的是空暂存区那条）。
+
+**影响文件**：`tests/test_rules_guard.py`（新增）、`CHANGELOG.md`。
+
+---
+
+## v1.80 — 2026-10-26 每轮收口写进速查入口，成本表一条命令出
+
+**起因**：v1.79 把成本清单改成每轮出，但入口 `PROJECT_MAP.md` 的速查表止于「5. 文档」，日常小改的路径上根本看不到收口这一步；取数还要拼 `--since` 手敲时间，实际不会被用。
+
+**改了什么**：
+- `PROJECT_MAP.md` 速查表下新增「每轮收口」一行：`回执：` + 本轮成本清单，不占轮次预算。
+- `utils/token_cost/token_cost.py` 新增 `--round` 与 `print_round_table()`：按 `data/.token_cost_cursor` 只出上次出表后新增的请求，默认读 `data/llm_usage.jsonl`；无新增时明说 0。上一轮末次请求由本轮自然带上，不用手记时间。
+- `docs/token-cost.md` §3/§4 同步改为 `--round` 口径。
+- `tests/test_llm_proxy.py` 补 `print_round_table` 游标用例（首轮全量 / 次轮只出新增 / 无新增说 0）。
+
+**验证结论**：`pytest tests/test_llm_proxy.py -q` 15 passed；`--round` 实跑出本轮表正常。
+
+**影响文件**：`PROJECT_MAP.md`、`docs/token-cost.md`、`utils/token_cost/token_cost.py`、`tests/test_llm_proxy.py`、`CHANGELOG.md`。
+
+---
+
+## v1.79 — 2026-10-26 成本清单改为每轮增量，token_cost 支持按区间取数
+
+**起因**：成本清单挂在「收尾」上，而收尾经常不发生——任务中途要用户确认、或上下文将满要换会话，最后一轮没走到，整段会话就一条成本记录都没有（v1.78 那次会话 82 次请求、560 万输入 tokens，成本清零）。
+
+**改了什么**：
+- `RULES.md` §零.3 由「收尾附回执」改为「每轮回复都附回执 + 成本清单」，成本清单只记本轮增量、不跨轮累计；§零.4 自检同步改为按轮判定。
+- `docs/token-cost.md` §3 删掉「统计并入最后一轮」，改为每轮用 `--since` 取本轮区间、并入本轮最后一条命令带出，本条回复自身的请求下轮首行补记；§4 补工具参数。
+- `utils/token_cost/token_cost.py` 的 usage 行新增 `ts` 字段，新增 `slice_rows()` 与 `--since` / `--last`：`--since` 支持完整时间或纯 `HH:MM:SS`（按日志末条日期补全），`--last` 取末尾 N 条。
+- `docs/conversation-log.md` 触发条款由 §零.6 更正为 §零.5（RULES §零 只有 5 条）。
+
+**验证结论**：`pytest tests/test_llm_proxy.py -q` 14 passed（新增 `slice_rows` 用例，覆盖完整时间 / 纯时间 / `--last` / 无命中）；`--usage data/llm_usage.jsonl --last 4` 与 `--since 20:09:33` 实跑出表正常。
+
+**影响文件**：`RULES.md`、`docs/token-cost.md`、`docs/conversation-log.md`、`utils/token_cost/token_cost.py`、`tests/test_llm_proxy.py`、`CHANGELOG.md`。
+
+---
+
+## v1.78 — 2026-10-26 拍品分类接上采集映射与历史回填（plan §18.19.4 / §18.19.5）
+
+**起因**：v21 已建好 `coin_categories` 与 `coin_lots.category_code`，但采集链路没写分类、历史 248 场 / 29,400 拍品全为 NULL，分析筛选拿不到数据。
+
+**改了什么**：
+- `app/coins/gapi.py` 新增 `category_code_from_item`（`cate_id_2` 优先、0 / 缺失回落 `cate_id_1`、都没有 → None），`lot_from_item` / `sold_from_payload` 都带上分类；`search_sold` 签名改为 `(keyword, cate_id_1=None, page=1)`，`cate_id_1` 进 `search_params`、`page` 放顶层。
+- `app/models.py` `CoinLot` 加 `category_code`；`app/repository.py` `upsert_coin_lot` INSERT 加列并用 `COALESCE` 不擦已有值，`_row_to_coin_lot` 回读；新增 `upsert_coin_categories` / `update_coin_lot_categories` / `list_coin_sessions_pending_category` / `coin_lot_category_coverage` / `coin_category_fallback_codes`。
+- 新建 `app/coins/categories.py` 种子字典（plan §18.19.3 声称已有但文件实际缺失）：`sync_seed()` 每轮采集 / 回采 / 回填前同步，字典外码由 `ensure_codes()` 以 `name = code` 兜底（否则外键挡写入）。
+- `app/coins/pipeline.py` 三处 `upsert_coin_lot` 透传 `category_code`；新增 `backfill_categories()`。`app/cli.py` 新增 `coins-backfill-category [--days N] [--limit N]`：按 `fetched_at` 升序补、跳过已全覆盖场次、只写 `category_code`，收尾打印覆盖率与字典外码。
+
+**验证结论**：全量 `pytest -q` 405 passed；`tests/test_coins_categories.py` 覆盖字典同步 / 外键兜底 / COALESCE / 只写分类列 / 跳过全覆盖 / 单场失败继续，`tests/test_coins_fetch.py` 覆盖二级码优先回落与 `search_sold` 参数位置。完成判据（`category_code IS NULL` 占比 < 10%）需实际跑一次 `coins-backfill-category` 后看输出。
+
+**影响文件**：`app/coins/gapi.py`、`app/coins/pricing.py`、`app/coins/categories.py`、`app/coins/pipeline.py`、`app/models.py`、`app/repository.py`、`app/cli.py`、`tests/test_coins_fetch.py`、`tests/test_coins_categories.py`、`plan/coins.md`、`CHANGELOG.md`。
+
+---
+
 ## v1.77 — 2026-10-26 RULES 拆出两个专题分册，全文 163 → 97 行
 
 **起因**：`RULES.md` 又把不同频次的内容堆在一起——成本表口径、文档增补规程只有特定轮次才用，却每次开工都读；五轮模板与 §七 六条在 `PROJECT_MAP.md` 有同内容副本，两份维护必然漂移。

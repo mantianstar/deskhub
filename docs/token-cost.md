@@ -24,9 +24,10 @@
 
 - 拿得到接口返回的 `usage`（自建客户端直接读 `response.usage`；平台侧逐请求导出）时，按请求贴成 JSONL 用 `--usage` 出表，不再反推底座；拿不到才退回估算口径。
 - Trae 里的请求可起 `utils/llm_proxy/llm_proxy.py` 本地代理转发到 DeepSeek，逐请求落 `data/llm_usage.jsonl`（含动作 / 对象，自定义模型把请求地址填代理）。
-- **统计不单独开轮**：成本统计并入最后一轮（验证 / 收尾）命令，用 `&&` 一并带出，不为此单开工具轮；有代理日志用 `--usage`，无日志且无可合并轮时不出逐轮表，回执里只记一行「未计量，以平台账单为准」。默认挂代理，免得为拿 usage 再多花拼流水的两轮。
+- **每轮出一次，只记本轮增量**：每轮回复末尾跑 `.venv/bin/python utils/token_cost/token_cost.py --round`，只统计上次出表后新增的请求，不跨轮累计；**统计不单独开轮**，并入本轮最后一条命令（用 `&&` 带出）。上一轮的末次请求会被这一轮自然带上，不必回头重算。
+- 有代理日志用 `--round`；代理没开（日志无新增）时回执里只记一行「本轮未计量，以平台账单为准」，不反推。
 
 ## 4. 工具
 
-- `utils/token_cost/token_cost.py`：按流水 JSON 直接生成上表。
+- `utils/token_cost/token_cost.py`：按流水 JSON 直接生成上表。每轮用 `--round`（默认读 `data/llm_usage.jsonl`，只出上次出表后新增的请求，游标存 `data/.token_cost_cursor`）；指定区间用 `--usage` 配 `--since <时间>` / `--last <N>`（时间可写 `2026-10-26 20:09:33` 或 `20:09:33`，后者按日志末条日期补全）。
 - `utils/deepseek_v4_tokenizer/deepseek_tokenizer.py`：单文件 token 实测。

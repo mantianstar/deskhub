@@ -806,6 +806,7 @@ CREATE TABLE IF NOT EXISTS coin_collection_series_members (
 | 6. 热度字段（部分可批量取） | 成交条目的 `bid_num` / `bid_user_num` / `bid_users` 在 `home.filter` 批量可得；只覆盖成交，流拍与在拍没有；关注数各处均无 | **2026-10-22 已落地**（见 18.18.6） |
 | 7. 复现识别 | 同图比对用 **OSS key**（`V1/AUC/...`，去 base、去 query）；重挂重拍会漏，故「图 key ∪ 归一化标题 + 店铺 + 起拍价」两路 | **图 key 已落地**（见 18.18.6；标题 / 店铺 / 起拍价一路未做） |
 | 8. 费率与到手价 | **可直取**：`commission_flag / commission_rate / commission_min`、`express_desc`（富文本原样存）、`express_day`；保险费忽略。`coin_sessions` 另存 `express_fee`（首个「运费 ¥N」）/ `express_free_amount`（满额包邮）/ `is_storage`（「寄存」）；`pricing.landed_price` = 成交价 + max(费率×价, 最低佣金) + 运费（达门槛免） | 已做 |
+| 9. 拍品分类 | item 自带 `cate_id_1` / `cate_id_2`（实测 100% 有值）；`coin_lots.category_code` + `coin_categories` 字典，用于「只看硬币 / 只看铜元 / 排除评级盒」的分析筛选 | 已落地（v21 分类 + v22 `is_graded` + `/coins/analysis`，见 §18.19） |
 
 **P2（成本高，后置）**：汇率快照不做（只做国内站）；图片分析不做（只保留评级盒解析）。
 
@@ -875,3 +876,160 @@ CREATE TABLE IF NOT EXISTS coin_collection_series_members (
 - 2026-10-22 首跑（补采 2 场 + 回填 41844 条有图拍品）：`preview` 10/10 非空、均值 4.30；
   同图重复涉及 8687/41988 条（20.7%），最大单 key 覆盖 714 条（同一描述图跨场复用）——
   阈值暂不写死，需再配合店铺 / 起拍价或只取首图收窄。
+
+## 18.19 拍品分类接入与分析页（schema 20 → 21）
+
+> 实施顺序：**schema（已完成）→ 种子字典 → 采集映射 → 历史回填 → `is_graded` → `/coins/analysis`**。
+> 新会话先读本节的 §18.19.1–18.19.3 与下列文件，再动代码：
+> [`app/coins/gapi.py`](../app/coins/gapi.py)（`LotInfo` / `lot_from_item` / `sold_from_payload` / `search_sold`）、
+> [`app/models.py`](../app/models.py)（`CoinLot` / DDL）、
+> [`app/repository.py`](../app/repository.py)（`upsert_coin_lot` / `_row_to_coin_lot`）、
+> [`app/coins/pipeline.py`](../app/coins/pipeline.py)（三处 `upsert_coin_lot` 调用）。
+
+### 18.19.1 站点分类参数实测（2026-10-26）
+
+| 项 | 结论 |
+|---|---|
+| 字段位置 | item 上的 `cate_id_1`（一级）、`cate_id_2`（二级）；`cate_info`（名称）只覆盖约 1%（15/1384），**不能当数据源** |
+| 覆盖率 | 20 个专场 1,933 件拍品 `cate_id_1` 100% 有值；成交抽样 105 条 100%；2019–2021 老数据可能为 0 |
+| 筛选 | `search_params.cate_id_1` / `cate_id_2` 生效，结果 100% 命中；传 `cate_id` 被忽略 |
+| 空关键词 | `search_params.keywords=""` 合法，可只按分类查成交 |
+| 分页 | 分页参数在**顶层 `page`**（`page=2` 返回不同条目）；`page_size` 被忽略（固定 21 条/页）；`totalSize` 封顶 10,000 |
+| action 白名单 | 分类列表相关 action（`home.cate` / `category.list` / `home.category` 等十余个）全部 403，**不能枚举分类**，名称只能靠人工种子字典 |
+
+### 18.19.2 分类码与名称（种子字典）
+
+一级码 `cate_id_1`（扫描 10000–24000，步长 1000）：
+
+| 码 | 名称 | 确认度 | 依据 |
+|---|---|---|---|
+| 10000 | 钞票 | ✅ | 样本关键词一致 |
+| 11000 | 硬币 | ✅ | 本次目标分类，9 个二级码齐全 |
+| 12000 | 邮票 | ✅ | 样本关键词一致 |
+| 13000 | 章牌 | ✅ | 样本关键词一致 |
+| 14000 | 书籍 | ✅ | 样本关键词一致 |
+| 15000 | 空 | ○ | 抽样 0 条，疑似保留码 |
+| 16000 | 珠宝 | ✅ | 样本关键词一致 |
+| 17000 | 陶瓷 | ○ | 关键词推断，待人工核对 |
+| 18000 | 文玩 | ✅ | 样本关键词一致 |
+| 19000 | 书画 | ○ | 关键词推断，待人工核对 |
+| 20000 | 茶酒 | ○ | 关键词推断，待人工核对 |
+| 21000 | 潮玩 | ○ | 关键词推断，待人工核对 |
+| 22000 | 工艺 | ○ | 关键词推断，待人工核对 |
+| 23000 | 卡片 | ✅ | 样本关键词一致 |
+| 24000 | 杂项 / 其他 | ○ | 关键词推断，待人工核对 |
+
+硬币二级码 `cate_id_2`（父 11000）：
+
+| 码 | 名称 | 确认度 | 实测依据 |
+|---|---|---|---|
+| 11010 | 现代币 | ✅ | 「现代币」关键词仅此码命中 |
+| 11020 | 纪念币 | ○ | 混合，纪念币关键词约 17%；与 11030 归属待人工核对 |
+| 11030 | 古钱币 | ○ | 古钱关键词约 29%，含公博 / PCGS 古钱；与 11020 归属待人工核对 |
+| 11040 | 铜元 | ✅ | 铜材质 32%、评级盒 49% |
+| 11050 | 银元 | ✅ | 银材质 84%、评级盒 60% |
+| 11060 | 金币 | ✅ | 金材质 97% |
+| 11070 | 外币 | ✅ | `cate_info` 明确 |
+| 11080 | 金银锭 | ✅ | 银锭 / 公博牌坊锭 |
+| 11090 | 打制币 | ✅ | 罗马 / 荷兰 / 爪哇打制币 |
+
+口径风险：
+
+- 分类是**卖家手选**，有误标（例：「太平通宝锡铝花钱」挂在纪念章下）；
+- `11040` 铜元中 49% 是评级盒，**只看裸币必须叠加 `is_graded` 排除**，不能只靠分类；
+- 老数据（2019–2021）`cate_id_1` 可能为 0，回填后仍会有「未分类」桶。
+
+### 18.19.3 数据模型（v21，已落地）
+
+- 新表 `coin_categories(code PK, name, sort, fetched_at, updated_at)`，DDL 在 [`app/models.py`](../app/models.py)；
+- `coin_lots` 增 `category_code TEXT REFERENCES coin_categories(code) ON DELETE SET NULL`；
+- 迁移 [`app/migrations/v21.py`](../app/migrations/v21.py) 只补列，新表由 DDL 建；`SCHEMA_VERSION = "21"`；
+  测试 [`tests/test_coins_categories.py`](../tests/test_coins_categories.py) 覆盖新库、v20 升级与幂等；
+- **只存最细一级**：`cate_id_2` 有值取它，否则回落 `cate_id_1`，0 / None 记 NULL；
+  一级由前缀推导（`code[:3] + "00"`），名称查字典，不再单独存 `cate_id_1` / `cate_id_2` 两列；
+- 名称来源：站点没有分类列表接口，种子字典写死在新增的 `app/coins/categories.py`，
+  启动或每轮采集 upsert 进 `coin_categories`；遇到字典外的码以 `name = code` 兜底并记日志；
+- `coin_sales` **本轮不加分类列**：成交分析直接走 `coin_lots.outcome = 'sold'`，
+  需要中置信样本时按 `item_id` JOIN，避免再动一次 schema。
+
+### 18.19.4 采集映射（已落地）
+
+1. [`app/coins/gapi.py`](../app/coins/gapi.py) 新增纯函数 `category_code_from_item(item)`：
+   读 `cate_id_2`，缺失 / 0 回落 `cate_id_1`，都没有 → None；`lot_from_item` 写入 `LotInfo.category_code`。
+2. 同文件 `sold_from_payload` 同样取值，`SoldSample`（`app/coins/pricing.py`）新增 `category_code`；
+   成交样本的分类只留在取证 raw 里（`coin_sales` 不加列）。
+3. `search_sold` 签名改为 `(keyword, cate_id_1=None, page=1)`：`cate_id_1` 放进 `search_params`，`page` 放**顶层**。
+4. [`app/models.py`](../app/models.py) `CoinLot` 增 `category_code: str | None = None`（DDL 早已有列）。
+5. [`app/repository.py`](../app/repository.py) `upsert_coin_lot`：INSERT 列表加列，
+   `ON CONFLICT` 用 `category_code = COALESCE(excluded.category_code, coin_lots.category_code)`（详情缺键不擦已有值）；
+   `_row_to_coin_lot` 回读。
+6. 新增 `repository.upsert_coin_categories(rows)`（按 `code` upsert `name` / `sort`，`fetched_at` 保留首次写入）；
+   种子字典在 [`app/coins/categories.py`](../app/coins/categories.py)：`sync_seed()` 每轮采集 / 终态回采 / 回填前同步一次，
+   `ensure_codes()` 把字典外的码以 `name = code` 兜底（否则外键会挡写入）。
+7. [`app/coins/pipeline.py`](../app/coins/pipeline.py) 三处 `upsert_coin_lot` 调用（列表预览 / 详情 / 终态回采）透传 `category_code`。
+
+### 18.19.5 历史回填（已落地）
+
+- 历史 248 场 / 29,400 拍品没有分类；**按专场回采**比逐件便宜：每场 1 次 `auction.get`（item 自带分类）。
+- 新 CLI：`python -m app.cli coins-backfill-category [--days N] [--limit N]`：
+  - `repository.list_coin_sessions_pending_category(since, limit)` 按 `fetched_at` 升序取专场，
+    `EXISTS (... category_code IS NULL)` 直接跳过已全覆盖的场次；`--days` 是 `fetched_at` 下界，`--limit` 是单轮场次数；
+  - 逐场 `api.session_detail`（沿用 `request_interval_seconds` 抖动限速），只写 `category_code`：
+    `repository.update_coin_lot_categories` 用 `UPDATE ... SET category_code = COALESCE(?, category_code)`，不动其他列；
+  - 每场记一条 `coin_fetch_runs(kind = 'category_backfill')`；单场失败记 `http_error` 并继续，退出码非 0；
+  - 收尾打印分类覆盖率（`coin_lot_category_coverage`）与字典外码（`coin_category_fallback_codes`）。
+- 完成判据：`coin_lots` 中 `category_code IS NULL` 的占比 < 10%（老数据与已删除专场计入剩余）。
+- 回填函数：`app.coins.pipeline.backfill_categories(config, *, days=None, limit=None, gapi=None) -> CategoryBackfillResult`。
+- 测试 [`tests/test_coins_categories.py`](../tests/test_coins_categories.py) 覆盖：字典同步 / 字典外码兜底、
+  `upsert_coin_lot` 的 COALESCE、只写分类列、跳过已全覆盖场次、回填失败继续。
+
+### 18.19.6 裸币判定 `is_graded`（已落地，v22）
+
+- 不依赖站点字段（没有），用标题正则判定评级盒：`PCGS|NGC|公博|华夏|保粹|爱藏|闻德|众诚|评级|盒`，
+  命中即 `is_graded = 1`；裸币为 0。只做布尔，不做品相分级（P1-5 缩窄版）。
+- 落库方式：`v22` 给 `coin_lots` 加 `is_graded INTEGER`，采集时写、历史用**纯本地**回填（不请求站点）。
+- 分析页默认口径：`is_graded = 0`（含 NULL 视作裸币，需在查询里显式 `COALESCE(is_graded, 0) = 0`）。
+
+### 18.19.7 分析页 `/coins/analysis`（已落地）
+
+- 路由 `GET /coins/analysis`，模板 `app/templates/coins/analysis.html`，入口挂到铜币模块导航。
+- 只读 `coin_lots`（+ `coin_lot_images` / `coin_categories` / `coin_sessions`），**不改采集链路**。
+- 默认筛选：硬币（`substr(category_code, 1, 3) = '110'`）+ 裸币；支持切二级分类、时间窗、店铺。
+- 样本 < 5 的分组置灰并显示「样本不足」，不做结论。
+
+| Tab | 内容 | 口径 |
+|---|---|---|
+| 概览 | 各二级分类的拍品数、成交数、成交率、中位成交价 | 成交率 = sold / (sold + unsold)，**不含在拍**；价格用中位数 |
+| 价格 | 分类 × 价格带分布、p25/p50/p75、与 Numista 估值比 | 估值比仅对有 `issue_numista_id` 的行，标注覆盖率 |
+| 成交与流拍 | 起拍价档位 vs 成交率、流拍后再上架（同 OSS key / 归一化标题） | 复现识别复用 `coin_lot_images`；同图跨场复用需排除描述图 |
+| 店铺画像 | 店铺上架量、成交率、中位成交价、复现率 | 只统计「我们见过的场次」，不是店铺全量 |
+| 供给与重复 | 分类供给量 top、同图重复 top、错标抽查（分类与标题关键词冲突） | 错标只做抽样展示，不回写分类 |
+
+### 18.19.8 验收标准
+
+1. 新库 `init_db` → `schema_version = 22`、`coin_lots.category_code` / `is_graded` 存在、`coin_categories` 存在（已由测试覆盖）。
+2. v20 老库升级幂等，重复 `init_db` 不重复加列（已由测试覆盖）。
+3. 新采硬币专场：`category_code` 非空率 ≥ 95%；字典 `11000` 下 9 个二级码名称齐全。
+4. 历史回填后：`category_code` 有值占比 ≥ 90%；不在字典内的码条数为 0（未知码已落兜底名并可查日志）。
+5. `/coins/analysis` 返回 200；默认只看硬币裸币；切换二级分类后数字随筛选变化（已由 `tests/test_coins_analysis.py` 覆盖）。
+6. 样本不足分组显示占位而非 0 / NaN；所有均价均为中位数并标注样本数（已由测试覆盖）。
+7. 回归：`/coins`、`/coins/session/{id}`、`/coins/manage`、`/coins/collection` 仍 200。
+
+### 18.19.9 本轮不做
+
+- 品相细分（美品 / 极美）与评级分数解析；只做 `is_graded` 布尔。
+- 时间趋势（库是覆盖写快照，无价格历史）。
+- Numista 估值深度对比（币库覆盖仍低，只做带覆盖率标注的横截面）。
+- 出价时序（`bids` 逐件请求，维持暂缓）。
+- 店铺粉丝 / 店铺历史总成交额（站点无该能力）。
+- 起拍折扣建模、非硬币分类的分析页面。
+
+### 18.19.10 待确认清单
+
+| # | 问题 | 影响 |
+|---|---|---|
+| 1 | `11020` / `11030` 分别对应「纪念币 / 古钱币」还是反过来 | 二级分类名称与筛选 |
+| 2 | `19000` / `21000` / `22000` 分别对应「书画 / 潮玩 / 工艺」 | 一级字典（不影响硬币页） |
+| 3 | `24000` 是否就是「其他 / 杂项」 | 一级字典 |
+| 4 | `15000` 是否为保留空码 | 一级字典 |
+| 5 | 分析页入口放在导航哪个位置（一级菜单还是铜币子页） | 前端路由 |

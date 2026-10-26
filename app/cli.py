@@ -353,6 +353,27 @@ def cmd_coins_map(_: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_coins_backfill_category(args: argparse.Namespace) -> int:
+    """按专场回采历史拍品的分类码（只写 category_code，不动其他列）。"""
+    cfg = _bootstrap()
+    result = asyncio.run(
+        coins_pipeline.backfill_categories(cfg, days=args.days, limit=args.limit)
+    )
+    coverage = repository.coin_lot_category_coverage()
+    total = coverage["lots"]
+    uncategorized = coverage["uncategorized"]
+    ratio = uncategorized / total if total else 0.0
+    print(
+        f"回填：{result.sessions} 场，写入分类 {result.lots_updated} 条，失败 {result.errors} 场\n"
+        f"分类覆盖率：{coverage['categorized']}/{total}"
+        f"（无分类 {uncategorized} 条，占 {ratio:.1%}；判据 < 10%）"
+    )
+    fallback = repository.coin_category_fallback_codes()
+    if fallback:
+        print(f"字典外分类码 {len(fallback)} 个：{'、'.join(fallback)}")
+    return 0 if result.errors == 0 else 1
+
+
 # ---------------------------------------------------------------- Numista 参考库
 
 
@@ -628,6 +649,15 @@ def _build_parser() -> argparse.ArgumentParser:
         "coins-quality", help="打印拍品热度覆盖率（按来源）与同图重复现状"
     )
     coins_quality.set_defaults(func=cmd_coins_quality)
+
+    coins_backfill = subparsers.add_parser(
+        "coins-backfill-category", help="按专场回采历史拍品的分类码（只写 category_code）"
+    )
+    coins_backfill.add_argument(
+        "--days", type=int, default=None, help="只补近 N 天入库的专场；不传则从头补"
+    )
+    coins_backfill.add_argument("--limit", type=int, default=None, help="本轮最多补几个专场")
+    coins_backfill.set_defaults(func=cmd_coins_backfill_category)
 
     coins_series = subparsers.add_parser(
         "coins-series", help="按国家/年份/面值从 Numista 查系列并落库（中文输入自动转英文）"

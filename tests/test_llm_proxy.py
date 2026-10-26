@@ -121,6 +121,21 @@ class _Upstream(BaseHTTPRequestHandler):
         if body.get("model") == "unauthorized":
             self._send(401, b'{"error":"Authentication Fails"}')
             return
+        if body.get("model") == "deepseek-v4-pro":
+            if body.get("stream"):
+                payload = (
+                    b'data: {"choices":[{"delta":{"reasoning_content":"\xe5\x85\x88\xe6\x9f\xa5\xe6\x97\xa5\xe6\x9c\x9f"}}]}\n\n'
+                    b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1",'
+                    b'"function":{"name":"get_date","arguments":"{}"}}]}}]}\n\n'
+                    b'data: {"choices":[],"usage":{"prompt_tokens":11,"completion_tokens":5,"total_tokens":16}}\n\n'
+                    b"data: [DONE]\n\n"
+                )
+                self._send(200, payload, "text/event-stream")
+                return
+            for message in body.get("messages") or []:
+                if message.get("role") == "assistant" and message.get("tool_calls") and not message.get("reasoning_content"):
+                    self._send(400, b'{"error":"The reasoning_content in the thinking mode must be passed back to the API."}')
+                    return
         if body.get("stream"):
             if not (body.get("stream_options") or {}).get("include_usage"):
                 self._send(400, b'{"error":"missing include_usage"}')
@@ -221,6 +236,38 @@ def test_proxy_logs_action_and_object(servers):
     assert record["object"] == "/repo/RULES.md"
 
 
+def test_reasoning_cache_fills_missing_tool_call_turn():
+    """命中 id 用真思考；未命中也要补占位，否则上游对任意一条历史工具轮都回 400。"""
+    cache = proxy.ReasoningCache()
+    cache.remember("m", ["c1"], "先查日期")
+
+    message = {"role": "assistant", "tool_calls": [{"id": "c1"}]}
+    assert cache.fill(message, "m") is True
+    assert message["reasoning_content"] == "先查日期"
+
+    miss = {"role": "assistant", "tool_calls": [{"id": "c2"}]}
+    assert cache.fill(miss, "m") is True
+    assert miss["reasoning_content"] == proxy._MISSING_REASONING
+
+
+def test_proxy_restores_reasoning_for_tool_call_turns(servers):
+    """thinking 轮次的 reasoning_content 客户端不回传，代理按 tool_call_id 补回后再转发。"""
+    base, _ = servers
+    first = {"model": "deepseek-v4-pro", "stream": True, "messages": [{"role": "user", "content": "明天天气"}]}
+    with httpx.stream("POST", f"{base}/v1/chat/completions", json=first) as response:
+        assert response.status_code == 200
+        list(response.iter_bytes())
+
+    second = {"model": "deepseek-v4-pro", "messages": [
+        {"role": "user", "content": "明天天气"},
+        {"role": "assistant", "content": "", "tool_calls": [
+            {"id": "call_1", "type": "function", "function": {"name": "get_date", "arguments": "{}"}}]},
+        {"role": "tool", "tool_call_id": "call_1", "content": "2026-10-27"},
+    ]}
+    response = httpx.post(f"{base}/v1/chat/completions", json=second)
+    assert response.status_code == 200
+
+
 def test_failed_request_is_not_logged(servers):
     """没有 usage 的响应（401 等）不落库，避免成本表混进全 0 行。"""
     base, log_path = servers
@@ -237,7 +284,52 @@ def test_usage_log_feeds_token_cost(servers, tmp_path):
 
     module = _load_token_cost()
     loaded = module.load_usage_rows(log_path)
-    assert loaded == [{"action": "", "object": "", "prompt_tokens": 13, "completion_tokens": 4}]
+    assert len(loaded) == 1
+    assert loaded[0]["ts"]
+    assert {key: loaded[0][key] for key in ("action", "object", "prompt_tokens", "completion_tokens")} == {
+        "action": "", "object": "", "prompt_tokens": 13, "completion_tokens": 4}
+
+
+def test_usage_rows_slice_by_since_and_last():
+    """每轮成本只取本轮区间：--since 按时间截断（含该时刻），--last 再留末尾 N 条。"""
+    module = _load_token_cost()
+    rows = [
+        {"ts": "2026-10-26T19:54:24+0800", "action": "提问", "object": "", "prompt_tokens": 1, "completion_tokens": 1},
+        {"ts": "2026-10-26T20:09:33+0800", "action": "读取", "object": "", "prompt_tokens": 2, "completion_tokens": 2},
+        {"ts": "2026-10-26T20:10:01+0800", "action": "编辑", "object": "", "prompt_tokens": 3, "completion_tokens": 3},
+    ]
+    assert len(module.slice_rows(rows, since="2026-10-26 20:09:33")) == 2
+    assert len(module.slice_rows(rows, since="20:09:33")) == 2
+    assert [row["prompt_tokens"] for row in module.slice_rows(rows, last=1)] == [3]
+    assert len(module.slice_rows(rows, since="2026-10-27 00:00:00")) == 0
+
+
+def test_usage_round_table_tracks_cursor(tmp_path, capsys):
+    """--round 只出上次出表后新增的请求：第二次不重复计，无新增时明确说 0。"""
+    module = _load_token_cost()
+    log_path = tmp_path / "llm_usage.jsonl"
+
+    def write(actions):
+        log_path.write_text(
+            "".join(
+                json.dumps({"ts": "2026-10-26T21:00:00+0800", "action": action, "object": "",
+                            "prompt_tokens": 10, "completion_tokens": 1}, ensure_ascii=False) + "\n"
+                for action in actions
+            ),
+            encoding="utf-8",
+        )
+
+    write(["提问", "读取"])
+    module.print_round_table(log_path)
+    assert "本轮 2 次请求" in capsys.readouterr().out
+
+    write(["提问", "读取", "编辑"])
+    module.print_round_table(log_path)
+    out = capsys.readouterr().out
+    assert "本轮 1 次请求" in out and "| 编辑 |" in out
+
+    module.print_round_table(log_path)
+    assert "无新增请求" in capsys.readouterr().out
 
 
 def test_usage_table_clips_long_object(capsys):

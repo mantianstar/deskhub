@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from app import repository
-from app.coins import coinmap, matcher, pricing
+from app.coins import categories, coinmap, matcher, pricing
 from app.coins import recommend as coins_recommend
 from app.coins.gapi import KIND_LIVE, GapiError, MxiqiGapi
 from app.config import Config
@@ -33,6 +33,7 @@ RUN_KIND_SESSIONS = "sessions"
 RUN_KIND_DETAIL = "session_detail"
 RUN_KIND_FINALIZE = "session_finalize"
 RUN_KIND_PRICE = "price_search"
+RUN_KIND_CATEGORY = "category_backfill"
 
 # 终态回采的起抓缓冲：实时专场存的是开拍时间，等整场结束再取（plan/coins.md §18.18）
 FINALIZE_GRACE_HOURS = 6
@@ -64,6 +65,15 @@ class CoinsRunResult:
     # 成交库总量（按来源），用于核对 session_final 与拍品终态是否对齐
     sales_session_final: int = 0
     sales_search: int = 0
+
+
+@dataclass(frozen=True)
+class CategoryBackfillResult:
+    """历史分类回填的汇总，供 CLI 打印（plan §18.19.5）。"""
+
+    sessions: int
+    lots_updated: int
+    errors: int
 
 
 def _record(
@@ -252,6 +262,8 @@ async def run(
 
 async def _collect(config: Config, api: MxiqiGapi, started: str) -> tuple[int, int, int]:
     """采集专场与拍品。返回（看到专场数, 入库专场数, 入库拍品数）。"""
+    # 分类字典：每轮采集前同步一次（站点没有分类列表接口，名称只能靠种子字典）
+    categories.sync_seed()
     try:
         cards = await api.list_sessions()
     except GapiError as exc:
@@ -340,6 +352,11 @@ async def _collect(config: Config, api: MxiqiGapi, started: str) -> tuple[int, i
         )
         sessions_stored += 1
 
+        # 分类码先确保在字典表里（外键要求；字典外的码以 name=code 兜底）
+        categories.ensure_codes(
+            lot.category_code for lot in (*card.preview_lots, *detail.lots)
+        )
+
         # 列表卡预览带 bid_num / bid_user_num（详情没有），先写；
         # 同一条拍品的正式字段随后由详情覆盖，热度用 COALESCE 不会被清空
         for lot in card.preview_lots:
@@ -361,6 +378,8 @@ async def _collect(config: Config, api: MxiqiGapi, started: str) -> tuple[int, i
                     bid_user_num=lot.bid_user_num,
                     bid_source=lot.bid_source,
                     image_keys=lot.image_keys,
+                    category_code=lot.category_code,
+                    is_graded=lot.is_graded,
                 )
             )
 
@@ -385,6 +404,8 @@ async def _collect(config: Config, api: MxiqiGapi, started: str) -> tuple[int, i
                     bid_user_num=lot.bid_user_num,
                     bid_source=lot.bid_source,
                     image_keys=lot.image_keys,
+                    category_code=lot.category_code,
+                    is_graded=lot.is_graded,
                 )
             )
             new_lots += 1
@@ -408,6 +429,7 @@ async def _finalize(config: Config, api: MxiqiGapi, run_started: str) -> tuple[i
     days = config.coins.finalize_days
     if days <= 0:
         return 0, 0, 0
+    categories.sync_seed()
 
     now = datetime.now(timezone.utc)
     since = (now - timedelta(days=days)).isoformat().replace("+00:00", "Z")
@@ -442,6 +464,7 @@ async def _finalize(config: Config, api: MxiqiGapi, run_started: str) -> tuple[i
             continue
 
         batch_sold = batch_unsold = 0
+        categories.ensure_codes(lot.category_code for lot in detail.lots)
         for lot in detail.lots:
             if lot.outcome is None:
                 continue  # 还在拍，等整场结束下一轮再取
@@ -467,6 +490,8 @@ async def _finalize(config: Config, api: MxiqiGapi, run_started: str) -> tuple[i
                     bid_user_num=lot.bid_user_num,
                     bid_source=lot.bid_source,
                     image_keys=lot.image_keys,
+                    category_code=lot.category_code,
+                    is_graded=lot.is_graded,
                 )
             )
             if lot.outcome == "sold":
@@ -493,6 +518,94 @@ async def _finalize(config: Config, api: MxiqiGapi, run_started: str) -> tuple[i
         "终态回采完成：%d 场，成交 %d 条，未成交 %d 条", sessions_done, sold, unsold
     )
     return sessions_done, sold, unsold
+
+
+async def backfill_categories(
+    config: Config,
+    *,
+    days: int | None = None,
+    limit: int | None = None,
+    gapi: MxiqiGapi | None = None,
+) -> CategoryBackfillResult:
+    """按专场回采历史拍品的分类码（plan §18.19.5）。
+
+    历史拍品入库时站点还没给分类，只能按专场再取 1 次 `auction.get`
+    （详情一次给全拍品，每场只花 1 次请求）；只写 `category_code`，不动其他列，
+    已经全覆盖的场次直接跳过（`list_coin_sessions_pending_category` 的 EXISTS 条件）。
+
+    `days`：只看 `fetched_at` 近 N 天的专场；不传则从头补。
+    `limit`：单轮最多补多少场；不传则不限。
+    """
+    categories.sync_seed()
+
+    since = "1970-01-01T00:00:00Z"
+    if days is not None:
+        now = datetime.now(timezone.utc)
+        since = (now - timedelta(days=days)).isoformat().replace("+00:00", "Z")
+    pending = repository.list_coin_sessions_pending_category(since, limit)
+    if not pending:
+        logger.info("分类回填：没有待补的专场")
+        return CategoryBackfillResult(sessions=0, lots_updated=0, errors=0)
+    logger.info("分类回填：待补 %d 个专场（fetched_at >= %s）", len(pending), since)
+
+    owned = gapi is None
+    api = gapi or MxiqiGapi(config)
+    if owned:
+        await api.__aenter__()
+    sessions_done = lots_updated = errors = 0
+    interval = config.coins.request_interval_seconds
+    try:
+        for index, (_session_id, mxiqi_id) in enumerate(pending):
+            if index > 0 and interval > 0:
+                delay = random.uniform(interval * 0.6, interval * 1.4)
+                logger.info("分类回填限速：等 %.1f 秒", delay)
+                await asyncio.sleep(delay)
+
+            started = repository.utcnow()
+            try:
+                detail = await api.session_detail(mxiqi_id)
+            except GapiError as exc:
+                logger.warning("分类回填失败 %s：%s", mxiqi_id, exc)
+                _record(
+                    RUN_KIND_CATEGORY,
+                    mxiqi_id,
+                    started,
+                    CoinFetchStatus.HTTP_ERROR,
+                    error=str(exc),
+                )
+                errors += 1
+                continue
+
+            updates: list[tuple[str, str]] = []
+            for lot in detail.lots:
+                if not lot.category_code:
+                    continue
+                updates.append((f"{mxiqi_id}:{lot.mxiqi_id}", lot.category_code))
+            # 外键要求：分类码先确保在字典表里（字典外的码 name=code 兜底）
+            categories.ensure_codes(code for _key, code in updates)
+            written = repository.update_coin_lot_categories(updates)
+            sessions_done += 1
+            lots_updated += written
+            _record(
+                RUN_KIND_CATEGORY,
+                mxiqi_id,
+                started,
+                CoinFetchStatus.OK,
+                items_new=written,
+            )
+    finally:
+        if owned:
+            await api.__aexit__(None, None, None)
+
+    logger.info(
+        "分类回填完成：%d 场，写入分类 %d 条，失败 %d 场",
+        sessions_done,
+        lots_updated,
+        errors,
+    )
+    return CategoryBackfillResult(
+        sessions=sessions_done, lots_updated=lots_updated, errors=errors
+    )
 
 
 async def _price_recommended(

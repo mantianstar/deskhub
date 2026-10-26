@@ -12,7 +12,7 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Callable
 
-from app.migrations import v4, v8, v11, v12, v13, v14, v16, v17, v18, v19, v20
+from app.migrations import v4, v8, v11, v12, v13, v14, v16, v17, v18, v19, v20, v21, v22
 
 # (from_version, to_version) -> {表名: {列名: 列定义}}
 COLUMN_MIGRATIONS: dict[tuple[str, str], dict[str, dict[str, str]]] = {
@@ -26,6 +26,12 @@ COLUMN_MIGRATIONS: dict[tuple[str, str], dict[str, dict[str, str]]] = {
     ("17", "18"): v18.COLUMNS,
     ("18", "19"): {},
     ("19", "20"): {},
+    ("20", "21"): v21.COLUMNS,
+    # 隔一版的库（v20）直接升到 v22：把两步加列合并（v21 无数据回填）
+    ("20", "22"): {
+        "coin_lots": {**v21.COLUMNS["coin_lots"], **v22.COLUMNS["coin_lots"]},
+    },
+    ("21", "22"): v22.COLUMNS,
 }
 
 # (from_version, to_version) -> 建表之外还要跑一次的数据回填
@@ -34,6 +40,8 @@ DATA_MIGRATIONS: dict[tuple[str, str], Callable[[sqlite3.Connection], None]] = {
     ("17", "18"): v18.backfill_coin_lot_images,
     ("18", "19"): v19.normalize_series_labels,
     ("19", "20"): v20.upgrade_japanese_grade_years,
+    ("20", "22"): v22.backfill_is_graded,
+    ("21", "22"): v22.backfill_is_graded,
 }
 
 

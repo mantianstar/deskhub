@@ -1,6 +1,6 @@
 # 对话记录格式约定
 
-> 由 `RULES.md` §零.6 触发：**调用过子代理的轮次**才写 `data/conversations/{YYYY-MM-DD}.md`（按天、追加写入）；
+> 由 `RULES.md` §零.5 触发：**调用过子代理的轮次**才写 `data/conversations/{YYYY-MM-DD}.md`（按天、追加写入）；
 > 没调用子代理的轮次不写文件，也不留空轮。只记入口与出口，不记执行过程，不回读整份文件。
 > 记录文件不进版本控制（见 `.gitignore`）。
 

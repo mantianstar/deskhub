@@ -972,6 +972,12 @@ img.coin-zoom { cursor: zoom-in; }
 .coin-explore-table td { padding-left: 8px; padding-right: 8px; }
 .coin-explore-table td { font-size: 13px; vertical-align: middle; }
 
+/* 分析页（plan §18.19.7）：列更多，内边距再收一点；样本不足的分组整行置灰 */
+.coin-analysis-table th,
+.coin-analysis-table td { padding-left: 8px; padding-right: 8px; }
+.coin-analysis-table td { font-size: 13px; vertical-align: middle; }
+.coin-analysis-dim td { color: var(--text-muted); }
+
 .coin-explore-imgs { display: flex; flex: 0 0 auto; gap: 8px; }
 
 /* 正反图尺寸与「系列库」卡片一致 */

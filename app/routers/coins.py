@@ -15,6 +15,7 @@ from fastapi.responses import FileResponse
 from starlette.responses import Response
 
 from app import config, repository, textmatch
+from app.coins import analysis as coins_analysis
 from app.coins import collection as coins_collection
 from app.coins import explore as coins_explore
 from app.coins import grades as coins_grades
@@ -1165,6 +1166,61 @@ def update_explore_status(
         repository.set_coin_explore_candidate_status(numista_id, status)
     target = next if next.startswith("/coins/") else "/coins/explore"
     return _redirect(target)
+
+
+@router.get("/coins/analysis")
+def analysis_page(
+    request: Request,
+    category: str = "",
+    days: str = "",
+    shop: str = "",
+    graded: str = "0",
+) -> Response:
+    """分类分析（plan §18.19.7）：只读 `coin_lots`，默认只看硬币 + 裸币。
+
+    `category` 切二级分类；`days` 时间窗；`shop` 店铺；`graded=1` 才包含评级盒。
+    """
+    filters = repository.list_coin_categories("110")
+    codes = {row["code"] for row in filters}
+    selected = category if category in codes else ""
+    try:
+        window = int(days) if days else None
+    except ValueError:
+        window = None
+    shops = repository.list_coin_analysis_shops()
+    shop_ids = {str(row["id"]) for row in shops}
+    selected_shop = int(shop) if shop in shop_ids else None
+
+    rows = repository.list_coin_lot_analysis_rows(
+        category_code=selected or None,
+        only_ungraded=graded != "1",
+        days=window,
+        shop_id=selected_shop,
+    )
+    report = coins_analysis.build_report(rows)
+    return templates.TemplateResponse(
+        request,
+        "coins/analysis.html",
+        {
+            "request": request,
+            "page_title": "分类分析",
+            "totals": report.totals,
+            "overview": report.overview,
+            "prices": report.prices,
+            "start_bands": report.start_bands,
+            "shops": report.shops,
+            "relist": report.relist,
+            "mislabels": report.mislabels,
+            "band_labels": report.band_labels,
+            "categories": filters,
+            "category": selected,
+            "days": window or "",
+            "shops_options": shops,
+            "shop": selected_shop or "",
+            "graded": graded == "1",
+            "min_samples": coins_analysis.MIN_SAMPLES,
+        },
+    )
 
 
 @router.get("/coins/collection")

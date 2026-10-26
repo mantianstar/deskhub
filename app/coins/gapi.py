@@ -30,6 +30,7 @@ from zoneinfo import ZoneInfo
 import httpx
 
 from app.config import Config
+from app.coins.graded import is_graded_title
 from app.coins.pricing import SoldSample
 
 logger = logging.getLogger(__name__)
@@ -121,6 +122,10 @@ class LotInfo:
     bid_source: str | None = None
     # 同图识别的 OSS key（去 base、去 query；plan §18.18.1 P1-7）
     image_keys: list[str] = field(default_factory=list)
+    # 站点分类：取最细一级（`cate_id_2` 优先、回落 `cate_id_1`；plan §18.19.4）
+    category_code: str | None = None
+    # 评级盒：标题命中评级机构 / 「评级|盒」即 1，裸币 0（plan §18.19.6）
+    is_graded: int = 0
 
 
 @dataclass(frozen=True)
@@ -171,6 +176,19 @@ def _whole(value: object) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def category_code_from_item(item: dict) -> str | None:
+    """item → 站点分类码：`cate_id_2` 优先，缺失 / 0 回落 `cate_id_1`，都没有记 None。
+
+    只存**最细一级**（plan/coins.md §18.19.3）：老数据（2019–2021）这两个键可能是 0，
+    不能当成分类写入；`cate_info`（名称）覆盖率仅 1%，不作为数据源。
+    """
+    for key in ("cate_id_2", "cate_id_1"):
+        code = _whole(item.get(key))
+        if code is not None and code > 0:
+            return str(code)
+    return None
 
 
 _TAG_RE = re.compile(r"<[^>]+>")
@@ -391,6 +409,8 @@ def lot_from_item(
         # 两个键都没有时不算任何来源给过值，保持 NULL
         bid_source=bid_source if bid_num is not None or bid_user_num is not None else None,
         image_keys=_oss_keys(item.get("thumbs"), 3),
+        category_code=category_code_from_item(item),
+        is_graded=is_graded_title(title),
     )
 
 
@@ -480,6 +500,7 @@ def sold_from_payload(data: dict, tz) -> list[SoldSample]:
                 item_id=str(item_id) if item_id is not None else None,
                 bid_num=_whole(item.get("bid_num")),
                 bid_user_num=_whole(item.get("bid_user_num")),
+                category_code=category_code_from_item(item),
             )
         )
     return samples
@@ -564,17 +585,24 @@ class MxiqiGapi:
         end_at = to_utc_iso(at_raw, self._cfg.app.tz)
         return replace(detail, end_at=end_at)
 
-    async def search_sold(self, keyword: str) -> list[SoldSample]:
+    async def search_sold(
+        self, keyword: str, cate_id_1: int | None = None, page: int = 1
+    ) -> list[SoldSample]:
         """按关键词搜站内**历史成交**（推荐价的证据来源）。
 
         `keywords` 是关键词字段、`status=2` 是成交（实测 2026-10-12）；
         空格分隔的多词也认（我们的关键词就是「英国 1960 纸币」这种）。
+        `cate_id_1` 进 `search_params` 按一级分类收窄；`page` 放**顶层**
+        （`page_size` 被站点忽略，固定 21 条/页，plan §18.19.1）。
         命中 0 条是合法结果，不是错误。
         """
         keyword = keyword.strip()
         if not keyword:
             return []
+        search_params: dict = {"keywords": keyword, "status": SOLD_STATUS}
+        if cate_id_1:
+            search_params["cate_id_1"] = cate_id_1
         data = await self._call(
-            ACTION_FILTER, {"search_params": {"keywords": keyword, "status": SOLD_STATUS}}
+            ACTION_FILTER, {"search_params": search_params, "page": page}
         )
         return sold_from_payload(data, self._cfg.app.tz)

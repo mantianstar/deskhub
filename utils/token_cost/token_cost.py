@@ -5,6 +5,8 @@
     python3 utils/token_cost/token_cost.py utils/token_cost/sample_task.json
     python3 utils/token_cost/token_cost.py sample.json --context-now 70000 --requests 11 --total 670000
     python3 utils/token_cost/token_cost.py --usage usage.jsonl
+    python3 utils/token_cost/token_cost.py --usage usage.jsonl --since "2026-10-26 20:09:33"
+    python3 utils/token_cost/token_cost.py --usage usage.jsonl --last 12
 
 真实 usage 模式（推荐）：
     每次请求都能拿到接口返回的 `usage` 时，直接把响应贴成 JSONL（一行一次请求），
@@ -33,12 +35,17 @@
 import argparse
 import importlib.util
 import json
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 TOKENIZER_PATH = ROOT / "utils" / "deepseek_v4_tokenizer" / "deepseek_tokenizer.py"
 DEFAULT_FIXED_TOKENS = 19570  # 2026-10-26 首个真实请求实测（system + 工具/技能定义 + memory），约占 1M 窗口 2%
+DEFAULT_USAGE = ROOT / "data" / "llm_usage.jsonl"
+CURSOR_NAME = ".token_cost_cursor"  # 本轮出表的游标：记录已出过表的请求条数
 _OBJECT_PREVIEW = 30  # 对象列只留短标题；旧日志里的长文本也一并压掉
+_TS_RE = re.compile(r"(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}(?::\d{2})?)")
+_TIME_ONLY_RE = re.compile(r"^\d{2}:\d{2}(?::\d{2})?$")
 
 
 def load_tokenizer():
@@ -69,12 +76,39 @@ def load_usage_rows(path: Path) -> list[dict[str, int]]:
             continue
         rows.append(
             {
+                "ts": str(item.get("ts") or source.get("ts") or ""),
                 "action": str(source.get("action") or ""),
                 "object": str(source.get("object") or ""),
                 "prompt_tokens": int(source.get("prompt_tokens") or 0),
                 "completion_tokens": int(source.get("completion_tokens") or 0),
             }
         )
+    return rows
+
+
+def _ts_key(text: str) -> str:
+    """时间戳压成可比较的 `YYYY-MM-DDTHH:MM[:SS]`；只给 HH:MM 时返回裸时间，由调用方补日期。"""
+    raw = str(text or "").strip()
+    matched = _TS_RE.search(raw)
+    if matched:
+        return f"{matched.group(1)}T{matched.group(2)}"
+    return raw if _TIME_ONLY_RE.match(raw) else ""
+
+
+def slice_rows(rows: list[dict], since: str | None = None, last: int | None = None) -> list[dict]:
+    """取本轮区间：`since` 只留该时刻（含）之后的请求，`last` 再留末尾 N 条。"""
+    if since:
+        key = _ts_key(since)
+        if not key:
+            raise SystemExit(f"--since 认不出时间：{since}（写 2026-10-26 20:09:33 或 20:09:33）")
+        if "T" not in key:
+            day = _ts_key(rows[-1]["ts"])[:10] if rows else ""
+            if not day:
+                raise SystemExit("--since 只给了时间，日志里借不到日期，请写完整的 年-月-日 时:分:秒")
+            key = f"{day}T{key}"
+        rows = [row for row in rows if _ts_key(row.get("ts", "")) >= key]
+    if last is not None:
+        rows = rows[-last:] if last > 0 else []
     return rows
 
 
@@ -92,6 +126,22 @@ def print_usage_table(rows: list[dict[str, int]]) -> None:
             f"{row['prompt_tokens'] + row['completion_tokens']} |"
         )
     print(f"| **合计** | - | - | **{total_input}** | **{total_output}** | **{total_input + total_output}** |")
+
+
+def print_round_table(usage_path: Path) -> None:
+    """本轮增量：只出上次出表之后新增的请求；游标与日志同目录，中断、换会话都不丢账。"""
+    rows = load_usage_rows(usage_path)
+    cursor_path = usage_path.parent / CURSOR_NAME
+    cursor = int(cursor_path.read_text(encoding="utf-8").strip() or 0) if cursor_path.exists() else 0
+    fresh = rows[cursor:]
+    if not fresh:
+        print("本轮自上次出表后无新增请求。")
+        return
+    print_usage_table(fresh)
+    total_input = sum(row["prompt_tokens"] for row in fresh)
+    total_output = sum(row["completion_tokens"] for row in fresh)
+    print(f"\n本轮 {len(fresh)} 次请求：输入 {total_input:,} + 输出 {total_output:,} = 成本 {total_input + total_output:,}")
+    cursor_path.write_text(f"{len(rows)}", encoding="utf-8")
 
 
 def _cell(text: str | None, limit: int | None = None) -> str:
@@ -118,6 +168,13 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="按轮次估算任务的 token 成本")
     parser.add_argument("transcript", nargs="?", help="流水 JSON 路径（估算模式）")
     parser.add_argument("--usage", help="真实 usage 流水：JSONL / JSON 数组，每行含 prompt_tokens 与 completion_tokens，可直接贴 DeepSeek 响应")
+    parser.add_argument("--since", help="配合 --usage：只统计该时刻（含）之后的请求，如 2026-10-26 20:09:33 或 20:09:33（按日志末条日期补全）")
+    parser.add_argument("--last", type=int, help="配合 --usage：只统计末尾 N 条请求")
+    parser.add_argument(
+        "--round",
+        action="store_true",
+        help="出本轮增量表：只统计上次出表之后新增的请求（游标存日志同目录 .token_cost_cursor）；不给 --usage 时读 data/llm_usage.jsonl",
+    )
     parser.add_argument("--json", action="store_true", help="额外输出 JSON 汇总")
     parser.add_argument(
         "--fixed-tokens",
@@ -130,8 +187,11 @@ def main() -> None:
     parser.add_argument("--total", type=int, help="平台显示的总 tokens")
     args = parser.parse_args()
 
+    if args.round:
+        print_round_table(Path(args.usage) if args.usage else DEFAULT_USAGE)
+        return
     if args.usage:
-        print_usage_table(load_usage_rows(Path(args.usage)))
+        print_usage_table(slice_rows(load_usage_rows(Path(args.usage)), args.since, args.last))
         return
     if not args.transcript:
         parser.error("需要流水 JSON 路径，或用 --usage 传真实 usage 流水")

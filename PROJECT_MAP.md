@@ -20,6 +20,9 @@
 | 4. 验证 | `pytest tests -q` 一次，只留末尾汇总 | 不先定向再全量跑两遍；失败才补细节 |
 | 5. 文档 | CHANGELOG 一条 + spec / plan 命中段落原地改 | 不为一次小改翻 4 个文档 |
 
+**每轮收口**（每轮回复前必做，不占轮次预算）：`回执：` + 本轮 token 成本清单（[RULES.md](./RULES.md) §零.3）；
+出表用 `.venv/bin/python utils/token_cost/token_cost.py --round`，只读上次出表后新增的请求，中断 / 换会话都不丢账。
+
 **只做被要求的（§七）**
 
 1. 需求里有几个名词 / 动词，就只改与之对应的几处；文案、提示、校验、命名、样式、错误处理一律不做。
@@ -71,6 +74,7 @@
 | `/coins/search` | 同上 | `coins/search.html`（全局拍品搜索） |
 | `/coins/manage`、`/coins/info`、`/coins/series/{id}` | 同上 | `coins/manage.html`（采集中心）、`coins/info.html`（币库）、`coins/series.html`（系列详情） |
 | `/coins/explore` | 同上 | `coins/explore.html`（候选池） |
+| `/coins/analysis` | 同上 | `coins/analysis.html`（分类分析：默认硬币 + 裸币） |
 | `/coins/grades` | 同上 | `coins/grades.html`（品相台账） |
 | `/coins/collection` | 同上 | `coins/collection.html`（今日推荐：精准匹配 + 相似推荐 + 拍场角标） |
 | `/coins/collections` | 同上 | `coins/collections.html`（收藏系列） |

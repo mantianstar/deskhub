@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "^RunCommand$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR:-/Users/zxw523/Documents/trae_projects/deskhub}/.trae/hooks/guard_pytest.py\"",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "^Read$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR:-/Users/zxw523/Documents/trae_projects/deskhub}/.trae/hooks/guard_read.py\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "loop_limit": 2,
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR:-/Users/zxw523/Documents/trae_projects/deskhub}/.trae/hooks/guard_stop.py\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

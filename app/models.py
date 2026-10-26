@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-SCHEMA_VERSION = "20"
+SCHEMA_VERSION = "22"
 
 # 所有时间列存 UTC ISO8601 字符串（SQLite 无原生时间类型）
 DDL = """
@@ -131,6 +131,15 @@ CREATE TABLE IF NOT EXISTS coin_sessions (
 );
 CREATE INDEX IF NOT EXISTS idx_coin_sessions_status ON coin_sessions(status, auction_at);
 
+-- 拍品分类字典（站点原始码 → 名称；v21）
+CREATE TABLE IF NOT EXISTS coin_categories (
+  code       TEXT PRIMARY KEY,
+  name       TEXT NOT NULL,
+  sort       INTEGER NOT NULL DEFAULT 0,
+  fetched_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
 -- 拍品
 CREATE TABLE IF NOT EXISTS coin_lots (
   id             INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -146,6 +155,8 @@ CREATE TABLE IF NOT EXISTS coin_lots (
   closed_at      TEXT,    -- 终态时间（UTC ISO8601，取自拍品 end_time）
   image_urls     TEXT,    -- JSON 数组（页面展示 ≤3）
   tags           TEXT,    -- JSON 对象：{"发行年份":"1808","国家地区":"印度"}
+  category_code  TEXT REFERENCES coin_categories(code) ON DELETE SET NULL,  -- 站点分类原始码（v21）
+  is_graded      INTEGER,  -- 1 = 评级盒（标题正则），0 = 裸币；NULL 视作裸币（v22）
   series_numista_id INTEGER,  -- 匹配到的 Numista 系列号（plan §18.18.5）
   issue_numista_id  INTEGER,  -- 唯一命中的单版号；多候选 / 无命中为空
   match_method   TEXT,    -- attrs / title（后缀 _multi = 多候选未落库）；NULL = 未映射
@@ -689,6 +700,10 @@ class CoinLot:
     bid_user_num: int | None = None
     bid_source: str | None = None
     image_keys: list[str] = field(default_factory=list)
+    # 站点分类：取最细一级（`cate_id_2` 优先、回落 `cate_id_1`；plan §18.19.4）
+    category_code: str | None = None
+    # 评级盒判定（标题正则；1 = 评级盒，0 = 裸币；plan §18.19.6）
+    is_graded: int | None = None
 
 
 @dataclass

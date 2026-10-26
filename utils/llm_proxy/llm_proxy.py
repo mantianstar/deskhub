@@ -61,6 +61,9 @@ _TOOL_ARG_KEYS = ("file_path", "path", "command", "pattern", "query", "descripti
 _OBJECT_LIMIT = 100  # 工具参数（路径 / 命令 / 搜索词）
 _TOPIC_LIMIT = 30  # 用户提问只留一句短标题，不抄全文
 _REMINDER = re.compile(r"<system-reminder>.*?</system-reminder>", re.S)
+# thinking 模式下每个带 tool_calls 的历史 assistant 都必须有 reasoning_content；客户端不回传、
+# 代理重启后旧 id 也查不到，用占位文本兜底（实测上游只校验字段存在）。
+_MISSING_REASONING = "（该轮思考内容未回传，由本地代理补占位）"
 
 
 def extract_usage(payload: object) -> dict[str, int] | None:
@@ -80,11 +83,13 @@ def extract_usage(payload: object) -> dict[str, int] | None:
 
 
 class SseUsageCollector:
-    """边转发边攒 SSE 行，取带 usage 的那条（通常是 [DONE] 前最后一帧）。"""
+    """边转发边攒 SSE 行：取带 usage 的那条（通常是 [DONE] 前最后一帧），顺带记思考内容与工具调用 id。"""
 
     def __init__(self) -> None:
         self._buffer = b""
         self._usage: dict[str, int] | None = None
+        self._reasoning: list[str] = []
+        self._call_ids: list[str] = []
 
     def feed(self, chunk: bytes) -> None:
         self._buffer += chunk
@@ -100,15 +105,118 @@ class SseUsageCollector:
         if not payload or payload == b"[DONE]":
             return
         try:
-            usage = extract_usage(json.loads(payload))
+            frame = json.loads(payload)
         except json.JSONDecodeError:
             return
+        usage = extract_usage(frame)
         if usage:
             self._usage = usage
+        self._take_thinking(frame)
+
+    def _take_thinking(self, frame: object) -> None:
+        if not isinstance(frame, dict):
+            return
+        choices = frame.get("choices")
+        if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+            return
+        delta = choices[0].get("delta")
+        if not isinstance(delta, dict):
+            return
+        reasoning = delta.get("reasoning_content")
+        if isinstance(reasoning, str) and reasoning:
+            self._reasoning.append(reasoning)
+        calls = delta.get("tool_calls")
+        if isinstance(calls, list):
+            for call in calls:
+                if isinstance(call, dict) and isinstance(call.get("id"), str) and call["id"]:
+                    self._call_ids.append(call["id"])
+
+    def _drain(self) -> None:
+        """结尾没有换行的残帧只解析一次，避免多次取值时重复累加。"""
+        if self._buffer:
+            line, self._buffer = self._buffer, b""
+            self._take(line)
 
     def usage(self) -> dict[str, int] | None:
-        self._take(self._buffer)
+        self._drain()
         return self._usage
+
+    def reasoning(self) -> str:
+        self._drain()
+        return "".join(self._reasoning)
+
+    def call_ids(self) -> list[str]:
+        self._drain()
+        return list(self._call_ids)
+
+
+class ReasoningCache:
+    """thinking 模式下工具调用轮的 reasoning_content：客户端不回传，代理按 tool_call_id 补回。"""
+
+    def __init__(self, limit: int = 512) -> None:
+        self._limit = limit
+        self._items: dict[tuple[str, str], str] = {}
+        self._lock = threading.Lock()
+
+    def remember(self, model: str, call_ids: list[str], reasoning: str) -> None:
+        if not model or not reasoning or not call_ids:
+            return
+        with self._lock:
+            for call_id in call_ids:
+                self._items[(model, call_id)] = reasoning
+            while len(self._items) > self._limit:
+                self._items.pop(next(iter(self._items)))
+
+    def fill(self, message: dict, model: str) -> bool:
+        """工具调用消息缺 reasoning_content 时补回：优先按 id 命中真思考，否则用占位文本。"""
+        if message.get("reasoning_content"):
+            return False
+        calls = message.get("tool_calls")
+        if not isinstance(calls, list) or not calls:
+            return False
+        reasoning = ""
+        with self._lock:
+            for call in calls:
+                if not isinstance(call, dict):
+                    continue
+                reasoning = self._items.get((model, str(call.get("id"))), "")
+                if reasoning:
+                    break
+        message["reasoning_content"] = reasoning or _MISSING_REASONING
+        return True
+
+
+def restore_reasoning(data: object, model: str, cache: ReasoningCache) -> bool:
+    """把缓存里的思考内容回填到历史 assistant 工具调用消息，缺失时 DeepSeek 会 400。"""
+    if not isinstance(data, dict):
+        return False
+    messages = data.get("messages")
+    if not isinstance(messages, list):
+        return False
+    changed = False
+    for message in messages:
+        if isinstance(message, dict) and message.get("role") == "assistant":
+            changed = cache.fill(message, model) or changed
+    return changed
+
+
+def message_thinking(payload: object) -> tuple[str, list[str]]:
+    """非流式响应里取 message.reasoning_content 与 tool_calls 的 id。"""
+    if not isinstance(payload, dict):
+        return "", []
+    choices = payload.get("choices")
+    if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+        return "", []
+    message = choices[0].get("message")
+    if not isinstance(message, dict):
+        return "", []
+    reasoning = message.get("reasoning_content")
+    calls = message.get("tool_calls")
+    ids = [call.get("id") for call in calls if isinstance(call, dict)] if isinstance(calls, list) else []
+    return (
+        reasoning if isinstance(reasoning, str) else "",
+        [call_id for call_id in ids if isinstance(call_id, str) and call_id],
+    )
 
 
 def describe_request(payload: object) -> tuple[str, str]:
@@ -197,16 +305,16 @@ def _clip(text: str, limit: int = _OBJECT_LIMIT) -> str:
     return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
-def _prepare(body: bytes, content_type: str) -> tuple[bytes, bool, str, str, str]:
-    """返回 (转发体, 是否流式, 模型名, 动作, 对象)；流式时补上 include_usage，否则拿不到 usage。"""
+def _prepare(body: bytes, content_type: str) -> tuple[dict | None, bool, str, str, str]:
+    """返回 (请求体, 是否流式, 模型名, 动作, 对象)；流式时补上 include_usage，否则拿不到 usage。"""
     if "json" not in (content_type or "") or not body:
-        return body, False, "", "", ""
+        return None, False, "", "", ""
     try:
         data = json.loads(body)
     except json.JSONDecodeError:
-        return body, False, "", "", ""
+        return None, False, "", "", ""
     if not isinstance(data, dict):
-        return body, False, "", "", ""
+        return None, False, "", "", ""
     stream = bool(data.get("stream"))
     action, target = describe_request(data)
     if stream:
@@ -216,7 +324,7 @@ def _prepare(body: bytes, content_type: str) -> tuple[bytes, bool, str, str, str
         if not options.get("include_usage"):
             options["include_usage"] = True
             data["stream_options"] = options
-    return json.dumps(data, ensure_ascii=False).encode(), stream, str(data.get("model") or ""), action, target
+    return data, stream, str(data.get("model") or ""), action, target
 
 
 def _append(
@@ -242,6 +350,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     upstream = DEFAULT_UPSTREAM
     log_path = Path(DEFAULT_LOG)
+    reasoning = ReasoningCache()
 
     def do_GET(self) -> None:  # noqa: N802 —— 基类方法名固定
         self._forward()
@@ -255,7 +364,10 @@ class ProxyHandler(BaseHTTPRequestHandler):
     def _forward(self) -> None:
         length = int(self.headers.get("Content-Length") or 0)
         body = self.rfile.read(length) if length else b""
-        body, stream, model, action, target = _prepare(body, self.headers.get("Content-Type", ""))
+        data, stream, model, action, target = _prepare(body, self.headers.get("Content-Type", ""))
+        if data is not None:
+            restore_reasoning(data, model, self.reasoning)
+            body = json.dumps(data, ensure_ascii=False).encode()
         headers = {k: v for k, v in self.headers.items() if k.lower() not in _DROP_REQUEST_HEADERS}
         headers["Content-Length"] = str(len(body))
         path = _endpoint_path(self.path)
@@ -272,7 +384,10 @@ class ProxyHandler(BaseHTTPRequestHandler):
     def _relay(self, response: httpx.Response, stream: bool, model: str, action: str, target: str) -> None:
         if not stream:
             raw = response.read()
-            usage = extract_usage(_loads(raw))
+            payload = _loads(raw)
+            usage = extract_usage(payload)
+            reasoning, call_ids = message_thinking(payload)
+            self.reasoning.remember(model, call_ids, reasoning)
             if usage:  # 401/400 这类没有 usage，不写空行污染成本表
                 _append(self.log_path, self.path, model, False, usage, action, target)
             self._send_head(response, len(raw))
@@ -292,6 +407,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             self.wfile.write(chunk)
             self.wfile.flush()
             collector.feed(chunk)
+        self.reasoning.remember(model, collector.call_ids(), collector.reasoning())
         usage = collector.usage()
         if usage:
             _append(self.log_path, self.path, model, True, usage, action, target)
@@ -344,7 +460,7 @@ def serve(port: int = DEFAULT_PORT, upstream: str = DEFAULT_UPSTREAM, log_path: 
     handler = type(
         "BoundProxyHandler",
         (ProxyHandler,),
-        {"upstream": upstream.rstrip("/"), "log_path": Path(log_path)},
+        {"upstream": upstream.rstrip("/"), "log_path": Path(log_path), "reasoning": ReasoningCache()},
     )
     return ThreadingHTTPServer(("127.0.0.1", port), handler)
 

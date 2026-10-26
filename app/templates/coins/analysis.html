@@ -1,0 +1,216 @@
+{% extends "base.html" %}
+{% block title %}{{ page_title }} · deskhub{% endblock %}
+{% block content_class %} content-wide{% endblock %}
+{% from "coins/_macros.html" import coin_nav, coin_head with context %}
+
+{% block content %}
+{{ coin_nav("analysis") }}
+{% set subtitle = totals.lots ~ " 件拍品 · 成交 " ~ totals.sold ~ " · 流拍 " ~ totals.unsold
+  ~ " · 在拍 " ~ totals.running ~ " · 样本 < " ~ min_samples ~ " 的分组不给结论" %}
+{{ coin_head("分类分析", subtitle) }}
+
+<form class="search-form coin-filter-sticky" method="get" action="/coins/analysis">
+  <div class="search-row search-row-labeled">
+    <label class="field">二级分类
+      <select class="search-input" name="category" onchange="this.form.requestSubmit();">
+        <option value="">全部硬币</option>
+        {% for item in categories %}
+        <option value="{{ item.code }}"{% if item.code == category %} selected{% endif %}>{{ item.name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label class="field">时间窗
+      <select class="search-input" name="days" onchange="this.form.requestSubmit();">
+        <option value=""{% if not days %} selected{% endif %}>全部</option>
+        <option value="30"{% if days == 30 %} selected{% endif %}>近 30 天</option>
+        <option value="90"{% if days == 90 %} selected{% endif %}>近 90 天</option>
+        <option value="180"{% if days == 180 %} selected{% endif %}>近 180 天</option>
+      </select>
+    </label>
+    <label class="field">店铺
+      <select class="search-input" name="shop" onchange="this.form.requestSubmit();">
+        <option value="">全部店铺</option>
+        {% for item in shops_options %}
+        <option value="{{ item.id }}"{% if item.id == shop %} selected{% endif %}>{{ item.name or "未命名店铺" }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label class="field">口径
+      <select class="search-input" name="graded" onchange="this.form.requestSubmit();">
+        <option value="0"{% if not graded %} selected{% endif %}>只看裸币</option>
+        <option value="1"{% if graded %} selected{% endif %}>含评级盒</option>
+      </select>
+    </label>
+    {% if category or days or shop or graded %}<a class="btn btn-ghost" href="/coins/analysis">重置</a>{% endif %}
+  </div>
+</form>
+
+<h2 class="coin-section-title">概览 <span class="coin-section-count">成交率 = 成交 /（成交 + 流拍），不含在拍</span></h2>
+{% if overview %}
+<div class="table-wrap">
+  <table class="sources-table coin-analysis-table">
+    <thead>
+      <tr>
+        <th>二级分类</th>
+        <th class="nowrap">拍品数</th>
+        <th class="nowrap">成交</th>
+        <th class="nowrap">流拍</th>
+        <th class="nowrap">成交率</th>
+        <th class="nowrap">中位成交价</th>
+        <th class="nowrap">样本数</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in overview %}
+      <tr{% if row.insufficient %} class="coin-analysis-dim"{% endif %}>
+        <td>{{ row.name }}</td>
+        <td class="nowrap">{{ row.lots }}</td>
+        <td class="nowrap">{{ row.sold }}</td>
+        <td class="nowrap">{{ row.unsold }}</td>
+        <td class="nowrap">{{ row.rate }}</td>
+        <td class="nowrap">
+          {% if row.insufficient %}<span class="coin-ref-none">样本不足</span>{% else %}{{ row.median | price }}{% endif %}
+        </td>
+        <td class="nowrap">{{ row.price_count }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<p class="coin-ref-none">当前筛选下没有硬币裸币样本。</p>
+{% endif %}
+
+<h2 class="coin-section-title">价格 <span class="coin-section-count">分位数按成交价；估值比仅统计有 Numista 单版映射的成交</span></h2>
+{% if prices %}
+<div class="table-wrap">
+  <table class="sources-table coin-analysis-table">
+    <thead>
+      <tr>
+        <th>二级分类</th>
+        <th class="nowrap">p25</th>
+        <th class="nowrap">p50</th>
+        <th class="nowrap">p75</th>
+        <th class="nowrap">样本数</th>
+        {% for label in band_labels %}<th class="nowrap">{{ label }}</th>{% endfor %}
+        <th class="nowrap">估值比</th>
+        <th class="nowrap">估值覆盖</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in prices %}
+      <tr{% if row.insufficient %} class="coin-analysis-dim"{% endif %}>
+        <td>{{ row.name }}</td>
+        {% if row.insufficient %}
+        <td colspan="4" class="nowrap"><span class="coin-ref-none">样本不足（{{ row.price_count }} 条）</span></td>
+        {% else %}
+        <td class="nowrap">{{ row.p25 | price }}</td>
+        <td class="nowrap">{{ row.p50 | price }}</td>
+        <td class="nowrap">{{ row.p75 | price }}</td>
+        <td class="nowrap">{{ row.price_count }}</td>
+        {% endif %}
+        {% for count in row.distribution %}<td class="nowrap">{{ count }}</td>{% endfor %}
+        <td class="nowrap">{{ row.numista_ratio if row.numista_ratio is not none else '—' }}</td>
+        <td class="nowrap">{{ row.numista_coverage }}（{{ row.numista_count }}）</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<p class="coin-ref-none">当前筛选下没有成交价样本。</p>
+{% endif %}
+
+<h2 class="coin-section-title">成交与流拍 <span class="coin-section-count">起拍价档位 vs 成交率</span></h2>
+<div class="table-wrap">
+  <table class="sources-table coin-analysis-table">
+    <thead>
+      <tr>
+        <th>起拍价档位</th>
+        <th class="nowrap">拍品数</th>
+        <th class="nowrap">成交</th>
+        <th class="nowrap">流拍</th>
+        <th class="nowrap">成交率</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in start_bands %}
+      <tr{% if row.insufficient %} class="coin-analysis-dim"{% endif %}>
+        <td>{{ row.label }}</td>
+        <td class="nowrap">{{ row.lots }}</td>
+        <td class="nowrap">{{ row.sold }}</td>
+        <td class="nowrap">{{ row.unsold }}</td>
+        <td class="nowrap">{{ row.rate }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+<p class="coin-page-sub">流拍后再上架（按归一化标题近似）：{{ relist.repeat_groups }} 组重复标题，
+  其中流拍后有同标题后续拍品 {{ relist.unsold_relisted }} 条。同图复现未排除描述图，仅作参考。</p>
+
+<h2 class="coin-section-title">店铺画像 <span class="coin-section-count">只统计我们见过的场次，不是店铺全量</span></h2>
+{% if shops %}
+<div class="table-wrap">
+  <table class="sources-table coin-analysis-table">
+    <thead>
+      <tr>
+        <th>店铺</th>
+        <th class="nowrap">上架量</th>
+        <th class="nowrap">成交</th>
+        <th class="nowrap">流拍</th>
+        <th class="nowrap">成交率</th>
+        <th class="nowrap">中位成交价</th>
+        <th class="nowrap">复现率</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in shops %}
+      <tr{% if row.insufficient %} class="coin-analysis-dim"{% endif %}>
+        <td>{{ row.name }}</td>
+        <td class="nowrap">{{ row.lots }}</td>
+        <td class="nowrap">{{ row.sold }}</td>
+        <td class="nowrap">{{ row.unsold }}</td>
+        <td class="nowrap">{{ row.rate }}</td>
+        <td class="nowrap">
+          {% if row.insufficient %}<span class="coin-ref-none">样本不足</span>{% else %}{{ row.median | price }}{% endif %}
+        </td>
+        <td class="nowrap">{{ row.repeat_rate }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<p class="coin-ref-none">当前筛选下没有店铺样本。</p>
+{% endif %}
+
+<h2 class="coin-section-title">供给与重复 <span class="coin-section-count">错标只做抽样展示，不回写分类</span></h2>
+<p class="coin-page-sub">供给量前 5：{% for row in overview[:5] %}{{ row.name }} {{ row.lots }}{% if not loop.last %} · {% endif %}{% endfor %}</p>
+{% if mislabels %}
+<div class="table-wrap">
+  <table class="sources-table coin-analysis-table">
+    <thead>
+      <tr>
+        <th>标题</th>
+        <th class="nowrap">所在分类</th>
+        <th class="nowrap">冲突关键词</th>
+        <th class="nowrap">终态</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in mislabels %}
+      <tr>
+        <td>{{ row.title }}</td>
+        <td class="nowrap">{{ row.category_name }}</td>
+        <td class="nowrap">{{ row.keyword }}</td>
+        <td class="nowrap">{{ row.outcome or '在拍' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<p class="coin-ref-none">没有命中错标规则的样本。</p>
+{% endif %}
+{% endblock %}

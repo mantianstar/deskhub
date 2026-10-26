@@ -40,3 +40,12 @@ node_modules
 
 # 对话记录（个人对话内容，不进仓库）
 data/conversations/
+
+# Hook 审计（本机运行时产物，用于确认门禁是否真的被调用）
+data/hook_audit.log
+
+# 本机运行时产物（usage 日志 / 成本游标 / Hook 样本 / 临时原型）
+data/llm_usage.jsonl
+data/.token_cost_cursor
+data/hook_payload_samples.jsonl
+data/prototypes/

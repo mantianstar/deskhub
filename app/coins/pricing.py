@@ -32,10 +32,14 @@ class SoldSample:
     # 热度：`home.filter` 才有；缺键为 None（不当 0，plan §18.18.1 P1-6）
     bid_num: int | None = None
     bid_user_num: int | None = None
+    # 站点分类（最细一级；plan §18.19.4）；`coin_sales` 不落这列，只留在取证 raw 里
+    category_code: str | None = None
 
 
 class PriceSource(Protocol):
-    async def search_sold(self, keyword: str) -> list[SoldSample]: ...
+    async def search_sold(
+        self, keyword: str, cate_id_1: int | None = None, page: int = 1
+    ) -> list[SoldSample]: ...
 
 
 @dataclass(frozen=True)
@@ -135,6 +139,7 @@ async def price_lot(
                 "sold_at": sample.sold_at,
                 "bid_num": sample.bid_num,
                 "bid_user_num": sample.bid_user_num,
+                "category_code": sample.category_code,
             }
             for sample in samples
         ],

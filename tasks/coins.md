@@ -342,3 +342,14 @@
 | [x] M37-D | 观测：`coins-quality` 按来源打印非空率 / 均值 / `bid_user_num`，并列出同 key 分组与重复拍品数 | `app/cli.py`、`app/repository.py` | 真实库首跑见下 |
 
 **验证**：`.venv/bin/python -m pytest tests -q` → 367 passed；补跑 2 场后 `preview` 10/10 非空（均值 4.30）；回填 41844 条有图拍品后同图重复涉及 8687 条（20.7%），最大单 key 714 条（同一描述图跨场复用）→ 阈值待定。
+
+## M38 — 拍品分类接入与分析页（2026-10-26，spec/coins.md §14.19 / plan/coins.md §18.19）
+
+| # | 块 | 产出 | 验证 |
+|---|---|---|---|
+| [x] M38-A | 数据层：新表 `coin_categories(code, name, sort, fetched_at, updated_at)`；`coin_lots` 增 `category_code`（外键，`ON DELETE SET NULL`）；schema 20→21 | `app/models.py`、`app/migrations/v21.py`、`app/migrations/__init__.py` | `pytest tests/test_coins_categories.py -q` → 3 passed（新库 / v20 升级 / 幂等） |
+| [ ] M38-B | 种子字典：`app/coins/categories.py` 固化一级与硬币二级码表；`repository.upsert_coin_categories`；未知码以码为名兜底并记日志 | 新增 `app/coins/categories.py`、`app/repository.py` | 字典 11000 下 9 个二级码齐全；未知码用例 |
+| [ ] M38-C | 采集映射：`lot_from_item` / `sold_from_payload` 取 `cate_id_2` 回落 `cate_id_1`（0 → NULL）；`LotInfo` / `SoldSample` / `CoinLot` 加字段；`upsert_coin_lot` 用 COALESCE 写 | `app/coins/gapi.py`、`app/models.py`、`app/repository.py`、`app/coins/pipeline.py` | 详情 / 预览 / 成交搜索各 1 例；详情缺键不擦已有分类 |
+| [ ] M38-D | 历史回填：`coins-backfill-category` 按专场回采（1 场 1 次 `auction.get`），只写 `category_code` | `app/cli.py`、`app/coins/pipeline.py`、`app/repository.py` | 真实库分类有值占比 ≥ 90% |
+| [ ] M38-E | 裸币判定：标题正则识别评级盒（`PCGS/NGC/公博/华夏/保粹/爱藏/闻德/众诚/评级/盒`），schema 21→22 加 `is_graded`，历史纯本地回填 | `app/migrations/v22.py`、`app/models.py`、`app/coins/pipeline.py` | 11040 铜元抽样：评级盒与裸币可分开计数 |
+| [ ] M38-F | 分析页：`GET /coins/analysis` + `app/templates/coins/analysis.html`，5 个 Tab（概览 / 价格 / 成交与流拍 / 店铺画像 / 供给与重复），默认「硬币 + 裸币」，样本 < 5 置灰 | `app/routers/coins.py`、模板、`app/coins/analysis.py` | 页面 200；切分类数字变化；现有页面无回归 |

@@ -261,6 +261,45 @@ def test_sold_from_payload_keeps_only_sold_items():
     assert samples[0].sold_at == "2026-09-01T02:00:00Z"
 
 
+def test_category_code_from_item_prefers_second_level():
+    """`cate_id_2` 优先；缺失 / 0 回落 `cate_id_1`；都没有 → None（plan §18.19.4）。"""
+    assert gapi.category_code_from_item({"cate_id_1": 11000, "cate_id_2": 11030}) == "11030"
+    assert gapi.category_code_from_item({"cate_id_1": 11000, "cate_id_2": 0}) == "11000"
+    assert gapi.category_code_from_item({"cate_id_1": 0, "cate_id_2": None}) is None
+    assert gapi.category_code_from_item({}) is None
+
+
+def test_lot_from_item_carries_category_code():
+    lot = gapi.lot_from_item(
+        {"item_id": 1, "name": "东印度 1808", "cate_id_1": 11000, "cate_id_2": 11040}
+    )
+
+    assert lot is not None
+    assert lot.category_code == "11040"
+
+
+def test_sold_from_payload_carries_category_code():
+    payload = {
+        "auction_items": {
+            "items": [
+                {
+                    "item_id": 1,
+                    "name": "英国1960年",
+                    "price": 1200,
+                    "status": 2,
+                    "end_time": "2026-09-01 10:00:00",
+                    "cate_id_1": 11000,
+                    "cate_id_2": 11030,
+                }
+            ]
+        }
+    }
+
+    samples = gapi.sold_from_payload(payload, SHANGHAI)
+
+    assert [sample.category_code for sample in samples] == ["11030"]
+
+
 class _StubApi(gapi.MxiqiGapi):
     """只替换 `_call`：验的是「请求了哪个动作 / 参数对不对 / 去重 / 状态过滤」，与网络无关。"""
 
@@ -333,9 +372,29 @@ async def test_search_sold_posts_keywords_and_status():
 
     assert api.calls[-1] == (
         gapi.ACTION_FILTER,
-        {"search_params": {"keywords": "英国 1960", "status": gapi.SOLD_STATUS}},
+        {"search_params": {"keywords": "英国 1960", "status": gapi.SOLD_STATUS}, "page": 1},
     )
     assert [sample.title for sample in samples] == ["英国1960年"]
+
+
+@pytest.mark.asyncio
+async def test_search_sold_puts_cate_id_in_params_and_page_on_top():
+    """分类码进 `search_params`，`page` 放**顶层**（plan §18.19.1 实测）。"""
+    api = _StubApi({1: [], 2: []})
+
+    await api.search_sold("英国 1960", cate_id_1=11000, page=3)
+
+    assert api.calls[-1] == (
+        gapi.ACTION_FILTER,
+        {
+            "search_params": {
+                "keywords": "英国 1960",
+                "status": gapi.SOLD_STATUS,
+                "cate_id_1": 11000,
+            },
+            "page": 3,
+        },
+    )
 
 
 @pytest.mark.asyncio
@@ -466,7 +525,9 @@ class _FakeGapi:
         self.detail_calls.append(mxiqi_id)
         return _detail(mxiqi_id)
 
-    async def search_sold(self, keyword: str) -> list:
+    async def search_sold(
+        self, keyword: str, cate_id_1: int | None = None, page: int = 1
+    ) -> list:
         self.sold_calls.append(keyword)
         return self._sold
 
