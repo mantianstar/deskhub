@@ -10,6 +10,88 @@
 
 ---
 
+## v1.77 — 2026-10-26 RULES 拆出两个专题分册，全文 163 → 97 行
+
+**起因**：`RULES.md` 又把不同频次的内容堆在一起——成本表口径、文档增补规程只有特定轮次才用，却每次开工都读；五轮模板与 §七 六条在 `PROJECT_MAP.md` 有同内容副本，两份维护必然漂移。
+
+**改了什么**：新建 `docs/token-cost.md`（口径、底座、请求数、动作 / 对象、校准、真实 usage、对账、工具）与 `docs/doc-policy.md`（属性对照表、通用约定、分册与编号），`RULES.md` §零.3 / §六 各留一行链接；删除与 `PROJECT_MAP.md` 重复的五轮模板和 §七 六条，改为指向该文，`PROJECT_MAP.md` 速查标注为唯一源；`RULES.md` 合并同类条目并加「全文 ≤100 行、每节 ≤12 行」维护约束与新规则落位判据。
+
+**验证结论**：`wc -l` 实测 `RULES.md` 97 行（原 163），每节 ≤12 行；`docs/token-cost.md` / `docs/doc-policy.md` / `docs/conversation-log.md` 链接目标均存在；`PROJECT_MAP.md` §6 文档地图补两行入口。
+
+**影响文件**：`RULES.md`、`docs/token-cost.md`、`docs/doc-policy.md`、`PROJECT_MAP.md`、`CHANGELOG.md`。
+
+---
+
+## v1.76 — 2026-10-26 提问类对象只留短标题，不再抄整段请求体
+
+**起因**：Trae 的 `content` 是 `[{type: text, text: ...}]` 块列表，代理按 `str()` 整段落库，对象列变成 `[{'type': 'text', 'text': '\n<system-reminder>…`，既不是标识也读不出在问什么。
+
+**改了什么**：`utils/llm_proxy/llm_proxy.py` 新增 `_plain_text()`——把文本块拍平成纯文本并去掉 `<system-reminder>` 注入块；用户提问的对象压到 30 字（工具参数仍留 100 字，够定位文件 / 命令）。`utils/token_cost/token_cost.py` 新增 `_object_cell()`：绝对路径按仓库相对路径显示（不截掉文件名），其余对象截到 30 字，旧日志里的长文本也不再撑表。`RULES.md` §零.3 补「对象只记标识，不抄全文」。
+
+**验证结论**：`tests/test_llm_proxy.py` 新增 2 条用例（文本块去提醒取前 30 字、成本表截长对象并转相对路径）；本机 `python3` 缺 `pytest` / `httpx`，改用手工加载模块的脚本验证通过（提问对象 30 字、表内路径显示为 `utils/token_cost/token_cost.py`），`pytest` 待依赖环境补跑。
+
+**影响文件**：`utils/llm_proxy/llm_proxy.py`、`utils/token_cost/token_cost.py`、`tests/test_llm_proxy.py`、`RULES.md`、`CHANGELOG.md`。
+
+---
+
+## v1.75 — 2026-10-26 代理补记动作 / 对象，成本表加两列，默认底座校准到 19570
+
+**起因**：成本清单只有请求序号，看不出每次请求在干什么；且首条真实请求的 prompt 是 19570，比「约 2 万」的估值更准。
+
+**改了什么**：`utils/llm_proxy/llm_proxy.py` 新增 `describe_request()`——从请求体最后一条消息推动作与对象：工具结果按 `tool_call_id` 回查 assistant 的 `tool_calls`，工具名映射动作（Read→读取、SearchReplace→编辑、RunCommand→命令…），首个关键参数（`file_path` / `path` / `command` / `pattern` / `query` / `description` / `name`）当对象并截断 100 字；非工具消息按角色记（user→提问）。随 usage 一起写 `data/llm_usage.jsonl`，新增 `action` / `object` 两字段。`utils/token_cost/token_cost.py` 的 `--usage` 表从四列扩到六列（请求 / 动作 / 对象 / 输入 / 输出 / 成本），旧日志缺字段留 `-`；`DEFAULT_FIXED_TOKENS` 20000 → 19570。`RULES.md` §零.3 模板同步加两列并补「动作 / 对象」口径。
+
+**验证结论**：`tests/test_llm_proxy.py` 新增 3 条用例（工具名映射、`tool_call_id` 回查、端到端落库）全过；全量 `pytest tests -q` 389 passed；旧日志跑 `--usage` 时两列显示 `-`（合计 1,737,893）。代理进程未由本机命令重启（沙箱拦截），需手动重启后新日志才带这两列。
+
+**影响文件**：`utils/llm_proxy/llm_proxy.py`、`utils/token_cost/token_cost.py`、`tests/test_llm_proxy.py`、`RULES.md`、`CHANGELOG.md`。
+
+---
+
+## v1.74 — 2026-10-26 增加本地转发代理，逐请求记录 DeepSeek 的 usage
+
+**起因**：Trae 平台不向模型侧暴露请求的 `usage`，成本表只能估算；而 DeepSeek 响应里本来就有真实值，缺的只是「谁来记」。
+
+**改了什么**：新增 `utils/llm_proxy/llm_proxy.py`——只监听 127.0.0.1 的 OpenAI 兼容转发代理，流式请求自动补 `stream_options.include_usage=true`，从 SSE 或非流式响应体取 `usage`（含缓存命中 / 未命中），每次请求一行写 `data/llm_usage.jsonl`（字段可直接喂 `token_cost.py --usage`），鉴权头与路径原样转发；没有 `usage` 的失败响应（401/400）不落库，避免成本表混进全 0 行。`RULES.md` §零.3 补代理用法一行。**用法**：`python utils/llm_proxy/llm_proxy.py`，Trae 设置 → 模型 → 添加自定义模型（DeepSeek），请求地址填 `http://127.0.0.1:8787`，对话切到该模型。
+
+**验证结论**：`tests/test_llm_proxy.py` 6 条用例通过（usage 提取、SSE 跨块拼帧、非流式与流式端到端落库、失败响应不落库、落库文件喂 `--usage`）；本机起代理实测 `/v1/models` 与 `/v1/chat/completions` 转发到 DeepSeek 返回 401（无 Key），确认无空行写入；全量 `pytest tests -q` 384 passed。
+
+**影响文件**：`utils/llm_proxy/llm_proxy.py`、`tests/test_llm_proxy.py`、`RULES.md`、`CHANGELOG.md`。
+
+---
+
+## v1.73 — 2026-10-26 token 成本表支持直接使用接口返回的真实 usage
+
+**起因**：DeepSeek 的 chat completion 响应自带 `usage`（prompt / completion tokens），但成本表一直按「底座 + 历史重发」估算，多一层反推误差；能拿到真实值时没必要估算。
+
+**改了什么**：`utils/token_cost/token_cost.py` 新增 `--usage` 模式，逐行读 JSONL（元素可直接是响应体，取 `usage` 字段；也接受平铺对象或 JSON 数组）出「请求 / 输入 / 输出 / 成本」表，不再反推底座；原估算模式与校准参数不变。`RULES.md` §零.3 补一条「真实 usage 优先」，明确拿不到时仍退回估算口径。
+
+**验证结论**：`--usage` 用 3 条样例（2 条响应体 + 1 条平铺）跑通，合计 67795；`sample_task.json` 估算模式输出与改前一致（合计 60425）。
+
+**影响文件**：`utils/token_cost/token_cost.py`、`RULES.md`、`CHANGELOG.md`。
+
+---
+
+## v1.72 — 2026-10-25 每请求底座校准到 4.2 万，并关掉不用的插件与技能省底座
+
+**起因**：底座两次平台读数互相矛盾（3 次请求 / 10 万 → 反推 2.8 万；4 次请求 / 20 万 → 反推 4.2 万）。后者请求数更完整、且与「当前上下文 5 万」自洽，取 4.2 万；旧的 5.2 万是在**已有历史轮次**的会话里反推的，历史被算进底座，偏高约 1 万。
+
+**改了什么**：`utils/token_cost/token_cost.py` 的 `DEFAULT_FIXED_TOKENS` 定为 42000（同步 help 与 docstring，顺手修掉遗留的 8000）；`RULES.md` §零.3 口径改 42000 并新增「底座构成」一行，明确底座只含本次请求自带内容、不含历史轮次。同日在 Trae 侧关掉 `trae-remote-official:lark` 插件（`plugin-config.json`）与 5 个用不到的全局 skill（`skill-config.json` 的 `disabledSkills`），预期底座再降 0.8~1 万，下个会话复测。**口径补充**：工具往返各算一次请求（7 次请求 / 37 万复算仍得底座 ≈4.2 万，且同时对上「当前上下文 7 万」），成本表改按请求逐行；据此底座占 79%、对话增长占 21%，省底座比省文字更划算。
+
+**验证结论**：memory 注入实测 1559 tokens（`project_memory.md` 1500 + `user_profile.md` 59），占底座约 3.7%，主体是 system 提示与工具/技能定义。受影响：`RULES.md` §零.3。
+
+---
+
+## v1.71 — 2026-10-25 收尾回执增加按轮次的 token 成本清单
+
+**起因**：只记轮数与读取次数看不出真实成本；单文件 token 之和远小于平台账单，因为每轮都会重发 system、工具定义与历史上下文。
+
+**改了什么**：新增 `utils/token_cost/token_cost.py`，按流水 JSON 计算每轮累计上下文与输出，输出轮次表与总计；支持用平台锚点（当前上下文 / 请求数 / 总 tokens）反推每请求固定底座与增长，并给出底座与对话增长的占比。`RULES.md` §零.3 的回执改为附该表，区分对话轮次与平台请求数，估算以校准反推值为准。
+
+**验证结论**：`sample_task.json` 三轮回测通过；平台复核三批：①11 请求 / 67 万 / 当前 7 万（无起始值）反推底座约 5.2 万；②5 请求 / 41.6 万 / 起始 7 万 / 当前 9 万，线性预测 40 万，偏差 +4%；③3 请求 / 29 万 / 起始 9 万 / 当前 10 万，线性预测 28.5 万，偏差 +1.7%。合计 19 请求 / 137.6 万，底座约 98 万（72%），成本主因是每请求重发的固定上下文；`DEFAULT_FIXED_TOKENS` 由 8000 改为实测值 50000。
+
+**影响文件**：`utils/token_cost/token_cost.py`、`utils/token_cost/sample_task.json`、`RULES.md`、`CHANGELOG.md`。
+
+---
+
 ## v1.70 — 2026-10-25 子代理配置入库、清理 agent-insight 残留
 
 **起因**：`.trae/agents/` 下三个子代理配置从未提交过，换机器 clone 后 RULES §零 的派发流程（planner / page-prototyper / bug-reproducer）会整体失效；同时 IDE 的 agent-insight 功能在仓库根留下 `package.json` / `package-lock.json`，与 Python 项目无关。
