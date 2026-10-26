@@ -1,0 +1,26 @@
+{
+  "_note": "测试样例：模拟一次 3 轮小任务的流水，非本任务真实开销；未提供 system/tools，按默认 8000 固定开销计",
+  "rounds": [
+    {
+      "new": [
+        "user: 任务类型是读取，编辑等所有涉及消耗token的任务，读取用deepseek_tokenizer进行计算，需要列出单个文件的消耗，然后计算多轮次总消耗",
+        "tool: Read utils/deepseek_v4_tokenizer/deepseek_tokenizer.py -> 417 tokens",
+        "tool: Read RULES.md 片段 -> 351 tokens"
+      ],
+      "output": "assistant: 任务卡：需求原句 / 改动链 / 读取清单 + 轮数上限。接下来读取 tokenizer 与 RULES §零。"
+    },
+    {
+      "new": [
+        "tool: Edit RULES.md §零.3 -> 513 tokens",
+        "tool: Edit CHANGELOG.md v1.71 -> 188 tokens"
+      ],
+      "output": "assistant: 已把回执扩展为含 token 成本清单的模板，计量统一走 deepseek_tokenizer。"
+    },
+    {
+      "new": [
+        "user: 不对吧，每轮本身有上下文吧，你把这个列上，我要看最后整个任务的总成本和平台上的进行对比，你先可以出个测试的，我看下结果"
+      ],
+      "output": "assistant: 每轮输入应为累计上下文，脚本按「system + tools + 历史 + 本轮新增」逐轮计数，并给出总输入、总输出与总成本。"
+    }
+  ]
+}
