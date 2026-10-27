@@ -141,6 +141,19 @@ def print_usage_table(rows: list[dict[str, int]]) -> None:
         print(f"\n工具调用合计 {total_calls} 个；并行批次 {parallel} 次")
 
 
+def split_round_anchor(fresh: list[dict]) -> tuple[int, dict, dict]:
+    """锚点取法：起始认本轮首条「提问」，结束认增量末条。
+
+    提问之前的行是本轮开始前追加的（上轮的末次请求，或别的任务残留），照常计入成本，
+    但不当起始——否则跨任务时会把上一个会话的上下文当成本轮起点。
+    """
+    leading = 0
+    while leading < len(fresh) and fresh[leading].get("action") != "提问":
+        leading += 1
+    head = fresh[leading] if leading < len(fresh) else fresh[0]
+    return leading, head, fresh[-1]
+
+
 def print_round_table(usage_path: Path) -> None:
     """本轮增量：只出上次出表之后新增的请求；游标与日志同目录，中断、换会话都不丢账。"""
     rows = load_usage_rows(usage_path)
@@ -153,7 +166,14 @@ def print_round_table(usage_path: Path) -> None:
     print_usage_table(fresh)
     total_input = sum(row["prompt_tokens"] for row in fresh)
     total_output = sum(row["completion_tokens"] for row in fresh)
-    print(f"\n成本：输入 {total_input:,} + 输出 {total_output:,} = 合计 {total_input + total_output:,}（本轮 {len(fresh)} 次请求）")
+    leading, head, tail = split_round_anchor(fresh)
+    print(
+        f"\n- 请求数：{len(fresh)} ｜ 起始上下文：{head['prompt_tokens']:,}"
+        f" ｜ 结束上下文：{tail['prompt_tokens']:,}"
+    )
+    print(f"成本：输入 {total_input:,} + 输出 {total_output:,} = 合计 {total_input + total_output:,}（本轮 {len(fresh)} 次请求）")
+    if 0 < leading < len(fresh):
+        print(f"注：增量开头 {leading} 条早于本轮提问（上轮补记或别的任务残留），已计入成本，不作锚点")
     cursor_path.write_text(f"{len(rows)}", encoding="utf-8")
 
 

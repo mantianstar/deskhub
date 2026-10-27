@@ -10,6 +10,22 @@
 
 ---
 
+## v1.97 — 2026-10-27 --round 直接出锚点行，起始改认本轮提问
+
+**起因**：v1.96 的回执要写「请求数 / 起始上下文 / 结束上下文」，但工具只出表与成本行，两个锚点靠人从表里读。表按时间升序，表首是最旧一条；跨任务时上一个会话的最后一条（`data/llm_usage.jsonl` 第 1304 行，76,032）会落在本轮增量开头，被误当「结束上下文」，连同 76,032 的输入输出一起多算。
+
+**改了什么**：
+- `token_cost.py`：新增 `split_round_anchor`，`--round` 在成本行上方直接输出固定锚点行 `- 请求数：X ｜ 起始上下文：X ｜ 结束上下文：X`——起始取本轮首条「提问」行，结束取增量末条；无提问行时退回增量首条。
+- 提问之前追加的行（上轮末次请求补记 / 别的任务残留）仍计入成本与请求数，但另出一行注明「不作锚点」。
+- `RULES.md` §零.3、`.trae/rules/project-rules.md`、`docs/token-cost.md` §3 同步「锚点由 `--round` 出、原样抄」与起止取法。
+- `tests/test_llm_proxy.py`：既有 `--round` 用例补锚点断言，新增「提问前的行不作锚点」回归。
+
+**验证结论**：`.venv/bin/python -m pytest tests/test_llm_proxy.py -q` → 22 passed。未解决：日志无会话标识，同任务相邻两轮之间若有其他会话请求，仍会混进增量成本（本次只保证锚点不被带偏）。
+
+**影响文件**：`utils/token_cost/token_cost.py`、`RULES.md`、`.trae/rules/project-rules.md`、`docs/token-cost.md`、`tests/test_llm_proxy.py`、`CHANGELOG.md`。spec / plan 无变更。
+
+---
+
 ## v1.96 — 2026-10-27 回执成本行上方增加请求数与起止上下文
 
 **起因**：`data/llm_usage.jsonl` 按请求逐条记录，而回执成本行只有输入 / 输出合计，看不到本轮请求数与收口时的上下文大小；「轮数」与「请求数」两个口径容易被混读。

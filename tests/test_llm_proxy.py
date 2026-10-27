@@ -339,15 +339,37 @@ def test_usage_round_table_tracks_cursor(tmp_path, capsys):
 
     write(["提问", "读取"])
     module.print_round_table(log_path)
-    assert "本轮 2 次请求" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "本轮 2 次请求" in out
+    assert "- 请求数：2 ｜ 起始上下文：10 ｜ 结束上下文：10" in out
 
     write(["提问", "读取", "编辑"])
     module.print_round_table(log_path)
     out = capsys.readouterr().out
     assert "本轮 1 次请求" in out and "| 编辑 |" in out
+    assert "- 请求数：1 ｜ 起始上下文：10 ｜ 结束上下文：10" in out
 
     module.print_round_table(log_path)
     assert "无新增请求" in capsys.readouterr().out
+
+
+def test_usage_round_anchor_starts_at_question(tmp_path, capsys):
+    """锚点从本轮首条「提问」起算：之前的行（上轮补记 / 别的任务残留）只计入成本。"""
+    module = _load_token_cost()
+    log_path = tmp_path / "llm_usage.jsonl"
+    records = [("命令", 76032), ("提问", 20723), ("命令", 28998)]
+    log_path.write_text(
+        "".join(
+            json.dumps({"ts": "2026-10-27T23:31:30+0800", "action": action, "object": "",
+                        "prompt_tokens": prompt, "completion_tokens": 1}, ensure_ascii=False) + "\n"
+            for action, prompt in records
+        ),
+        encoding="utf-8",
+    )
+    module.print_round_table(log_path)
+    out = capsys.readouterr().out
+    assert "- 请求数：3 ｜ 起始上下文：20,723 ｜ 结束上下文：28,998" in out
+    assert "开头 1 条早于本轮提问" in out and "不作锚点" in out
 
 
 def test_usage_table_clips_long_object(capsys):
