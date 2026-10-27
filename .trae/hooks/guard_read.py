@@ -125,6 +125,15 @@ def gaps(spans: list, start: int, end: int) -> list:
     return [(left, right) for left, right in out if right > left]
 
 
+def fingerprint(path: str):
+    """文件指纹（mtime_ns + size）：内容变过就允许重读，避免编辑后无法回读验证。"""
+    try:
+        st = os.stat(path)
+        return [st.st_mtime_ns, st.st_size]
+    except OSError:
+        return None
+
+
 def check(payload: dict, path: str, begin: int, end: int) -> tuple[str, str, str]:
     """返回 (decision, detail, text)：decision 取 allow / hint / deny，begin 为 0 基、end 为开区间。"""
     session_id = payload.get("session_id")
@@ -135,7 +144,12 @@ def check(payload: dict, path: str, begin: int, end: int) -> tuple[str, str, str
         state = _state.load()
         slot = _state.bucket(state, session_id)
         reads = slot.setdefault("reads", {})
+        prints = slot.setdefault("prints", {})
+        stamp = fingerprint(path)
         spans = reads.get(path) or []
+        if stamp is not None and prints.get(path) != stamp:
+            spans = []
+            prints[path] = stamp
 
         holes = gaps(spans, begin, end)
         new = sum(stop - left for left, stop in holes)

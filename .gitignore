@@ -49,3 +49,7 @@ data/llm_usage.jsonl
 data/.token_cost_cursor
 data/hook_payload_samples.jsonl
 data/prototypes/
+
+# Hook 去重状态（本机运行时产物，每次调用都会改写）
+data/hook_state.json
+data/hook_state.lock

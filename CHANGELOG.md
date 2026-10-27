@@ -10,6 +10,39 @@
 
 ---
 
+## v1.94 — 2026-10-27 门禁补任务隔离与写入审计，规则数值加契约测试
+
+**起因**：hook 状态只按 session 分桶，跨任务误拦已读文件；编辑后回读验证被当重复；「Q/D 不改文件」「输出体量」无任何 hook 覆盖；规则文档之间 200/120 与判重口径不一致，且缺回归测试。
+
+**改了什么**：
+- `docs/task-routing.md`：§二 加「通用约束（Q/D/S/P/L 均适用）」；Q 节补判重不豁免；D 允许写 `tests/repro/`；P 原型固定落 `data/prototypes/{task-slug}.html`。
+- `RULES.md` §二：判重措辞改为「同区间重读（重复率 > 80% 且新增 < 20 行）」。
+- `.trae/rules/project-rules.md`：「文件 <200 行整段读」改为「<120 行」。
+- `.trae/hooks/guard_read.py`：按 mtime_ns + size 记指纹，文件改动后允许重读。
+- 新增 `guard_reset.py`（UserPromptSubmit 清空本会话去重状态）与 `guard_write.py`（PostToolUse 审计 Write / Edit / SearchReplace / DeleteFile，不阻断），并在 `hooks.json` 注册。
+- 删除未注册的 `audit_payload.py`（临时 payload 采样脚本，无引用）。
+- `tests/test_hooks_contract.py` 新增 4 条契约：Q 上限 / 轮数定义 / 判重口径、整段读阈值、写入与重置注册、状态重置与内容变更行为。
+
+**验证结论**：`pytest tests/test_hooks_contract.py tests/test_rules_guard.py -q` → 34 passed, 1 skipped；`RULES.md` 96 行。
+
+**影响文件**：`docs/task-routing.md`、`RULES.md`、`.trae/rules/project-rules.md`、`.trae/hooks/{guard_read,guard_reset,guard_write}.py`、`.trae/hooks.json`、`tests/test_hooks_contract.py`、`CHANGELOG.md`。spec / plan 无变更。
+
+---
+
+## v1.93 — 2026-10-27 Q 读取上限放宽与轮数定义补齐
+
+**起因**：Q 的「≤3 个文件」卡住了解释类问题（跨模块说明天然要 4–6 个文件），而 task-routing 没有「只读但跨模块」的超限路径；另「轮」一直未定义，容易被当成工具调用次数。
+
+**改了什么**：
+- `docs/task-routing.md` Q 节：文件上限 ≤3 → ≤8；超过 8 个或跨 ≥2 个模块按 D 走（只读、≤8 轮、无文件上限），产出为解释 + 文件:行。
+- `RULES.md` §二 补轮数定义：一轮 = 一条助手回复，同轮并行调用不累加，门禁拒绝后的重试不新增轮数（不新增行，全文仍 ≤100 行）。
+
+**验证结论**：`pytest tests/test_rules_guard.py -q` 通过；`wc -l RULES.md` 见当轮回执。
+
+**影响文件**：`docs/task-routing.md`、`RULES.md`、`CHANGELOG.md`。spec / plan 无变更。
+
+---
+
 ## v1.92 — 2026-10-27 轮次与验证预算补可判定上限
 
 **起因**：复盘 19:57–20:03 的会话（44 请求 / 313 万 tokens）：搜索 13 次（上限 6）、同文件换 5 个关键词、全量 pytest 跑 3 次、单条命令输出 17KB 留在上下文、后期 14 条请求占输入 42.8%；这些约束此前只写了原则，没有可判定的次数 / 行数 / KB，回执也看不出违规。
