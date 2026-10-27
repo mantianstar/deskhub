@@ -514,6 +514,9 @@ class _FakeGapi:
         self.detail_calls: list[str] = []
         self.sold_calls: list[str] = []
 
+    async def list_categories(self) -> list[gapi.CategoryInfo]:
+        return []
+
     async def list_sessions(self) -> list[SessionCard]:
         if self._fail_list:
             raise gapi.GapiError("网关 502")

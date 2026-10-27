@@ -1,7 +1,7 @@
-"""六个可独立运行的功能：定时任务与管理页「立即运行」共用同一入口。
+"""七个可独立运行的功能：定时任务与管理页「立即运行」共用同一入口。
 
 为什么单开一层：`app/pipeline.run` 是「抓取 → 打分」一体的（CLI 出报用），
-而管理页要能**分开**跑抓取和打分，所以这里按功能拆成六个小函数。
+而管理页要能**分开**跑抓取和打分，所以这里按功能拆成七个小函数。
 
 手动触发（`trigger`）是**后台执行**：铜币查价一轮可能几分钟，
 不能把 HTTP 请求挂在那里等；跑完把一句摘要留在 `last_state` 里供页面显示。
@@ -15,6 +15,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 from app import fetcher, pipeline, repository, scorer, switches
+from app.coins import filter_scan as coins_filter_scan
 from app.coins import matcher as coins_matcher
 from app.coins import pipeline as coins_pipeline
 from app.coins import recommend as coins_recommend
@@ -61,6 +62,19 @@ async def run_coins_finalize(config: Config) -> str:
     )
 
 
+async def run_coins_filter_scan(config: Config) -> str:
+    """扫 home.filter 给已入库拍品回填热度（只更新库里已有的拍品）。"""
+    result = await coins_filter_scan.scan(config)
+    if result.stopped == "cooldown":
+        return f"home.filter 扫描冷却中（{coins_filter_scan.COOLDOWN_HOURS} 小时内限速），跳过"
+    if result.status == "skipped":
+        return f"home.filter 扫描跳过：{result.stopped}"
+    return (
+        f"home.filter 扫描 {result.cates} 个二级分类 / {result.pages} 页 / "
+        f"{result.items} 条：回填 {result.updated} 条，未入库跳过 {result.missing} 条"
+    )
+
+
 async def run_coins_match(config: Config) -> str:
     """只重算拍品推荐位（不采集、不回采、不查价）。"""
     # 与 coins_pipeline.run 的匹配段同口径：收藏画像优先，没配画像回退标签匹配
@@ -91,6 +105,7 @@ RUNNERS: dict[str, Callable[[Config], Awaitable[str]]] = {
     switches.KNOWLEDGE_SCORE: run_knowledge_score,
     switches.COINS_COLLECT: run_coins_collect,
     switches.COINS_FINALIZE: run_coins_finalize,
+    switches.COINS_FILTER_SCAN: run_coins_filter_scan,
     switches.COINS_MATCH: run_coins_match,
     switches.COINS_PRICE: run_coins_price,
 }

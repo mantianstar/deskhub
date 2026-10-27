@@ -37,7 +37,7 @@ def test_fresh_db_has_category_schema(tmp_path):
     with db.connect() as conn:
         assert "category_code" in _columns(conn, "coin_lots")
         assert "coin_categories" in _tables(conn)
-        assert _version(conn) == "22"
+        assert _version(conn) == "24"
 
 
 def test_v20_db_upgrade_adds_category_code(tmp_path):
@@ -65,7 +65,7 @@ def test_v20_db_upgrade_adds_category_code(tmp_path):
     with db.connect() as conn:
         assert "category_code" in _columns(conn, "coin_lots")
         assert "coin_categories" in _tables(conn)
-        assert _version(conn) == "22"
+        assert _version(conn) == "24"
 
 
 def test_v21_upgrade_is_idempotent(tmp_path):
@@ -93,7 +93,7 @@ def test_v21_upgrade_is_idempotent(tmp_path):
     with db.connect() as conn:
         columns = [row["name"] for row in conn.execute("PRAGMA table_info(coin_lots)")]
         assert columns.count("category_code") == 1
-        assert _version(conn) == "22"
+        assert _version(conn) == "24"
 
 
 # ---------------------------------------------------------------- 分类字典 / 采集映射
@@ -168,6 +168,119 @@ def test_sync_seed_writes_dictionary(temp_db):
     assert {"10000", "11000", "11030"} <= codes
     assert categories.name_for("11030") == "古钱币"
     assert categories.parent_code("11030") == "11000"
+
+
+# 站点实测 13 个一级；用例句取种子码表的前 13 个码构造响应形状，
+# 15000 / 24000 只在种子兜底路径里出现，不参与本用例。
+_SITE_LEVEL1 = (
+    10000,
+    11000,
+    12000,
+    13000,
+    14000,
+    16000,
+    17000,
+    18000,
+    19000,
+    20000,
+    21000,
+    22000,
+    23000,
+)
+
+
+def _cate_payload() -> list[dict]:
+    """站点 `cate.list` 的形状：13 个一级，硬币（11000）下 9 个二级。"""
+    return [
+        {
+            "cate_id": code,
+            "name": categories.LEVEL1[code],
+            "level": 1,
+            "parent_id": 0,
+            "order_no": index,
+            "thumb": f"https://oss.mxiqi.com/cate/{code}.png",
+            "count": 100 + index,
+            "sub": [
+                {
+                    "cate_id": sub_code,
+                    "name": sub_name,
+                    "level": 2,
+                    "parent_id": code,
+                    "order_no": sub_index,
+                    "thumb": "",
+                    "count": sub_index,
+                }
+                for sub_index, (sub_code, sub_name) in enumerate(categories.LEVEL2.items())
+            ]
+            if code == 11000
+            else [],
+        }
+        for index, code in enumerate(_SITE_LEVEL1)
+    ]
+
+
+class _CateApi(gapi.MxiqiGapi):
+    """只替换 `_call`：验分类字典走的是 `cate.list`、扁平化与字段映射对不对。"""
+
+    def __init__(self, cates: list[dict]) -> None:
+        super().__init__(_cfg())
+        self._cates = cates
+        self.calls: list[tuple[str, dict]] = []
+
+    async def _call(self, action: str, payload: dict) -> dict:
+        self.calls.append((action, payload))
+        return {"cates": self._cates}
+
+
+@pytest.mark.asyncio
+async def test_sync_categories_from_site_api(temp_db):
+    """每日采集前同步：13 个一级、硬币下 9 个二级，`parent_code` / `count` 快照落库。"""
+    api = _CateApi(_cate_payload())
+
+    await categories.sync(api)
+
+    assert api.calls == [(gapi.ACTION_CATE, {})]
+    with db.connect() as conn:
+        level1 = conn.execute(
+            "SELECT COUNT(*) FROM coin_categories WHERE level = 1 AND parent_code IS NULL"
+        ).fetchone()[0]
+        coins = conn.execute(
+            "SELECT * FROM coin_categories WHERE parent_code = '11000'"
+        ).fetchall()
+        top = conn.execute("SELECT * FROM coin_categories WHERE code = '11000'").fetchone()
+    assert level1 == 13
+    assert {row["code"] for row in coins} == {str(code) for code in categories.LEVEL2}
+    assert coins[0]["level"] == 2
+    assert top["level"] == 1
+    assert top["thumb"].endswith("11000.png")
+    assert top["item_count"] == 101  # 站点 `count` 只是快照
+
+
+@pytest.mark.asyncio
+async def test_sync_categories_prunes_codes_gone_from_api(temp_db):
+    await categories.sync(_CateApi(_cate_payload()))
+    remaining = [item for item in _cate_payload() if item["cate_id"] != 23000]
+
+    await categories.sync(_CateApi(remaining))
+
+    with db.connect() as conn:
+        gone = conn.execute(
+            "SELECT COUNT(*) FROM coin_categories WHERE code = '23000'"
+        ).fetchone()[0]
+    assert gone == 0
+
+
+@pytest.mark.asyncio
+async def test_sync_categories_falls_back_to_seed_on_api_error(temp_db):
+    class _FailingApi(gapi.MxiqiGapi):
+        async def _call(self, action: str, payload: dict) -> dict:
+            raise gapi.GapiError("网关 502")
+
+    await categories.sync(_FailingApi(_cfg()))
+
+    with db.connect() as conn:
+        count = conn.execute("SELECT COUNT(*) FROM coin_categories").fetchone()[0]
+    assert count == len(categories.LEVEL1) + len(categories.LEVEL2)
 
 
 def test_ensure_codes_falls_back_to_code_as_name(temp_db):

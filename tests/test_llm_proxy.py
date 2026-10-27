@@ -59,6 +59,24 @@ def test_sse_collector_takes_usage_frame_across_chunks():
     assert collector.usage()["completion_tokens"] == 7
 
 
+def test_sse_collector_counts_parallel_tool_calls():
+    """并行工具调用按 index 归并：同一 index 的多帧不重复计，长度就是本次请求的工具数。"""
+    collector = proxy.SseUsageCollector()
+    collector.feed(b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"a","function":{"name":"Read"}}]}}]}\n\n')
+    collector.feed(b'data: {"choices":[{"delta":{"tool_calls":[{"index":1,"id":"b","function":{"name":"Grep"}}]}}]}\n\n')
+    collector.feed(b'data: {"choices":[{"delta":{"tool_calls":[{"index":2,"id":"c","function":{"name":"LS"}}]}}]}\n\n')
+    collector.feed(b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"name":"Read"}}]}}]}\n\n')
+    assert collector.tool_calls() == ["Read", "Grep", "LS"]
+
+
+def test_message_tool_calls_reads_non_stream_payload():
+    """非流式响应里 tool_calls 的函数名；缺名字时占位，保证长度仍等于工具数。"""
+    payload = {"choices": [{"message": {"tool_calls": [
+        {"function": {"name": "Read"}}, {"function": {}}, {"id": "x"}]}}]}
+    assert proxy.message_tool_calls(payload) == ["Read", "?", "?"]
+    assert proxy.message_tool_calls({}) == []
+
+
 def test_normalize_path_collapses_slashes_and_v1():
     assert proxy._normalize_path("//v1/chat/completions") == "/v1/chat/completions"
     assert proxy._normalize_path("/v1/v1/chat/completions") == "/v1/chat/completions"
@@ -344,3 +362,24 @@ def test_usage_table_clips_long_object(capsys):
     assert "…" in out
     assert ("很长的提问" * 20) not in out
     assert "utils/token_cost/token_cost.py" in out
+
+
+def test_usage_table_shows_tool_calls(capsys):
+    """有 tool_call_count 时加「工具」列，并在表后给出工具总数与并行批次数。"""
+    module = _load_token_cost()
+    module.print_usage_table([
+        {"action": "读取", "object": "", "prompt_tokens": 10, "completion_tokens": 1, "tool_call_count": 3},
+        {"action": "提问", "object": "", "prompt_tokens": 10, "completion_tokens": 1, "tool_call_count": 1},
+    ])
+    out = capsys.readouterr().out
+    assert "| 工具 |" in out
+    assert "工具调用合计 4 个；并行批次 1 次" in out
+
+
+def test_proxy_logs_tool_call_count(servers):
+    """usage 行要能直接看出本次请求发了几个工具，不用等下一条请求的 prompt 增量反推。"""
+    base, log_path = servers
+    httpx.post(f"{base}/v1/chat/completions", json={"model": "m", "messages": [], "stream": True})
+    record = _records(log_path)[0]
+    assert record["tool_call_count"] == 0
+    assert "tool_names" not in record

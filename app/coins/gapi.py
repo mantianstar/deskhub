@@ -39,6 +39,8 @@ logger = logging.getLogger(__name__)
 ACTION_LIST = "miniprogram.auction.ListAuction"
 ACTION_GET = "miniprogram.auction.get"
 ACTION_FILTER = "miniprogram.home.filter"
+# 分类字典：`data.cates[]` 一级、`sub[]` 二级（2026-10-27 实测可用）
+ACTION_CATE = "miniprogram.cate.list"
 
 # 专场状态码 → 我们的三态（spec §14.7）
 SESSION_STATUS_BY_CODE = {0: "preview", 1: "running", 2: "closed"}
@@ -78,6 +80,20 @@ class ShopInfo:
     name: str | None
     avatar_url: str | None
     badges: list[dict] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class CategoryInfo:
+    """`miniprogram.cate.list` 的一个分类节点（一级 / 二级）。"""
+
+    code: str
+    name: str
+    parent_code: str | None
+    level: int
+    thumb: str | None = None
+    # 站点 `count`：随站点变化的快照，不是实时值
+    item_count: int | None = None
+    order_no: int | None = None
 
 
 @dataclass(frozen=True)
@@ -189,6 +205,34 @@ def category_code_from_item(item: dict) -> str | None:
         if code is not None and code > 0:
             return str(code)
     return None
+
+
+def category_from_cate(item: dict, *, parent_code: str | None = None) -> CategoryInfo | None:
+    """`cates[]` 节点 → `CategoryInfo`；码 / 名称缺失视为脏数据丢弃。
+
+    `parent_code` 显式传入时以它为准（二级节点在 `sub[]` 里，本身可能不带 `parent_id`）。
+    """
+    code = _whole(item.get("cate_id"))
+    name = (item.get("name") or "").strip()
+    if code is None or code <= 0 or not name:
+        return None
+    parent = parent_code
+    if parent is None:
+        parent_id = _whole(item.get("parent_id"))
+        parent = str(parent_id) if parent_id is not None and parent_id > 0 else None
+    level = _whole(item.get("level"))
+    if level is None or level <= 0:
+        level = 2 if parent else 1
+    thumb = (item.get("thumb") or "").strip() or None
+    return CategoryInfo(
+        code=str(code),
+        name=name,
+        parent_code=parent,
+        level=level,
+        thumb=thumb,
+        item_count=_whole(item.get("count")),
+        order_no=_whole(item.get("order_no")),
+    )
 
 
 _TAG_RE = re.compile(r"<[^>]+>")
@@ -570,6 +614,21 @@ class MxiqiGapi:
             cards = [card for card in cards if card.status in wanted]
         return cards
 
+    async def list_categories(self) -> list[CategoryInfo]:
+        """分类字典：`cates[]` 一级 + 其 `sub[]` 二级，拍平成一行一个分类。"""
+        data = await self._call(ACTION_CATE, {})
+        rows: list[CategoryInfo] = []
+        for item in data.get("cates") or []:
+            top = category_from_cate(item)
+            if top is None:
+                continue
+            rows.append(top)
+            for sub in item.get("sub") or []:
+                child = category_from_cate(sub, parent_code=top.code)
+                if child is not None:
+                    rows.append(child)
+        return rows
+
     async def session_detail(
         self, mxiqi_id: str, *, fallback: SessionCard | None = None
     ) -> SessionDetail:
@@ -606,3 +665,14 @@ class MxiqiGapi:
             ACTION_FILTER, {"search_params": search_params, "page": page}
         )
         return sold_from_payload(data, self._cfg.app.tz)
+
+    async def search_filter_items(self, search_params: dict, page: int) -> list[dict]:
+        """`miniprogram.home.filter` 的原始条目（热度回填用，不做字段映射）。
+
+        `search_params` 原样透传（调用方负责 `cate_id_1` / `cate_id_2` / `status`），
+        `page` 放顶层；`page_size` 被站点忽略（固定 21 条/页，plan §18.19.1）。
+        """
+        data = await self._call(
+            ACTION_FILTER, {"search_params": search_params, "page": page}
+        )
+        return ((data.get("auction_items") or {}).get("items")) or []

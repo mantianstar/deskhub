@@ -12,7 +12,23 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Callable
 
-from app.migrations import v4, v8, v11, v12, v13, v14, v16, v17, v18, v19, v20, v21, v22
+from app.migrations import (
+    v4,
+    v8,
+    v11,
+    v12,
+    v13,
+    v14,
+    v16,
+    v17,
+    v18,
+    v19,
+    v20,
+    v21,
+    v22,
+    v23,
+    v24,
+)
 
 # (from_version, to_version) -> {表名: {列名: 列定义}}
 COLUMN_MIGRATIONS: dict[tuple[str, str], dict[str, dict[str, str]]] = {
@@ -32,6 +48,34 @@ COLUMN_MIGRATIONS: dict[tuple[str, str], dict[str, dict[str, str]]] = {
         "coin_lots": {**v21.COLUMNS["coin_lots"], **v22.COLUMNS["coin_lots"]},
     },
     ("21", "22"): v22.COLUMNS,
+    # 越过 v22 的库直接升到 v23：低位版本把 v21 / v22 的加列一并带上（v23 只加分类字典列）
+    ("20", "23"): {
+        "coin_lots": {**v21.COLUMNS["coin_lots"], **v22.COLUMNS["coin_lots"]},
+        "coin_categories": v23.COLUMNS["coin_categories"],
+    },
+    ("21", "23"): {
+        "coin_lots": v22.COLUMNS["coin_lots"],
+        "coin_categories": v23.COLUMNS["coin_categories"],
+    },
+    ("22", "23"): v23.COLUMNS,
+    # v24 只给 coin_lots 加热度明细列；跨版本升级把中间版本的列一并带上
+    ("20", "24"): {
+        "coin_lots": {
+            **v21.COLUMNS["coin_lots"],
+            **v22.COLUMNS["coin_lots"],
+            **v24.COLUMNS["coin_lots"],
+        },
+        "coin_categories": v23.COLUMNS["coin_categories"],
+    },
+    ("21", "24"): {
+        "coin_lots": {**v22.COLUMNS["coin_lots"], **v24.COLUMNS["coin_lots"]},
+        "coin_categories": v23.COLUMNS["coin_categories"],
+    },
+    ("22", "24"): {
+        "coin_lots": v24.COLUMNS["coin_lots"],
+        "coin_categories": v23.COLUMNS["coin_categories"],
+    },
+    ("23", "24"): v24.COLUMNS,
 }
 
 # (from_version, to_version) -> 建表之外还要跑一次的数据回填
@@ -42,6 +86,10 @@ DATA_MIGRATIONS: dict[tuple[str, str], Callable[[sqlite3.Connection], None]] = {
     ("19", "20"): v20.upgrade_japanese_grade_years,
     ("20", "22"): v22.backfill_is_graded,
     ("21", "22"): v22.backfill_is_graded,
+    ("20", "23"): v22.backfill_is_graded,
+    ("21", "23"): v22.backfill_is_graded,
+    ("20", "24"): v22.backfill_is_graded,
+    ("21", "24"): v22.backfill_is_graded,
 }
 
 

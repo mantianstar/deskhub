@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-SCHEMA_VERSION = "22"
+SCHEMA_VERSION = "24"
 
 # 所有时间列存 UTC ISO8601 字符串（SQLite 无原生时间类型）
 DDL = """
@@ -131,13 +131,18 @@ CREATE TABLE IF NOT EXISTS coin_sessions (
 );
 CREATE INDEX IF NOT EXISTS idx_coin_sessions_status ON coin_sessions(status, auction_at);
 
--- 拍品分类字典（站点原始码 → 名称；v21）
+-- 拍品分类字典（站点原始码 → 名称；v21；v23 起字段来自 `miniprogram.cate.list`）
 CREATE TABLE IF NOT EXISTS coin_categories (
-  code       TEXT PRIMARY KEY,
-  name       TEXT NOT NULL,
-  sort       INTEGER NOT NULL DEFAULT 0,
-  fetched_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
+  code        TEXT PRIMARY KEY,
+  name        TEXT NOT NULL,
+  sort        INTEGER NOT NULL DEFAULT 0,
+  parent_code TEXT,     -- 一级分类码；一级自身为空（v23）
+  level       INTEGER NOT NULL DEFAULT 1,  -- 1 = 一级，2 = 二级（v23）
+  thumb       TEXT,     -- 站点分类缩略图（v23）
+  item_count  INTEGER,  -- 站点 `count`：只是同步时的快照（v23）
+  order_no    INTEGER,  -- 站点排序号（v23）
+  fetched_at  TEXT NOT NULL,
+  updated_at  TEXT NOT NULL
 );
 
 -- 拍品
@@ -167,6 +172,8 @@ CREATE TABLE IF NOT EXISTS coin_lots (
   -- 热度：只有 ListAuction 预览 / home.filter 带，auction.get 没有（plan §18.18.1 P1-6）
   bid_num        INTEGER,
   bid_user_num   INTEGER,
+  bid_users      TEXT,    -- JSON 数组：出价人 uid（home.filter 约 1/21 条有值；v24）
+  winner_nickname TEXT,   -- 中拍人昵称（home.filter 的 won_user_info.nickname；v24）
   bid_source     TEXT,    -- preview | home_filter；NULL = 没有来源给过值
   fetched_at     TEXT    NOT NULL
 );
@@ -226,7 +233,7 @@ CREATE INDEX IF NOT EXISTS idx_coin_sales_sold_at ON coin_sales(sold_at);
 -- 采集日志
 CREATE TABLE IF NOT EXISTS coin_fetch_runs (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
-  kind        TEXT    NOT NULL,   -- sessions | session_detail | price_search
+  kind        TEXT    NOT NULL,   -- sessions | session_detail | price_search | home_filter
   target      TEXT,
   started_at  TEXT    NOT NULL,
   finished_at TEXT,
@@ -372,7 +379,7 @@ CREATE INDEX IF NOT EXISTS idx_coin_issue_values_series ON coin_issue_values(ser
 -- Numista 调用计数（免费额度每月 2000 次，需自管风控；Numista 响应不带限流头）
 CREATE TABLE IF NOT EXISTS coin_api_usage (
   id        INTEGER PRIMARY KEY AUTOINCREMENT,
-  provider  TEXT    NOT NULL,   -- 目前只有 numista
+  provider  TEXT    NOT NULL,   -- numista | mxiqi_filter（home.filter 日配额）
   called_at TEXT    NOT NULL    -- UTC ISO8601
 );
 CREATE INDEX IF NOT EXISTS idx_coin_api_usage ON coin_api_usage(provider, called_at);

@@ -81,6 +81,9 @@ def load_usage_rows(path: Path) -> list[dict[str, int]]:
                 "object": str(source.get("object") or ""),
                 "prompt_tokens": int(source.get("prompt_tokens") or 0),
                 "completion_tokens": int(source.get("completion_tokens") or 0),
+                "tool_call_count": (
+                    int(source["tool_call_count"]) if source.get("tool_call_count") is not None else None
+                ),
             }
         )
     return rows
@@ -114,18 +117,28 @@ def slice_rows(rows: list[dict], since: str | None = None, last: int | None = No
 
 def print_usage_table(rows: list[dict[str, int]]) -> None:
     """按真实 usage 出成本表：输入就是该次请求的 prompt，不反推底座。"""
-    print("| 请求 | 动作 | 对象 | 输入 | 输出 | 成本 |")
-    print("|---|---|---|---|---|---|")
-    total_input = total_output = 0
+    with_tools = any(row.get("tool_call_count") is not None for row in rows)
+    print("| 请求 | 动作 | 对象 | 工具 | 输入 | 输出 | 成本 |" if with_tools
+          else "| 请求 | 动作 | 对象 | 输入 | 输出 | 成本 |")
+    print("|---|---|---|---|---|---|---|" if with_tools else "|---|---|---|---|---|---|")
+    total_input = total_output = total_calls = parallel = 0
     for index, row in enumerate(rows, start=1):
         total_input += row["prompt_tokens"]
         total_output += row["completion_tokens"]
+        cells = f"| {index} | {_cell(row.get('action'))} | {_object_cell(row.get('object'))} | "
+        if with_tools:
+            calls = row.get("tool_call_count")
+            total_calls += calls or 0
+            parallel += 1 if (calls or 0) > 1 else 0
+            cells += f"{calls if calls is not None else '-'} | "
         print(
-            f"| {index} | {_cell(row.get('action'))} | {_object_cell(row.get('object'))} | "
-            f"{row['prompt_tokens']} | {row['completion_tokens']} | "
+            f"{cells}{row['prompt_tokens']} | {row['completion_tokens']} | "
             f"{row['prompt_tokens'] + row['completion_tokens']} |"
         )
-    print(f"| **合计** | - | - | **{total_input}** | **{total_output}** | **{total_input + total_output}** |")
+    total_cells = "| **合计** | - | - | " + (f"**{total_calls}** | " if with_tools else "")
+    print(f"{total_cells}**{total_input}** | **{total_output}** | **{total_input + total_output}** |")
+    if with_tools:
+        print(f"\n工具调用合计 {total_calls} 个；并行批次 {parallel} 次")
 
 
 def print_round_table(usage_path: Path) -> None:
@@ -135,12 +148,12 @@ def print_round_table(usage_path: Path) -> None:
     cursor = int(cursor_path.read_text(encoding="utf-8").strip() or 0) if cursor_path.exists() else 0
     fresh = rows[cursor:]
     if not fresh:
-        print("本轮自上次出表后无新增请求。")
+        print("成本：未计量（本轮无新增请求，以平台账单为准）")
         return
     print_usage_table(fresh)
     total_input = sum(row["prompt_tokens"] for row in fresh)
     total_output = sum(row["completion_tokens"] for row in fresh)
-    print(f"\n本轮 {len(fresh)} 次请求：输入 {total_input:,} + 输出 {total_output:,} = 成本 {total_input + total_output:,}")
+    print(f"\n成本：输入 {total_input:,} + 输出 {total_output:,} = 合计 {total_input + total_output:,}（本轮 {len(fresh)} 次请求）")
     cursor_path.write_text(f"{len(rows)}", encoding="utf-8")
 
 

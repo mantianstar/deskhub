@@ -262,8 +262,8 @@ async def run(
 
 async def _collect(config: Config, api: MxiqiGapi, started: str) -> tuple[int, int, int]:
     """采集专场与拍品。返回（看到专场数, 入库专场数, 入库拍品数）。"""
-    # 分类字典：每轮采集前同步一次（站点没有分类列表接口，名称只能靠种子字典）
-    categories.sync_seed()
+    # 分类字典：每日采集开始前从站点同步一次，接口失败回落种子字典（v23）
+    await categories.sync(api)
     try:
         cards = await api.list_sessions()
     except GapiError as exc:
@@ -500,8 +500,11 @@ async def _finalize(config: Config, api: MxiqiGapi, run_started: str) -> tuple[i
                 batch_unsold += 1
 
         # 拍场状态以站内为准：已截拍的专场同步成 closed，列表页与拍品页才有「已截拍」
+        # 围观数（`auction_stat.pv`）是专场级累计值，随回采一并落库
         if detail.card.status is not None:
-            repository.set_coin_session_status(session_id, detail.card.status)
+            repository.set_coin_session_status(
+                session_id, detail.card.status, view_count=detail.card.view_count
+            )
 
         sessions_done += 1
         sold += batch_sold

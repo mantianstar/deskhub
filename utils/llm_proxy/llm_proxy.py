@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""本地 OpenAI 兼容转发代理：把每次响应的 usage 与本次请求的动作 / 对象记进 JSONL，供 token_cost.py --usage 出表。
+"""本地 OpenAI 兼容转发代理：把每次响应的 usage、本次请求的动作 / 对象、这次请求了几个工具记进 JSONL，供 token_cost.py --usage 出表。
 
 用法：
     export DEEPSEEK_API_KEY=sk-...
@@ -90,6 +90,7 @@ class SseUsageCollector:
         self._usage: dict[str, int] | None = None
         self._reasoning: list[str] = []
         self._call_ids: list[str] = []
+        self._calls: dict[int, str] = {}
 
     def feed(self, chunk: bytes) -> None:
         self._buffer += chunk
@@ -127,8 +128,19 @@ class SseUsageCollector:
             self._reasoning.append(reasoning)
         calls = delta.get("tool_calls")
         if isinstance(calls, list):
-            for call in calls:
-                if isinstance(call, dict) and isinstance(call.get("id"), str) and call["id"]:
+            for offset, call in enumerate(calls):
+                if not isinstance(call, dict):
+                    continue
+                index = call.get("index")
+                if not isinstance(index, int):
+                    index = len(self._calls) + offset
+                function = call.get("function")
+                name = function.get("name") if isinstance(function, dict) else None
+                if isinstance(name, str) and name:
+                    self._calls[index] = name
+                elif index not in self._calls:
+                    self._calls[index] = "?"
+                if isinstance(call.get("id"), str) and call["id"]:
                     self._call_ids.append(call["id"])
 
     def _drain(self) -> None:
@@ -148,6 +160,11 @@ class SseUsageCollector:
     def call_ids(self) -> list[str]:
         self._drain()
         return list(self._call_ids)
+
+    def tool_calls(self) -> list[str]:
+        """本次响应请求了几个工具：并行调用时长度 > 1，与下一条请求的 prompt 增量对应。"""
+        self._drain()
+        return [self._calls[index] for index in sorted(self._calls)]
 
 
 class ReasoningCache:
@@ -217,6 +234,27 @@ def message_thinking(payload: object) -> tuple[str, list[str]]:
         reasoning if isinstance(reasoning, str) else "",
         [call_id for call_id in ids if isinstance(call_id, str) and call_id],
     )
+
+
+def message_tool_calls(payload: object) -> list[str]:
+    """非流式响应里 tool_calls 的函数名；并行发出 N 个调用时长度就是 N。"""
+    if not isinstance(payload, dict):
+        return []
+    choices = payload.get("choices")
+    if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+        return []
+    message = choices[0].get("message")
+    if not isinstance(message, dict):
+        return []
+    calls = message.get("tool_calls")
+    if not isinstance(calls, list):
+        return []
+    names: list[str] = []
+    for call in calls:
+        function = call.get("function") if isinstance(call, dict) else None
+        name = function.get("name") if isinstance(function, dict) else None
+        names.append(name if isinstance(name, str) and name else "?")
+    return names
 
 
 def describe_request(payload: object) -> tuple[str, str]:
@@ -328,8 +366,16 @@ def _prepare(body: bytes, content_type: str) -> tuple[dict | None, bool, str, st
 
 
 def _append(
-    path: Path, route: str, model: str, stream: bool, usage: dict[str, int] | None, action: str, target: str
+    path: Path,
+    route: str,
+    model: str,
+    stream: bool,
+    usage: dict[str, int] | None,
+    action: str,
+    target: str,
+    tool_calls: list[str] | None = None,
 ) -> None:
+    names = tool_calls or []
     record = {
         "ts": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
         "path": route,
@@ -337,8 +383,11 @@ def _append(
         "stream": stream,
         "action": action,
         "object": target,
+        "tool_call_count": len(names),
         **(usage or {}),
     }
+    if names:
+        record["tool_names"] = names
     path.parent.mkdir(parents=True, exist_ok=True)
     line = json.dumps(record, ensure_ascii=False)
     with _LOG_LOCK:
@@ -389,7 +438,9 @@ class ProxyHandler(BaseHTTPRequestHandler):
             reasoning, call_ids = message_thinking(payload)
             self.reasoning.remember(model, call_ids, reasoning)
             if usage:  # 401/400 这类没有 usage，不写空行污染成本表
-                _append(self.log_path, self.path, model, False, usage, action, target)
+                _append(
+                    self.log_path, self.path, model, False, usage, action, target, message_tool_calls(payload)
+                )
             self._send_head(response, len(raw))
             self.wfile.write(raw)
             self.wfile.flush()
@@ -410,7 +461,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
         self.reasoning.remember(model, collector.call_ids(), collector.reasoning())
         usage = collector.usage()
         if usage:
-            _append(self.log_path, self.path, model, True, usage, action, target)
+            _append(self.log_path, self.path, model, True, usage, action, target, collector.tool_calls())
 
     def _send_head(self, response: httpx.Response, length: int) -> None:
         self.send_response(response.status_code)

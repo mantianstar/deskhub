@@ -5,8 +5,8 @@
 - 开关只管「每天 07:00 的定时任务」；管理页上的「立即运行」是手动触发，**忽略开关**
   （临时跑一次不该先去改开关）。
 - 启动补拉已取消（见 `app/scheduler.py`）：重启不执行任何任务，所以开关与重启无关。
-- 库里没有记录的功能用 `DEFAULT_ENABLED` 兜底，**不往库里写默认值** ——
-  这样以后改默认值能直接生效。
+- 库里没有记录的功能用默认值兜底，**不往库里写默认值** ——
+  这样以后改默认值能直接生效；默认值按功能逐个定（见 `DEFAULT_DISABLED`）。
 """
 
 from __future__ import annotations
@@ -19,6 +19,7 @@ KNOWLEDGE_FETCH = "knowledge_fetch"
 KNOWLEDGE_SCORE = "knowledge_score"
 COINS_COLLECT = "coins_collect"
 COINS_FINALIZE = "coins_finalize"
+COINS_FILTER_SCAN = "coins_filter_scan"
 COINS_MATCH = "coins_match"
 COINS_PRICE = "coins_price"
 
@@ -59,6 +60,12 @@ FEATURES: tuple[Feature, ...] = (
         "截拍后回采拍品终态（成交价 / 流拍 / 中拍人）；每场 1 次详情，不花 token",
     ),
     Feature(
+        COINS_FILTER_SCAN,
+        "铜币拍卖",
+        "热度回填",
+        "扫 home.filter 给已入库拍品补出价数 / 出价人 / 成交人；受日配额与限速约束，不花 token",
+    ),
+    Feature(
         COINS_MATCH,
         "铜币拍卖",
         "匹配",
@@ -70,8 +77,15 @@ FEATURES: tuple[Feature, ...] = (
 
 # 默认全部启用：重启不再自动跑，但每天 07:00 的定时任务保持原有行为
 DEFAULT_ENABLED = True
+# 例外：站点风控 / 成本高的功能默认关，需要人工在 /control 打开
+DEFAULT_DISABLED: frozenset[str] = frozenset({COINS_FILTER_SCAN})
 
 _BY_KEY = {feature.key: feature for feature in FEATURES}
+
+
+def default_enabled(key: str) -> bool:
+    """未落库时的默认状态。"""
+    return DEFAULT_ENABLED and key not in DEFAULT_DISABLED
 
 
 def is_known(key: str) -> bool:
@@ -82,7 +96,7 @@ def is_enabled(key: str) -> bool:
     """定时任务执行前问它。未知 key 一律当「未启用」，避免拼错 key 反而静默跑起来。"""
     if not is_known(key):
         return False
-    return repository.feature_switch_states().get(key, DEFAULT_ENABLED)
+    return repository.feature_switch_states().get(key, default_enabled(key))
 
 
 def toggle(key: str) -> bool:
@@ -103,7 +117,7 @@ def snapshot() -> list[dict[str, object]]:
             "group": feature.group,
             "label": feature.label,
             "detail": feature.detail,
-            "enabled": states.get(feature.key, DEFAULT_ENABLED),
+            "enabled": states.get(feature.key, default_enabled(feature.key)),
             "scheduled": feature.scheduled,
         }
         for feature in FEATURES

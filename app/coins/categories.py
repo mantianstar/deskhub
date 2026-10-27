@@ -1,8 +1,8 @@
-"""站点拍品分类的**种子字典**（plan/coins.md §18.19.2 / §18.19.3）。
+"""站点拍品分类：`miniprogram.cate.list` 同步 + 种子兜底（plan/coins.md §18.19.2 / §18.19.3）。
 
-站点没有分类列表接口（相关 action 全部 403，2026-10-26 实测），名称只能人工维护在这里；
-采集与回填把字典 upsert 进 `coin_categories`，字典**外**的码以 `name = code` 兜底并记日志，
-这样站点新增分类时不用改代码也能先落库。
+接口返回一级 `cates[]` 与二级 `sub[]`，每日采集前由 `sync()` 同步一次落进
+`coin_categories`；接口失败 / 返回空时回落到下面的种子字典，字典**外**的码仍以
+`name = code` 兜底并记日志，这样站点增删分类不用改代码也能先落库。
 
 口径：`coin_lots` 只存**最细一级** —— `cate_id_2` 有值取它，否则回落 `cate_id_1`，
 0 / 缺失记 NULL；一级码由前缀推导（`code[:3] + "00"`），不单独存两列。
@@ -12,10 +12,19 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterable
+from typing import TYPE_CHECKING
 
 from app import repository
+from app.coins.gapi import GapiError
+
+if TYPE_CHECKING:
+    from app.coins.gapi import MxiqiGapi
 
 logger = logging.getLogger(__name__)
+
+CategoryRow = tuple[
+    str, str, int, str | None, int, str | None, int | None, int | None
+]
 
 # 一级码 `cate_id_1`（扫描 10000–24000，步长 1000；plan §18.19.2）
 LEVEL1: dict[int, str] = {
@@ -59,12 +68,26 @@ def _sort_for(code: str) -> int:
     return int(code) if code.isdigit() else UNKNOWN_SORT_BASE
 
 
-def seed_rows() -> list[tuple[str, str, int]]:
-    """种子字典 → `(code, name, sort)` 行（一级在前、二级在后，sort 取码值）。"""
-    return [
-        (str(code), name, _sort_for(str(code)))
-        for code, name in (*LEVEL1.items(), *LEVEL2.items())
+def seed_rows() -> list[CategoryRow]:
+    """种子字典 → 完整分类行（一级在前、二级在后；`sort` / `order_no` 取码值）。"""
+    rows: list[CategoryRow] = [
+        (str(code), name, _sort_for(str(code)), None, 1, None, None, code)
+        for code, name in LEVEL1.items()
     ]
+    rows += [
+        (
+            str(code),
+            name,
+            _sort_for(str(code)),
+            parent_code(str(code)),
+            2,
+            None,
+            None,
+            code,
+        )
+        for code, name in LEVEL2.items()
+    ]
+    return rows
 
 
 def name_for(code: str | None) -> str | None:
@@ -84,8 +107,38 @@ def parent_code(code: str | None) -> str | None:
 
 
 def sync_seed() -> None:
-    """把种子字典写进 `coin_categories`（按 `code` upsert name / sort）。"""
+    """种子字典写进 `coin_categories`（接口失败时的兜底；按 `code` upsert）。"""
     repository.upsert_coin_categories(seed_rows())
+
+
+async def sync(api: "MxiqiGapi") -> None:
+    """每日采集前同步站点分类字典；接口失败 / 空结果时回落种子字典。"""
+    try:
+        items = await api.list_categories()
+    except GapiError as exc:
+        logger.warning("分类字典接口失败，回落种子字典：%s", exc)
+        sync_seed()
+        return
+    if not items:
+        logger.warning("分类字典接口返回空，回落种子字典")
+        sync_seed()
+        return
+    repository.upsert_coin_categories(
+        [
+            (
+                item.code,
+                item.name,
+                item.order_no if item.order_no is not None else _sort_for(item.code),
+                item.parent_code,
+                item.level,
+                item.thumb,
+                item.item_count,
+                item.order_no,
+            )
+            for item in items
+        ],
+        prune=True,
+    )
 
 
 def ensure_codes(codes: Iterable[str | None]) -> None:
@@ -94,4 +147,19 @@ def ensure_codes(codes: Iterable[str | None]) -> None:
     if not missing:
         return
     logger.warning("分类字典外的码：%s（以 name=code 兜底）", "、".join(missing))
-    repository.upsert_coin_categories([(code, code, _sort_for(code)) for code in missing])
+    rows: list[CategoryRow] = []
+    for code in missing:
+        parent = parent_code(code)
+        rows.append(
+            (
+                code,
+                code,
+                _sort_for(code),
+                None if parent == code else parent,
+                1 if parent == code else 2,
+                None,
+                None,
+                None,
+            )
+        )
+    repository.upsert_coin_categories(rows)

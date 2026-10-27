@@ -1,15 +1,29 @@
-"""Stop 门禁：回复缺「回执：」或 token 成本清单就要求补（RULES.md §零.3）。"""
+"""Stop 门禁：回复缺「回执：」三段结构或 token 成本清单就要求补（RULES.md §零.3）。"""
 
 from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 from datetime import datetime
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 AUDIT = Path(os.environ.get("DESKHUB_HOOK_AUDIT") or REPO / "data" / "hook_audit.log")
+
+RECEIPT_RE = re.compile(r"回执[：:]")
+# 「3 / 10」与「2 轮（/15）」都算写了轮数；全角斜杠一并认。
+ROUNDS_RE = re.compile(r"\d+\s*[/／]\s*\d+|\d+\s*轮\s*[（(]?\s*[/／]\s*\d+")
+# 「成本清单」只认固定行（docs/token-cost.md §3），不再猜「成本 + 数字」：
+#   - 成本：输入 3,789,650 + 输出 54,385 = 合计 3,844,035
+#   - 成本：未计量（以平台账单为准）
+COST_LINE_RE = re.compile(
+    r"^[ \t]*(?:[-*][ \t]*)?成本[：:][ \t]*"
+    r"(?:输入[ \t]*[\d,]+[ \t]*\+[ \t]*输出[ \t]*[\d,]+[ \t]*[=＝][ \t]*合计[ \t]*[\d,]+|未计量)"
+    r"[^\n]*$",
+    re.M,
+)
 
 
 def audit(decision: str, detail: str = "") -> None:
@@ -34,6 +48,20 @@ def audit(decision: str, detail: str = "") -> None:
         pass
 
 
+def missing_parts(message: str) -> list[str]:
+    """三段结构校验：回执标题 → 轮数写成 N / M → 成本清单带数字或明确「无新增」。"""
+    match = RECEIPT_RE.search(message)
+    if not match:
+        return ["「回执：」三行"]
+    tail = message[match.end() :]
+    missing: list[str] = []
+    if not ROUNDS_RE.search(tail):
+        missing.append("轮数（写成「实际轮数 / 上限」，如 3 / 10）")
+    if not COST_LINE_RE.search(tail):
+        missing.append("token 成本清单（固定一行：`- 成本：输入 X + 输出 Y = 合计 Z`，无新增写 `- 成本：未计量`）")
+    return missing
+
+
 def main() -> None:
     try:
         payload = json.load(sys.stdin)
@@ -41,11 +69,7 @@ def main() -> None:
         return
 
     message = payload.get("last_assistant_message") or ""
-    missing: list[str] = []
-    if "回执：" not in message and "回执:" not in message:
-        missing.append("「回执：」三行")
-    if not ("token" in message.lower() and "成本" in message):
-        missing.append("token 成本清单")
+    missing = missing_parts(message)
 
     if not missing:
         audit("allow", "complete")

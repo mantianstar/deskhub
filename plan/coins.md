@@ -947,8 +947,10 @@ CREATE TABLE IF NOT EXISTS coin_collection_series_members (
   测试 [`tests/test_coins_categories.py`](../tests/test_coins_categories.py) 覆盖新库、v20 升级与幂等；
 - **只存最细一级**：`cate_id_2` 有值取它，否则回落 `cate_id_1`，0 / None 记 NULL；
   一级由前缀推导（`code[:3] + "00"`），名称查字典，不再单独存 `cate_id_1` / `cate_id_2` 两列；
-- 名称来源：站点没有分类列表接口，种子字典写死在新增的 `app/coins/categories.py`，
-  启动或每轮采集 upsert 进 `coin_categories`；遇到字典外的码以 `name = code` 兜底并记日志；
+- 名称来源（v23 起）：每日采集前调 `miniprogram.cate.list` 同步 `data.cates[]` 一级 + `sub[]` 二级，
+  落 `coin_categories` 全字段（`parent_code` / `level` / `thumb` / `item_count` / `order_no`）；
+  接口失败或返回空时用 `app/coins/categories.py` 的种子字典兜底（`sync_seed()`）；
+  遇到字典外的码以 `name = code` 兜底并记日志；
 - `coin_sales` **本轮不加分类列**：成交分析直接走 `coin_lots.outcome = 'sold'`，
   需要中置信样本时按 `item_id` JOIN，避免再动一次 schema。
 
@@ -963,9 +965,11 @@ CREATE TABLE IF NOT EXISTS coin_collection_series_members (
 5. [`app/repository.py`](../app/repository.py) `upsert_coin_lot`：INSERT 列表加列，
    `ON CONFLICT` 用 `category_code = COALESCE(excluded.category_code, coin_lots.category_code)`（详情缺键不擦已有值）；
    `_row_to_coin_lot` 回读。
-6. 新增 `repository.upsert_coin_categories(rows)`（按 `code` upsert `name` / `sort`，`fetched_at` 保留首次写入）；
-   种子字典在 [`app/coins/categories.py`](../app/coins/categories.py)：`sync_seed()` 每轮采集 / 终态回采 / 回填前同步一次，
-   `ensure_codes()` 把字典外的码以 `name = code` 兜底（否则外键会挡写入）。
+6. `repository.upsert_coin_categories(rows, prune=False)`：按 `code` upsert
+   `name` / `sort` / `parent_code` / `level` / `order_no`，`thumb` / `item_count` 用 `COALESCE` 保留已有快照，
+   `fetched_at` 保留首次写入；`prune=True` 时删掉接口里已消失的码（被 `coin_lots` 引用的除外）。
+   `categories.sync(api)` 每日采集前同步一次接口字典（v23），`sync_seed()` 降级为接口失败兜底，
+   终态回采 / 回填前仍可用；`ensure_codes()` 把字典外的码以 `name = code` 兜底（否则外键会挡写入）。
 7. [`app/coins/pipeline.py`](../app/coins/pipeline.py) 三处 `upsert_coin_lot` 调用（列表预览 / 详情 / 终态回采）透传 `category_code`。
 
 ### 18.19.5 历史回填（已落地）

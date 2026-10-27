@@ -20,6 +20,7 @@ from app.coins import numista as coins_numista
 from app.coins import numista_web as coins_numista_web
 from app.coins import coinmap as coins_coinmap
 from app.coins import explore as coins_explore
+from app.coins import filter_scan as coins_filter_scan
 from app.coins import pipeline as coins_pipeline
 from app.coins import profile as coins_profile
 from app.coins import translate_llm as coins_translate_llm
@@ -374,6 +375,21 @@ def cmd_coins_backfill_category(args: argparse.Namespace) -> int:
     return 0 if result.errors == 0 else 1
 
 
+def cmd_coins_filter_scan(args: argparse.Namespace) -> int:
+    """扫 `home.filter` 给已入库拍品回填热度（全量用 `--full`，同样受日配额约束）。"""
+    cfg = _bootstrap()
+    result = asyncio.run(
+        coins_filter_scan.scan(cfg, pages_per_cate=args.pages, full=args.full)
+    )
+    print(
+        f"扫描 {result.cates} 个二级分类 / {result.pages} 页 / {result.items} 条："
+        f"回填 {result.updated} 条，未入库跳过 {result.missing} 条"
+    )
+    if result.stopped:
+        print(f"提前结束：{result.stopped}")
+    return 0 if result.status == CoinFetchStatus.OK else 1
+
+
 # ---------------------------------------------------------------- Numista 参考库
 
 
@@ -658,6 +674,17 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     coins_backfill.add_argument("--limit", type=int, default=None, help="本轮最多补几个专场")
     coins_backfill.set_defaults(func=cmd_coins_backfill_category)
+
+    coins_filter = subparsers.add_parser(
+        "coins-filter-scan", help="扫 home.filter 给已入库拍品回填热度（受日配额与限速约束）"
+    )
+    coins_filter.add_argument(
+        "--full", action="store_true", help="翻到空页（约 3000+ 页）；默认每类只扫前 N 页"
+    )
+    coins_filter.add_argument(
+        "--pages", type=int, default=20, help="每个二级分类最多扫几页（默认 20）"
+    )
+    coins_filter.set_defaults(func=cmd_coins_filter_scan)
 
     coins_series = subparsers.add_parser(
         "coins-series", help="按国家/年份/面值从 Numista 查系列并落库（中文输入自动转英文）"

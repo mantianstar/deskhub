@@ -1180,7 +1180,7 @@ def analysis_page(
 
     `category` 切二级分类；`days` 时间窗；`shop` 店铺；`graded=1` 才包含评级盒。
     """
-    filters = repository.list_coin_categories("110")
+    filters = repository.list_coin_categories("11000")
     codes = {row["code"] for row in filters}
     selected = category if category in codes else ""
     try:

@@ -60,7 +60,7 @@ def test_fresh_db_has_is_graded_column(tmp_path):
 
     with db.connect() as conn:
         assert "is_graded" in _columns(conn, "coin_lots")
-        assert _version(conn) == "22"
+        assert _version(conn) == "24"
 
 
 def test_v21_db_upgrade_backfills_is_graded_locally(tmp_path):
@@ -93,7 +93,7 @@ def test_v21_db_upgrade_backfills_is_graded_locally(tmp_path):
             row["mxiqi_id"]: row["is_graded"]
             for row in conn.execute("SELECT mxiqi_id, is_graded FROM coin_lots")
         }
-        assert _version(conn) == "22"
+        assert _version(conn) == "24"
     assert rows == {"a": 1, "b": 0}
 
 
@@ -123,7 +123,7 @@ def test_v22_upgrade_is_idempotent(tmp_path):
     with db.connect() as conn:
         columns = [row["name"] for row in conn.execute("PRAGMA table_info(coin_lots)")]
         assert columns.count("is_graded") == 1
-        assert _version(conn) == "22"
+        assert _version(conn) == "24"
 
 
 # ---------------------------------------------------------------- 采集 → 落库

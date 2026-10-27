@@ -45,18 +45,23 @@ def _wait_for_state(key: str, timeout: float = 5.0) -> tasks.RunState | None:
 
 
 def test_all_features_enabled_by_default(tmp_path):
-    """没记录过的功能按默认启用：重启不再跑任务，但 07:00 的定时任务保持原行为。"""
+    """没记录过的功能按默认启用：重启不再跑任务，但 07:00 的定时任务保持原行为。
+
+    例外：`DEFAULT_DISABLED` 里的功能（站点风控成本高）默认关。
+    """
     db.init_db(tmp_path / "switches.db")
     assert [feature.key for feature in switches.FEATURES] == [
         switches.KNOWLEDGE_FETCH,
         switches.KNOWLEDGE_SCORE,
         switches.COINS_COLLECT,
         switches.COINS_FINALIZE,
+        switches.COINS_FILTER_SCAN,
         switches.COINS_MATCH,
         switches.COINS_PRICE,
     ]
     for feature in switches.FEATURES:
-        assert switches.is_enabled(feature.key) is True
+        expected = feature.key not in switches.DEFAULT_DISABLED
+        assert switches.is_enabled(feature.key) is expected
 
 
 def test_toggle_persists_to_db(tmp_path):

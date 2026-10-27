@@ -1312,11 +1312,19 @@ def upsert_coin_session(session: CoinSession) -> int:
         return int(row["id"])
 
 
-def set_coin_session_status(session_id: int, status: str) -> None:
-    """同步拍场状态（回采终态时以站内三态为准：preview / running / closed）。"""
+def set_coin_session_status(
+    session_id: int, status: str, *, view_count: int | None = None
+) -> None:
+    """同步拍场状态（回采终态时以站内三态为准：preview / running / closed）。
+
+    `view_count` 是专场级累计围观数（`auction_stat.pv`）；未提供时保留旧值，
+    不用 NULL 覆盖。
+    """
     with db.connect() as conn, conn:
         conn.execute(
-            "UPDATE coin_sessions SET status = ? WHERE id = ?", (status, session_id)
+            "UPDATE coin_sessions SET status = ?, view_count = COALESCE(?, view_count)"
+            " WHERE id = ?",
+            (status, view_count, session_id),
         )
 
 
@@ -1455,13 +1463,66 @@ def update_coin_lot_bids(
         return total
 
 
+def update_coin_lot_filter_heat(
+    rows: Sequence[dict[str, object]], *, source: str = "home_filter"
+) -> tuple[int, int]:
+    """按 `mxiqi_id` 精确回填 `home.filter` 的热度 / 中拍人 / 属性标签。
+
+    `rows` 每项是 `filter_scan.update_row()` 的产物；NULL 不覆盖库里已有值
+    （`bid_num` 缺键时保持原值，**不写 0**）。返回 `(更新行数, 未命中拍品数)` ——
+    filter 是全站池，绝大多数条目不在我们的专场里，未命中是常态。
+    """
+    if not rows:
+        return 0, 0
+    updated = missing = 0
+    with db.connect() as conn, conn:
+        for row in rows:
+            cursor = conn.execute(
+                """
+                UPDATE coin_lots
+                   SET bid_num         = COALESCE(?, bid_num),
+                       bid_user_num    = COALESCE(?, bid_user_num),
+                       bid_users       = COALESCE(?, bid_users),
+                       winner_uid      = COALESCE(?, winner_uid),
+                       winner_nickname = COALESCE(?, winner_nickname),
+                       tags            = COALESCE(?, tags),
+                       bid_source      = ?
+                 WHERE mxiqi_id = ?
+                """,
+                (
+                    row.get("bid_num"),
+                    row.get("bid_user_num"),
+                    row.get("bid_users"),
+                    row.get("winner_uid"),
+                    row.get("winner_nickname"),
+                    row.get("tags"),
+                    source,
+                    row["mxiqi_id"],
+                ),
+            )
+            if cursor.rowcount:
+                updated += cursor.rowcount
+            else:
+                missing += 1
+    return updated, missing
+
+
 # ---------------------------------------------------------------- 拍品分类（v21）
 
 
-def upsert_coin_categories(rows: Sequence[tuple[str, str, int]]) -> None:
-    """按 `code` upsert 分类字典的 `name` / `sort`（plan §18.19.4）。
+def upsert_coin_categories(
+    rows: Sequence[
+        tuple[str, str, int, str | None, int, str | None, int | None, int | None]
+    ],
+    *,
+    prune: bool = False,
+) -> None:
+    """按 `code` upsert 分类字典的完整字段（v23；plan §18.19.4）。
 
-    `fetched_at` 保留首次写入时间，重复同步只更新 `updated_at`。
+    行序：`(code, name, sort, parent_code, level, thumb, item_count, order_no)`。
+    `fetched_at` 保留首次写入时间，重复同步只更新 `updated_at`；
+    `thumb` / `item_count` 缺省（种子兜底）时用 COALESCE 保住接口同步来的值。
+    `prune=True` 删除接口里已消失的码；仍被拍品引用的保留，避免外键把历史数据置空。
     """
     if not rows:
         return
@@ -1469,15 +1530,35 @@ def upsert_coin_categories(rows: Sequence[tuple[str, str, int]]) -> None:
     with db.connect() as conn, conn:
         conn.executemany(
             """
-            INSERT INTO coin_categories (code, name, sort, fetched_at, updated_at)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO coin_categories
+                (code, name, sort, parent_code, level, thumb, item_count, order_no,
+                 fetched_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(code) DO UPDATE SET
-                name       = excluded.name,
-                sort       = excluded.sort,
-                updated_at = excluded.updated_at
+                name        = excluded.name,
+                sort        = excluded.sort,
+                parent_code = excluded.parent_code,
+                level       = excluded.level,
+                thumb       = COALESCE(excluded.thumb, coin_categories.thumb),
+                item_count  = COALESCE(excluded.item_count, coin_categories.item_count),
+                order_no    = excluded.order_no,
+                updated_at  = excluded.updated_at
             """,
-            [(code, name, sort, now, now) for code, name, sort in rows],
+            [(*row, now, now) for row in rows],
         )
+        if prune:
+            codes = [row[0] for row in rows]
+            placeholders = ",".join("?" * len(codes))
+            conn.execute(
+                f"""
+                DELETE FROM coin_categories
+                 WHERE code NOT IN ({placeholders})
+                   AND NOT EXISTS (
+                       SELECT 1 FROM coin_lots l WHERE l.category_code = coin_categories.code
+                   )
+                """,
+                codes,
+            )
 
 
 def update_coin_lot_categories(updates: Sequence[tuple[str, str]]) -> int:
@@ -1552,12 +1633,12 @@ def coin_category_fallback_codes() -> list[str]:
 
 
 def list_coin_categories(level1: str | None = None) -> list[sqlite3.Row]:
-    """分类字典（可按一级前缀过滤，如 `110`），供分析页的下拉使用。"""
+    """分类字典（可按一级码过滤，如 `11000`），供分析页的下拉使用。"""
     sql = "SELECT code, name FROM coin_categories"
     params: list[str] = []
     if level1:
-        sql += " WHERE code LIKE ?"
-        params.append(level1 + "%")
+        sql += " WHERE parent_code = ?"
+        params.append(level1)
     sql += " ORDER BY sort"
     with db.connect() as conn:
         return conn.execute(sql, params).fetchall()
