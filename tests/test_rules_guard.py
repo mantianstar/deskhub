@@ -260,7 +260,7 @@ def test_stop_hook_allows_complete_receipt(tmp_path: Path):
     """回执三段结构与成本数字都在时放行，不输出 block。"""
     audit_path = tmp_path / "audit.log"
     message = (
-        "回执：\n- 实际轮数 / 上限：2 / 10\n- 搜索 1 次 / 读取 1 次\n- 越界项：无\n\n"
+        "回执：\n- 轮数：2 / 10\n- 搜索 1 次 / 读取 1 次\n- 越界项：无\n\n"
         "- 成本：输入 1,200 + 输出 34 = 合计 1,234"
     )
     result = _run_hook("guard_stop.py", {"last_assistant_message": message}, audit_path)
@@ -281,7 +281,7 @@ def test_stop_hook_blocks_unstructured_round_count(tmp_path: Path):
 def test_stop_hook_blocks_cost_without_number(tmp_path: Path):
     """成本清单必须给数字或明确「无新增」，只提「token 成本」两词不算。"""
     audit_path = tmp_path / "audit.log"
-    message = "回执：\n- 实际轮数 / 上限：2 / 10\n\ntoken 成本见上一轮"
+    message = "回执：\n- 轮数：2 / 10\n\ntoken 成本见上一轮"
     result = _run_hook("guard_stop.py", {"last_assistant_message": message}, audit_path)
     payload = json.loads(result.stdout)
     assert payload["decision"] == "block"
@@ -292,7 +292,7 @@ def test_stop_hook_allows_no_new_requests(tmp_path: Path):
     """没有新请求时写「无新增」即可，不强制编一个数字。"""
     audit_path = tmp_path / "audit.log"
     message = (
-        "回执：\n- 实际轮数 / 上限：2 / 10\n- 搜索与读取：各 1 次\n- 越界项：无\n\n"
+        "回执：\n- 轮数：2 / 10\n- 搜索与读取：各 1 次\n- 越界项：无\n\n"
         "- 成本：未计量（以平台账单为准）"
     )
     result = _run_hook("guard_stop.py", {"last_assistant_message": message}, audit_path)
@@ -303,7 +303,7 @@ def test_stop_hook_allows_pasted_cost_table(tmp_path: Path):
     """贴明细表可以，但固定成本行必须原样保留（表格本身不参与判定）。"""
     audit_path = tmp_path / "audit.log"
     message = (
-        "回执：\n- 实际轮数 / 上限：2 / 10\n- 搜索与读取：各 1 次\n- 越界项：无\n\n"
+        "回执：\n- 轮数：2 / 10\n- 搜索与读取：各 1 次\n- 越界项：无\n\n"
         "- 成本：输入 117,398 + 输出 2,445 = 合计 119,843\n"
         "| 请求 | 动作 | 对象 | 输入 | 输出 | 成本 |\n|---|---|---|---|---|---|\n"
         "| **合计** | - | - | **117,398** | **2,445** | **119,843** |"
@@ -312,11 +312,11 @@ def test_stop_hook_allows_pasted_cost_table(tmp_path: Path):
     assert result.stdout.strip() == ""
 
 
-def test_stop_hook_allows_round_suffix_and_unmetered_cost(tmp_path: Path):
-    """常见写法也要放行：「轮数：2 轮（/15）」+「成本清单：本轮未计量」。"""
+def test_stop_hook_allows_numbered_receipt_with_unmetered_cost(tmp_path: Path):
+    """编了号的回执也放行：只要轮数行与成本行是固定格式。"""
     audit_path = tmp_path / "audit.log"
     message = (
-        "回执：\n1. 轮数：2 轮（/15）\n2. 搜索与读取：搜索 1 次；读取 0 个文件\n"
+        "回执：\n1. 轮数：2 / 15\n2. 搜索与读取：搜索 1 次；读取 0 个文件\n"
         "3. 写入与命令：写入 无；执行命令 3 次\n\n"
         "- 成本：未计量（仅 3 条短命令，未跑 `--round`，游标不动）。"
     )
@@ -324,11 +324,22 @@ def test_stop_hook_allows_round_suffix_and_unmetered_cost(tmp_path: Path):
     assert result.stdout.strip() == ""
 
 
+def test_stop_hook_blocks_non_fixed_round_line(tmp_path: Path):
+    """轮数行也只认固定格式：「轮数：2 轮（/15）」「实际轮数 / 上限：2 / 10」都不算。"""
+    audit_path = tmp_path / "audit.log"
+    for rounds in ("1. 轮数：2 轮（/15）", "- 实际轮数 / 上限：2 / 10", "- 轮数 2 / 10"):
+        message = f"回执：\n{rounds}\n\n- 成本：未计量（以平台账单为准）"
+        result = _run_hook("guard_stop.py", {"last_assistant_message": message}, audit_path)
+        payload = json.loads(result.stdout)
+        assert payload["decision"] == "block", rounds
+        assert "轮数" in payload["reason"], rounds
+
+
 def test_stop_hook_allows_cost_followed_by_token_cost_mention(tmp_path: Path):
     """成本行之后又提到 `token_cost.py` 时仍应放行（按最后一个 token 切段会误判）。"""
     audit_path = tmp_path / "audit.log"
     message = (
-        "回执：\n- 实际轮数 / 上限：2 / 10\n- 搜索与读取：各 1 次\n- 越界项：无\n\n"
+        "回执：\n- 轮数：2 / 10\n- 搜索与读取：各 1 次\n- 越界项：无\n\n"
         "- 成本：输入 117,398 + 输出 2,445 = 合计 119,843"
         "（明细已由 `token_cost.py --round` 出表）"
     )

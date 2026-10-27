@@ -49,14 +49,15 @@ def test_rules_separates_segment_and_round_caps():
 
 
 def test_stop_hook_checks_structure_not_keywords():
-    """回执不能只靠关键词蒙过：轮数要 N / M，成本清单只认固定行。"""
+    """回执不能只靠关键词蒙过：轮数与成本清单都只认固定行。"""
     hook = _source("guard_stop.py")
-    assert "ROUNDS_RE" in hook and re.search(r'ROUNDS_RE = re\.compile\(r"', hook)
+    assert "ROUND_LINE_RE" in hook and re.search(r'ROUND_LINE_RE = re\.compile\(', hook)
     assert "COST_LINE_RE" in hook
     assert "合计" in hook and "未计量" in hook
     rules = RULES.read_text(encoding="utf-8")
-    assert "回执" in rules and "成本清单" in rules
+    assert "回执" in rules and "成本清单" in rules and "- 轮数：" in rules
     snippet = SNIPPET.read_text(encoding="utf-8")
+    assert "- 轮数：" in snippet
     assert "- 成本：输入" in snippet and "- 成本：未计量" in snippet
 
 

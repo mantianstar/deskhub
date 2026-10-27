@@ -10,6 +10,38 @@
 
 ---
 
+## v1.96 — 2026-10-27 回执成本行上方增加请求数与起止上下文
+
+**起因**：`data/llm_usage.jsonl` 按请求逐条记录，而回执成本行只有输入 / 输出合计，看不到本轮请求数与收口时的上下文大小；「轮数」与「请求数」两个口径容易被混读。
+
+**改了什么**：
+- `RULES.md` §零.3：成本清单增加固定行 `- 请求数：X ｜ 起始上下文：X ｜ 结束上下文：X`，位置在成本行上一行；X 取本轮请求数、增量首条与末条已计量请求的输入 token，无请求写 `-`。
+- `.trae/rules/project-rules.md`「每轮收口」同步该行格式。
+- `guard_stop.py` 未改，仍只校验轮数行与成本行。
+
+**验证结论**：文档改动，未跑测试；新格式本轮回执生效。
+
+**影响文件**：`RULES.md`、`.trae/rules/project-rules.md`、`CHANGELOG.md`
+
+---
+
+## v1.95 — 2026-10-27 回执轮数改为固定行，与成本行同口径
+
+**起因**：`guard_stop.py` 的 `ROUNDS_RE` 在整段回执里猜「N / M」或「N 轮（/M）」：正文里任意比分都能蒙过，而「实际轮数 / 上限：3 / 10」这类自然写法反而被误判缺失、反复 block（`data/hook_audit.log` 22:35 两条）。
+
+**改了什么**：
+- `.trae/hooks/guard_stop.py`：`ROUNDS_RE` → `ROUND_LINE_RE`，只认固定行 `- 轮数：X / M`（项目符号 / 序号可选、全角斜杠、行尾可带补充说明）；阻断文案同步给出该行。
+- `RULES.md` §零.3 与 `.trae/rules/project-rules.md`：主对话层轮数写死为 `- 轮数：X / M`。
+- `PROJECT_MAP.md` 门禁速查表同步判据。
+- `tests/test_rules_guard.py`：5 条既有回执样例换成固定行；新增「非固定轮数行必须 block」回归；`tests/test_hooks_contract.py` 契约改为 `ROUND_LINE_RE` + 检查规则文档含 `- 轮数：`。
+- 同类排查：其余 hook（`guard_read` / `guard_search` / `guard_pytest` / `guard_write` / `guard_reset`）判据都来自 tool_call 字面或状态文件，不解析自由文本，无同类问题。
+
+**验证结论**：`.venv/bin/python -m pytest tests/test_rules_guard.py tests/test_hooks_contract.py -q` → 35 passed, 1 skipped。
+
+**影响文件**：`.trae/hooks/guard_stop.py`、`RULES.md`、`.trae/rules/project-rules.md`、`PROJECT_MAP.md`、`tests/test_rules_guard.py`、`tests/test_hooks_contract.py`、`CHANGELOG.md`。spec / plan 无变更。
+
+---
+
 ## v1.94 — 2026-10-27 门禁补任务隔离与写入审计，规则数值加契约测试
 
 **起因**：hook 状态只按 session 分桶，跨任务误拦已读文件；编辑后回读验证被当重复；「Q/D 不改文件」「输出体量」无任何 hook 覆盖；规则文档之间 200/120 与判重口径不一致，且缺回归测试。

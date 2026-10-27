@@ -13,8 +13,14 @@ REPO = Path(__file__).resolve().parents[2]
 AUDIT = Path(os.environ.get("DESKHUB_HOOK_AUDIT") or REPO / "data" / "hook_audit.log")
 
 RECEIPT_RE = re.compile(r"回执[：:]")
-# 「3 / 10」与「2 轮（/15）」都算写了轮数；全角斜杠一并认。
-ROUNDS_RE = re.compile(r"\d+\s*[/／]\s*\d+|\d+\s*轮\s*[（(]?\s*[/／]\s*\d+")
+# 「轮数」也只认固定行（RULES.md §零.3），与成本行同口径：
+#   - 轮数：3 / 10
+# 不再从全文里猜「N / M」或「N 轮（/M）」——那样正文里任意比分都会被当回执。
+ROUND_LINE_RE = re.compile(
+    r"^[ \t]*(?:(?:[-*]|\d+[.)])[ \t]*)?"  # 项目符号或序号可选
+    r"轮数[：:][ \t]*\d+[ \t]*[/／][ \t]*\d+[^\n]*$",
+    re.M,
+)
 # 「成本清单」只认固定行（docs/token-cost.md §3），不再猜「成本 + 数字」：
 #   - 成本：输入 3,789,650 + 输出 54,385 = 合计 3,844,035
 #   - 成本：未计量（以平台账单为准）
@@ -49,14 +55,14 @@ def audit(decision: str, detail: str = "") -> None:
 
 
 def missing_parts(message: str) -> list[str]:
-    """三段结构校验：回执标题 → 轮数写成 N / M → 成本清单带数字或明确「无新增」。"""
+    """三段结构校验：回执标题 → 固定轮数行 → 固定成本行。"""
     match = RECEIPT_RE.search(message)
     if not match:
         return ["「回执：」三行"]
     tail = message[match.end() :]
     missing: list[str] = []
-    if not ROUNDS_RE.search(tail):
-        missing.append("轮数（写成「实际轮数 / 上限」，如 3 / 10）")
+    if not ROUND_LINE_RE.search(tail):
+        missing.append("轮数（固定一行：`- 轮数：实际 / 上限`，如 `- 轮数：3 / 10`）")
     if not COST_LINE_RE.search(tail):
         missing.append("token 成本清单（固定一行：`- 成本：输入 X + 输出 Y = 合计 Z`，无新增写 `- 成本：未计量`）")
     return missing
@@ -83,7 +89,7 @@ def main() -> None:
                 "reason": (
                     "按 RULES.md §零.3，本条回复缺 "
                     + "、".join(missing)
-                    + "。请在末尾补「回执：」三行（实际轮数 / 上限、搜索与读取次数、越界项）"
+                    + "。请在末尾补「回执：」三行（`- 轮数：实际 / 上限`、搜索与读取次数、越界项）"
                     + "和 token 成本清单（.venv/bin/python utils/token_cost/token_cost.py --round）后再结束。"
                 ),
             },
