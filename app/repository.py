@@ -1632,6 +1632,19 @@ def coin_category_fallback_codes() -> list[str]:
     return [row["code"] for row in rows]
 
 
+def existing_coin_category_codes(codes: Sequence[str]) -> set[str]:
+    """给定的码里哪些已经在分类字典里（判断兜底是否真缺行，不覆盖接口同步来的名称）。"""
+    if not codes:
+        return set()
+    placeholders = ",".join("?" * len(codes))
+    with db.connect() as conn:
+        rows = conn.execute(
+            f"SELECT code FROM coin_categories WHERE code IN ({placeholders})",
+            list(codes),
+        ).fetchall()
+    return {row["code"] for row in rows}
+
+
 def list_coin_categories(level1: str | None = None) -> list[sqlite3.Row]:
     """分类字典（可按一级码过滤，如 `11000`），供分析页的下拉使用。"""
     sql = "SELECT code, name FROM coin_categories"

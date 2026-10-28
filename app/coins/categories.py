@@ -61,8 +61,6 @@ LEVEL2: dict[int, str] = {
 # 字典外的码排在最后，方便在库里一眼看出是哪几个
 UNKNOWN_SORT_BASE = 900_000
 
-_SEED_CODES = {str(code) for code in (*LEVEL1, *LEVEL2)}
-
 
 def _sort_for(code: str) -> int:
     return int(code) if code.isdigit() else UNKNOWN_SORT_BASE
@@ -142,11 +140,17 @@ async def sync(api: "MxiqiGapi") -> None:
 
 
 def ensure_codes(codes: Iterable[str | None]) -> None:
-    """确保这些分类码在 `coin_categories` 里有行（外键要求），字典外的码兜底成码本身。"""
-    missing = sorted({code for code in codes if code and code not in _SEED_CODES})
+    """确保这些分类码在 `coin_categories` 里有行（外键要求），只补缺行。
+
+    「缺失」以库里的为准：接口同步进来的名称一律不动，只有库里没有的码才以
+    `name = code` 兜底。
+    """
+    candidates = sorted({code for code in codes if code})
+    existing = repository.existing_coin_category_codes(candidates)
+    missing = [code for code in candidates if code not in existing]
     if not missing:
         return
-    logger.warning("分类字典外的码：%s（以 name=code 兜底）", "、".join(missing))
+    logger.warning("分类字典里没有的码：%s（以 name=code 兜底）", "、".join(missing))
     rows: list[CategoryRow] = []
     for code in missing:
         parent = parent_code(code)

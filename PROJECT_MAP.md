@@ -152,7 +152,7 @@ Numista 类型页（估值 / 稀有度）────────┘            
 | `guard_read.py` | PreToolUse `Read` | 单段 >120 行、整份读、同区间重读（重复率 >0.8 且新增 <20 行） | 按文案给的 `offset` / `limit` 只取未读片段，不要原样重试 |
 | `guard_search.py` | PreToolUse `Grep`/`Glob`/`LS` | 同 pattern 同范围重搜、父目录搜过后缩范围 | 换 pattern，或说明范围为何变了 |
 | `guard_pytest.py` | PreToolUse `RunCommand` | 同目标重复验证（管道 / 重定向 / `-q` 不算新命令） | 换测试目标；口径变化要说明理由 |
-| `guard_stop.py` | Stop | 回执缺固定轮数行 `- 轮数：X / M`，或缺固定成本行 | 按文案补齐三段 |
+| `guard_stop.py` | Stop | 回执缺首行 `回执：`（行首独立一行），或缺 `- 轮数：X / M` 行、固定成本行 | 按文案补齐四行 |
 
 原则：**能从 tool_call 字面算出来的判据才进 hook；需要任务意图的留在 rules**。hook 比 rules 贵（一次 deny = 多一轮完整上下文），所以能放行给 `hint` 就不 deny。
 

@@ -10,6 +10,38 @@
 
 ---
 
+## v1.99 — 2026-10-28 回执统一为用户样例的四行格式，补「整段缺失」诊断
+
+**起因**：v1.98 的三行版把轮数塞进「回执：」首行，与用户实际写法不一致（样例为「回执：」独立一行 + 三条项目符号）；另外 Stop 门禁对「回执根本没输出」只报「缺『回执：』三行」，没给可照抄的骨架，模型补的时候仍会漏。
+
+**改了什么**：
+- 回执固定四行：`回执：` 独立一行；`- 轮数：X / M ｜ 请求：X ｜ 上下文：X→X`；`- 搜索/读取：… ｜ 输出峰：XKB ｜ 越界：无`；`- 成本：输入 X + 输出 Y = 合计 Z`。
+- `.trae/hooks/guard_stop.py`：`RECEIPT_RE` 要求「回执：」行首独立成行（容忍 `**回执：**`）；`ROUND_LINE_RE` 回到「单独一行 `- 轮数：N / M`」；「回执」完全没输出时诊断改为「整段回执（行首『回执：』没有输出）」，阻断文案直接附四行骨架。
+- `RULES.md` §零.3、`.trae/rules/project-rules.md`、`docs/token-cost.md` §3、`PROJECT_MAP.md` 门禁表同步四行写法；`RULES.md` 仍为 96 行。
+- 测试：`tests/test_rules_guard.py` 8 条样例改四行，`test_stop_hook_blocks_non_fixed_round_line` 增「轮数挤进回执首行」用例；`tests/test_hooks_contract.py` 契约改回检查 `- 轮数：`。
+
+**验证结论**：`.venv/bin/python -m pytest tests/test_rules_guard.py tests/test_hooks_contract.py -q` → 35 passed, 1 skipped；用户样例原样喂 hook 已放行，无回执输入返回四行骨架。
+
+**影响文件**：`.trae/hooks/guard_stop.py`、`RULES.md`、`.trae/rules/project-rules.md`、`docs/token-cost.md`、`PROJECT_MAP.md`、`tests/test_rules_guard.py`、`tests/test_hooks_contract.py`、`CHANGELOG.md`。spec / plan 无变更。
+
+---
+
+## v1.98 — 2026-10-28 回执压成三行，轮数并入首行
+
+**起因**：回执涨到 6 行（回执标题 / 轮数 / 搜索读取 / 越界 / 请求数 / 成本），每轮固定开销偏大；同时 `guard_stop.py` 只认 `回执[：:]`，模型把回执写成 `### 回执`（无冒号）时轮数与成本行都合规仍被拦（`data/hook_audit.log` 2026-10-28 07:49、07:53 两条，明细均为「『回执：』三行」）。
+
+**改了什么**：
+- 回执固定三行：首行 `回执：轮数 X / M ｜ 请求 X ｜ 上下文 X→X`，次行 搜索/读取 + 输出峰 + 越界，末行 `- 成本：…`。
+- `.trae/hooks/guard_stop.py`：`RECEIPT_RE` 改为行首锚定 `^…回执[：:]`；`ROUND_LINE_RE` 改为「轮数必须与『回执：』同一行」；`missing_parts` 不再从标题后切 `tail` 找轮数，阻断文案同步三行写法。
+- `RULES.md` §零.3、`.trae/rules/project-rules.md`、`docs/token-cost.md` §3、`PROJECT_MAP.md` 门禁表同步三行写法（请求数 / 上下文由 `--round` 锚点行填入首行）；RULES.md 同步压回 ≤100 行。
+- 测试：`tests/test_rules_guard.py` 8 条回执样例换新格式，新增「轮数不在首行必须 block」；`tests/test_hooks_contract.py` 契约改为检查 `回执：轮数`。
+
+**验证结论**：`.venv/bin/python -m pytest tests/test_rules_guard.py tests/test_hooks_contract.py -q` → 35 passed, 1 skipped。
+
+**影响文件**：`.trae/hooks/guard_stop.py`、`RULES.md`、`.trae/rules/project-rules.md`、`docs/token-cost.md`、`PROJECT_MAP.md`、`tests/test_rules_guard.py`、`tests/test_hooks_contract.py`、`CHANGELOG.md`。spec / plan 无变更。
+
+---
+
 ## v1.97 — 2026-10-27 --round 直接出锚点行，起始改认本轮提问
 
 **起因**：v1.96 的回执要写「请求数 / 起始上下文 / 结束上下文」，但工具只出表与成本行，两个锚点靠人从表里读。表按时间升序，表首是最旧一条；跨任务时上一个会话的最后一条（`data/llm_usage.jsonl` 第 1304 行，76,032）会落在本轮增量开头，被误当「结束上下文」，连同 76,032 的输入输出一起多算。

@@ -297,6 +297,26 @@ def test_ensure_codes_falls_back_to_code_as_name(temp_db):
     assert repository.coin_category_fallback_codes() == ["99999"]
 
 
+def test_ensure_codes_keeps_api_name_and_only_fills_missing(temp_db):
+    """库里已有接口同步来的名称时不覆盖，只补库里没有的码。"""
+    categories.sync_seed()
+    repository.upsert_coin_categories(
+        [("12010", "小型张/全张", 12010, "12000", 2, None, None, None)]
+    )
+
+    categories.ensure_codes(["12010", "99999"])
+
+    with db.connect() as conn:
+        rows = conn.execute(
+            "SELECT code, name FROM coin_categories "
+            "WHERE code IN ('12010', '99999') ORDER BY code"
+        ).fetchall()
+    assert {row["code"]: row["name"] for row in rows} == {
+        "12010": "小型张/全张",
+        "99999": "99999",
+    }
+
+
 def test_upsert_coin_lot_keeps_existing_category_when_new_is_none(temp_db):
     """COALESCE：详情缺分类（None）不擦库里已有的值。"""
     categories.sync_seed()

@@ -49,7 +49,7 @@ def test_rules_separates_segment_and_round_caps():
 
 
 def test_stop_hook_checks_structure_not_keywords():
-    """回执不能只靠关键词蒙过：轮数与成本清单都只认固定行。"""
+    """回执不能只靠关键词蒙过：首行独立「回执：」、轮数行、成本行都要在。"""
     hook = _source("guard_stop.py")
     assert "ROUND_LINE_RE" in hook and re.search(r'ROUND_LINE_RE = re\.compile\(', hook)
     assert "COST_LINE_RE" in hook

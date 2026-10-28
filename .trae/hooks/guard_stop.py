@@ -12,13 +12,15 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 AUDIT = Path(os.environ.get("DESKHUB_HOOK_AUDIT") or REPO / "data" / "hook_audit.log")
 
-RECEIPT_RE = re.compile(r"回执[：:]")
-# 「轮数」也只认固定行（RULES.md §零.3），与成本行同口径：
-#   - 轮数：3 / 10
-# 不再从全文里猜「N / M」或「N 轮（/M）」——那样正文里任意比分都会被当回执。
+RECEIPT_RE = re.compile(r"^[ \t]*(?:[-*][ \t]*)?\**回执[：:]\**[ \t]*$", re.M)
+# 回执固定四行（RULES.md §零.3）：首行只有「回执：」，下面三行项目符号：
+#   回执：
+#   - 轮数：3 / 10 ｜ 请求：4 ｜ 上下文：20,447→44,057
+#   - 搜索/读取：Grep×3 · 读 364 行 ｜ 输出峰：6KB ｜ 越界：无
+#   - 成本：输入 342,213 + 输出 8,586 = 合计 350,799
+# 不在全文里猜「N / M」：轮数必须是回执之后单独一行。
 ROUND_LINE_RE = re.compile(
-    r"^[ \t]*(?:(?:[-*]|\d+[.)])[ \t]*)?"  # 项目符号或序号可选
-    r"轮数[：:][ \t]*\d+[ \t]*[/／][ \t]*\d+[^\n]*$",
+    r"^[ \t]*(?:[-*][ \t]*)?轮数[：:][ \t]*\d+[ \t]*[/／][ \t]*\d+",
     re.M,
 )
 # 「成本清单」只认固定行（docs/token-cost.md §3），不再猜「成本 + 数字」：
@@ -55,14 +57,14 @@ def audit(decision: str, detail: str = "") -> None:
 
 
 def missing_parts(message: str) -> list[str]:
-    """三段结构校验：回执标题 → 固定轮数行 → 固定成本行。"""
+    """四行结构校验：首行「回执：」→ 轮数行 → 成本行。"""
     match = RECEIPT_RE.search(message)
     if not match:
-        return ["「回执：」三行"]
+        return ["整段回执（行首「回执：」没有输出）"]
     tail = message[match.end() :]
     missing: list[str] = []
     if not ROUND_LINE_RE.search(tail):
-        missing.append("轮数（固定一行：`- 轮数：实际 / 上限`，如 `- 轮数：3 / 10`）")
+        missing.append("轮数行（`- 轮数：X / M ｜ 请求：X ｜ 上下文：X→X`）")
     if not COST_LINE_RE.search(tail):
         missing.append("token 成本清单（固定一行：`- 成本：输入 X + 输出 Y = 合计 Z`，无新增写 `- 成本：未计量`）")
     return missing
@@ -89,8 +91,10 @@ def main() -> None:
                 "reason": (
                     "按 RULES.md §零.3，本条回复缺 "
                     + "、".join(missing)
-                    + "。请在末尾补「回执：」三行（`- 轮数：实际 / 上限`、搜索与读取次数、越界项）"
-                    + "和 token 成本清单（.venv/bin/python utils/token_cost/token_cost.py --round）后再结束。"
+                    + "。请照抄四行骨架补齐：回执：\\n"
+                    + "- 轮数：X / M ｜ 请求：X ｜ 上下文：X→X\\n"
+                    + "- 搜索/读取：… ｜ 输出峰：XKB ｜ 越界：无\\n"
+                    + "- 成本：输入 X + 输出 Y = 合计 Z"
                 ),
             },
             ensure_ascii=False,
