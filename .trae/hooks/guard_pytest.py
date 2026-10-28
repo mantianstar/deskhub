@@ -154,7 +154,12 @@ def main() -> None:
     if not isinstance(session_id, str) or not session_id:
         return
     if RERUN_MARK in norm:
-        audit(norm, "allow", "rerun")
+        _, _, canon = canonical(norm)
+        audit(norm, "hint", "rerun")
+        hint(
+            f"重跑已放行（范围：{canon or '同上次'}）。只是个别用例失败时只重跑失败文件："
+            "`pytest <失败文件> -q`，不要全量重跑——全量一次比只跑失败文件多一倍输入。"
+        )
         return
 
     targets, behavior, canon = canonical(norm)

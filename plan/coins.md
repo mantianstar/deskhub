@@ -894,7 +894,7 @@ CREATE TABLE IF NOT EXISTS coin_collection_series_members (
 | 覆盖率 | 20 个专场 1,933 件拍品 `cate_id_1` 100% 有值；成交抽样 105 条 100%；2019–2021 老数据可能为 0 |
 | 筛选 | `search_params.cate_id_1` / `cate_id_2` 生效，结果 100% 命中；传 `cate_id` 被忽略 |
 | 空关键词 | `search_params.keywords=""` 合法，可只按分类查成交 |
-| 分页 | 分页参数在**顶层 `page`**（`page=2` 返回不同条目）；`page_size` 被忽略（固定 21 条/页）；`totalSize` 封顶 10,000 |
+| 分页 | 分页参数在**顶层 `page`**（`page=2` 返回不同条目）；`page_size` 被忽略（固定 21 条/页）；`totalSize` 封顶 10,000，单类实测最多 **476 页**（第 477 页起返回 `totalSize=0` + 空列表） |
 | action 白名单 | 分类列表相关 action（`home.cate` / `category.list` / `home.category` 等十余个）全部 403，**不能枚举分类**，名称只能靠人工种子字典 |
 
 ### 18.19.2 分类码与名称（种子字典）

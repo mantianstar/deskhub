@@ -2742,3 +2742,27 @@ def count_api_calls_since(provider: str, since_utc: str) -> int:
         ).fetchone()
     return int(row["n"])
 
+
+# ---------------------------------------------------------------- home.filter 断点续扫
+
+
+def coin_filter_scan_pages() -> dict[str, int]:
+    """各二级分类下一轮从第几页开始（`home.filter` 全量续扫的断点）。"""
+    with db.connect() as conn:
+        rows = conn.execute(
+            "SELECT category_code, next_page FROM coin_filter_scan_progress"
+        ).fetchall()
+    return {row["category_code"]: int(row["next_page"]) for row in rows}
+
+
+def set_coin_filter_scan_page(category_code: str, next_page: int) -> None:
+    """写断点：1 表示该分类已扫完、下一轮从头开始。"""
+    with db.connect() as conn, conn:
+        conn.execute(
+            "INSERT INTO coin_filter_scan_progress (category_code, next_page, updated_at)"
+            " VALUES (?, ?, ?)"
+            " ON CONFLICT(category_code) DO UPDATE SET"
+            " next_page = excluded.next_page, updated_at = excluded.updated_at",
+            (category_code, next_page, utcnow()),
+        )
+

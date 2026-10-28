@@ -30,6 +30,7 @@ FORWARD_ADDITIVE_UPGRADES = {
     ("9", "10"),
     ("11", "12"),
     ("14", "15"),
+    ("24", "25"),
 }
 
 _db_path: Path | None = None

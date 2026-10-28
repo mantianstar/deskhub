@@ -76,6 +76,24 @@ COLUMN_MIGRATIONS: dict[tuple[str, str], dict[str, dict[str, str]]] = {
         "coin_categories": v23.COLUMNS["coin_categories"],
     },
     ("23", "24"): v24.COLUMNS,
+    # v25 只新增断点表（DDL 已建），跨版本升级仍要把中间版本的加列一并带上
+    ("20", "25"): {
+        "coin_lots": {
+            **v21.COLUMNS["coin_lots"],
+            **v22.COLUMNS["coin_lots"],
+            **v24.COLUMNS["coin_lots"],
+        },
+        "coin_categories": v23.COLUMNS["coin_categories"],
+    },
+    ("21", "25"): {
+        "coin_lots": {**v22.COLUMNS["coin_lots"], **v24.COLUMNS["coin_lots"]},
+        "coin_categories": v23.COLUMNS["coin_categories"],
+    },
+    ("22", "25"): {
+        "coin_lots": v24.COLUMNS["coin_lots"],
+        "coin_categories": v23.COLUMNS["coin_categories"],
+    },
+    ("23", "25"): v24.COLUMNS,
 }
 
 # (from_version, to_version) -> 建表之外还要跑一次的数据回填
@@ -90,6 +108,8 @@ DATA_MIGRATIONS: dict[tuple[str, str], Callable[[sqlite3.Connection], None]] = {
     ("21", "23"): v22.backfill_is_graded,
     ("20", "24"): v22.backfill_is_graded,
     ("21", "24"): v22.backfill_is_graded,
+    ("20", "25"): v22.backfill_is_graded,
+    ("21", "25"): v22.backfill_is_graded,
 }
 
 

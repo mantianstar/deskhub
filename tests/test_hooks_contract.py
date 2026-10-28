@@ -8,7 +8,12 @@ hook 消费同一数字，本文件锁住三方不许漂移。运行时 hook 不
 from __future__ import annotations
 
 import json
+import os
 import re
+import subprocess
+import sys
+import time
+from datetime import datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -134,3 +139,161 @@ def test_read_state_resets_on_user_prompt_and_content_change(tmp_path):
     assert '"permissionDecision": "deny"' in run("guard_read.py", read)
     target.write_text("b\n" * 41, encoding="utf-8")
     assert '"permissionDecision": "deny"' not in run("guard_read.py", read)
+
+
+# --- 成本口径与预算提示：guard_budget 只注入不拦，guard_stop 认不带「/ 上限」的轮数行 ---
+
+
+def _stamp(epoch: int) -> str:
+    return datetime.fromtimestamp(epoch).astimezone().strftime("%Y-%m-%dT%H:%M:%S%z")
+
+
+def _budget_env(tmp_path: Path, prompts: list[int], seed: dict | None = None) -> tuple[dict, Path]:
+    """造一个 10 分钟前开始的会话槽 + 对应的 usage 夹具，返回子进程 env。"""
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    created = int(time.time()) - 600
+    state_path = tmp_path / "state.json"
+    state_path.write_text(
+        json.dumps(
+            {
+                "sessions": {
+                    "s1": {
+                        "ts": created,
+                        "created_ts": created,
+                        "task_start_ts": created,
+                        "reads": {},
+                        "searches": [],
+                        "cmds": [],
+                        **(seed or {}),
+                    }
+                }
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    usage = tmp_path / "usage.jsonl"
+    usage.write_text(
+        "".join(
+            json.dumps({"ts": _stamp(created + 60 + index), "object": f"f{index}.md", "prompt_tokens": prompt})
+            + "\n"
+            for index, prompt in enumerate(prompts)
+        ),
+        encoding="utf-8",
+    )
+    env = {
+        **os.environ,
+        "DESKHUB_HOOK_STATE": str(state_path),
+        "DESKHUB_HOOK_AUDIT": str(tmp_path / "audit.log"),
+        "DESKHUB_LLM_USAGE": str(usage),
+    }
+    return env, state_path
+
+
+def _run_budget(env: dict) -> str:
+    return subprocess.run(
+        [sys.executable, str(HOOKS / "guard_budget.py")],
+        input=json.dumps({"session_id": "s1", "tool_name": "Read"}),
+        capture_output=True,
+        text=True,
+        env=env,
+    ).stdout
+
+
+def _context(out: str) -> str:
+    return json.loads(out)["hookSpecificOutput"]["additionalContext"]
+
+
+def test_budget_hook_merges_calls_within_three_seconds(tmp_path: Path):
+    """同批并行调用算 1 轮；请求数按流水条数累加。"""
+    env, _ = _budget_env(tmp_path, [20_000, 21_000])
+    first = _context(_run_budget(env))
+    second = _context(_run_budget(env))
+    assert "轮 1" in first and "轮 1" in second
+    assert "请求 2" in second
+    assert '"permissionDecision"' not in _run_budget(env)
+
+
+def test_budget_hook_counts_new_batch_after_gap(tmp_path: Path):
+    """与上次调用间隔 >3 秒算新的一批。"""
+    env, _ = _budget_env(
+        tmp_path, [20_000, 21_000], {"batches": 1, "last_call_ts": int(time.time()) - 30}
+    )
+    assert "轮 2" in _context(_run_budget(env))
+
+
+def test_budget_hook_escalates_three_tiers(tmp_path: Path):
+    """400k / 800k / 1.2M 三档文案逐级升级，且都只是注入文字。"""
+    cases = {
+        "t400": ([200_000, 210_000], "剩"),
+        "t800": ([400_000, 420_000], "Top3"),
+        "t1200": ([600_000, 620_000], "交接摘要"),
+    }
+    for name, (prompts, needle) in cases.items():
+        env, _ = _budget_env(tmp_path / name, prompts)
+        out = _run_budget(env)
+        assert needle in _context(out), name
+        assert '"permissionDecision"' not in out, name
+
+
+def test_budget_hook_fails_open_without_usage(tmp_path: Path):
+    """读不到 usage 流水只出快照，不拦、不崩。"""
+    env, _ = _budget_env(tmp_path, [])
+    env["DESKHUB_LLM_USAGE"] = str(tmp_path / "missing.jsonl")
+    out = _run_budget(env)
+    assert '"permissionDecision"' not in out
+    assert "预算快照" in _context(out)
+
+
+def test_budget_hook_warns_context_once(tmp_path: Path):
+    """40k 封顶提示只在跨档时注入一次，之后只出快照一行。"""
+    env, _ = _budget_env(tmp_path, [47_000])
+    first = _context(_run_budget(env))
+    second = _context(_run_budget(env))
+    assert "40k 起" in first and "交接摘要" in first
+    assert "40k 起" not in second and "预算快照" in second
+
+
+def test_pytest_hook_hints_rerun_only_failed_files(tmp_path: Path):
+    """`# rerun` 放行，但注入「只重跑失败文件」。"""
+    env = {
+        **os.environ,
+        "DESKHUB_HOOK_STATE": str(tmp_path / "state.json"),
+        "DESKHUB_HOOK_AUDIT": str(tmp_path / "audit.log"),
+    }
+
+    def run(command: str) -> str:
+        return subprocess.run(
+            [sys.executable, str(HOOKS / "guard_pytest.py")],
+            input=json.dumps({"session_id": "s1", "tool_input": {"command": command}}),
+            capture_output=True,
+            text=True,
+            env=env,
+        ).stdout
+
+    assert run("pytest tests -q").strip() == ""
+    head = json.loads(run("pytest tests -q # rerun"))["hookSpecificOutput"]
+    assert "permissionDecision" not in head
+    assert "只重跑失败文件" in head["additionalContext"]
+
+
+def test_stop_hook_accepts_batch_round_line(tmp_path: Path):
+    """新轮数行（不带「/ 上限」）放行；缺成本行仍然 block。"""
+    env = {**os.environ, "DESKHUB_HOOK_AUDIT": str(tmp_path / "audit.log")}
+    message = (
+        "回执：\n- 轮数：3 ｜ 请求：4 ｜ 上下文：20,447→44,057\n"
+        "- 搜索/读取：Grep×3 ｜ 输出峰：6KB ｜ 越界：无\n"
+        "- 成本：输入 342,213 + 输出 8,586 = 合计 350,799"
+    )
+
+    def run(text: str) -> str:
+        return subprocess.run(
+            [sys.executable, str(HOOKS / "guard_stop.py")],
+            input=json.dumps({"last_assistant_message": text}),
+            capture_output=True,
+            text=True,
+            env=env,
+        ).stdout
+
+    assert run(message).strip() == ""
+    assert '"decision": "block"' in run(message.rsplit("\n", 1)[0])

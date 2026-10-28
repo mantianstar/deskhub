@@ -46,6 +46,14 @@ def test_rules_under_100_lines():
     assert len(lines) <= 100, f"RULES.md 已 {len(lines)} 行，上限 100 行：细则挪到 docs/ 分册，本文只留链接"
 
 
+def test_receipt_template_uses_batch_round_line():
+    """回执轮数行按批次口径、不带「/ 上限」；预算主口径是请求数 + 累计输入。"""
+    text = RULES.read_text(encoding="utf-8")
+    assert "- 轮数：3 ｜ 请求：4 ｜ 上下文：20,447→44,057" in text
+    assert "输入累计：" not in text
+    assert "请求数 + 累计输入" in text
+
+
 def test_rules_section_refs_exist():
     """RULES.md 内部的 §零.3 之类引用，必须指向真实存在的章节 / 条目。"""
     text = RULES.read_text(encoding="utf-8")

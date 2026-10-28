@@ -376,7 +376,7 @@ def cmd_coins_backfill_category(args: argparse.Namespace) -> int:
 
 
 def cmd_coins_filter_scan(args: argparse.Namespace) -> int:
-    """扫 `home.filter` 给已入库拍品回填热度（全量用 `--full`，同样受日配额约束）。"""
+    """扫 `home.filter` 给已入库拍品回填热度（全量用 `--full`，按分类断点续扫）。"""
     cfg = _bootstrap()
     result = asyncio.run(
         coins_filter_scan.scan(cfg, pages_per_cate=args.pages, full=args.full)
@@ -679,7 +679,9 @@ def _build_parser() -> argparse.ArgumentParser:
         "coins-filter-scan", help="扫 home.filter 给已入库拍品回填热度（受日配额与限速约束）"
     )
     coins_filter.add_argument(
-        "--full", action="store_true", help="翻到空页（约 3000+ 页）；默认每类只扫前 N 页"
+        "--full",
+        action="store_true",
+        help="翻到空页（约 3000+ 页），配额用尽下轮从断点续扫；默认每类只扫前 N 页",
     )
     coins_filter.add_argument(
         "--pages", type=int, default=20, help="每个二级分类最多扫几页（默认 20）"

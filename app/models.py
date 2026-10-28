@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-SCHEMA_VERSION = "24"
+SCHEMA_VERSION = "25"
 
 # 所有时间列存 UTC ISO8601 字符串（SQLite 无原生时间类型）
 DDL = """
@@ -243,6 +243,13 @@ CREATE TABLE IF NOT EXISTS coin_fetch_runs (
   error       TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_coin_runs ON coin_fetch_runs(kind, started_at DESC);
+
+-- `home.filter` 全量扫描的断点：每个二级分类下一轮从第几页开始（v25）
+CREATE TABLE IF NOT EXISTS coin_filter_scan_progress (
+  category_code TEXT    PRIMARY KEY,
+  next_page     INTEGER NOT NULL DEFAULT 1,
+  updated_at    TEXT    NOT NULL
+);
 
 -- ============ 铜币参考库（Numista，v1.2 增补）============
 -- 与「拍卖」那批表无外键关联：这是**硬币本身**的目录信息（系列/单版），来源是 numista.com，

@@ -9,6 +9,9 @@
 - 不回写 `outcome` / `final_price` / `closed_at`：终态口径归 `pipeline._finalize`。
 
 风控：串行 + 页间隔抖动、日配额、429/403 冷却 6 小时、单实例。
+全量模式每轮先扫**所有**分类的顶部页（最新拍品在此），剩余配额再按二级分类
+断点（`coin_filter_scan_progress`）续扫深处；站点 `totalSize` 封顶 10,000，
+单类最多 476 页。
 """
 
 from __future__ import annotations
@@ -32,11 +35,11 @@ RUN_KIND = "home_filter"
 PROVIDER = "mxiqi_filter"
 PARENT_CODE = "11000"
 PAGES_PER_CATE = 20
-FULL_MAX_PAGES = 500
+FULL_MAX_PAGES = 500  # 站点 totalSize 封顶 10000 / 21 条每页 = 476 页，500 只是兜底
 PAGE_INTERVAL_SECONDS = 0.5
 PAGE_JITTER_SECONDS = 0.2
 REQUEST_RETRIES = 2
-DAILY_QUOTA = 300
+DAILY_QUOTA = 600
 COOLDOWN_HOURS = 6
 COOLDOWN_STATUSES = (403, 429)
 INCREMENTAL_SLACK_HOURS = 1
@@ -265,8 +268,10 @@ async def scan(
 ) -> ScanResult:
     """扫硬币二级分类的 `home.filter`，回填已入库拍品的热度。
 
-    `full=True` 扫到空页（约 3000+ 页，受日配额约束）；默认每个二级分类只扫前
-    `pages_per_cate` 页。增量模式用「上次成功扫描开始时间 - 1h」做停止条件。
+    `full=True` 先扫各分类前 `pages_per_cate` 页，剩余配额再按二级分类断点续扫
+    深处（约 3000+ 页，受日配额约束），配额用尽后下一轮从断点继续。默认每个
+    二级分类只扫前 `pages_per_cate` 页。增量模式用「上次成功扫描开始时间 - 1h」
+    做停止条件。
     """
     global _running
     if _running:
@@ -305,76 +310,89 @@ async def _scan(
     pages = items = updated = missing = 0
     stopped: str | None = None
     seen_items: set[object] = set()
-    limit = FULL_MAX_PAGES if full else pages_per_cate
+    resume_at = repository.coin_filter_scan_pages() if full else {}
 
     api = MxiqiGapi(config)
     await api.__aenter__()
     try:
-        for cate in cates:
-            search_params = {
-                "cate_id_1": int(PARENT_CODE),
-                "cate_id_2": int(cate),
-                "status": SOLD_STATUS,
-            }
-            stale_pages = 0
-            for page in range(1, limit + 1):
-                try:
-                    raw_items = await _fetch_page(api, search_params, page, budget)
-                except _QuotaExceeded:
-                    stopped = "quota"
-                    logger.warning("home.filter 扫描：日配额 %d 次用尽，提前结束", DAILY_QUOTA)
-                    break
-                except _CooldownError as exc:
-                    _record_run(
-                        started,
-                        CoinFetchStatus.HTTP_ERROR,
-                        http_status=exc.status,
-                        error=str(exc),
-                        target=_target(cates, pages, items, missing),
-                    )
-                    logger.warning("home.filter 扫描被限速（%d），冷却 %d 小时", exc.status, COOLDOWN_HOURS)
-                    return ScanResult(
-                        status=CoinFetchStatus.HTTP_ERROR,
-                        pages=pages,
-                        items=items,
-                        updated=updated,
-                        missing=missing,
-                        cates=len(cates),
-                        stopped="cooldown",
-                    )
-                except GapiError as exc:
-                    stopped = "page_error"
-                    logger.warning("home.filter 第 %d 页失败，跳过：%s", page, exc)
-                    await _pause()
-                    continue
+        phases = ("top", "deep") if full else ("top",)
+        for phase in phases:
+            for cate in cates:
+                search_params = {
+                    "cate_id_1": int(PARENT_CODE),
+                    "cate_id_2": int(cate),
+                    "status": SOLD_STATUS,
+                }
+                stale_pages = 0
+                if phase == "top":  # 每轮必扫：最新拍品在最前面
+                    page_nums = range(1, pages_per_cate + 1)
+                else:  # 深处续扫：从断点接着往下，顶部页不推进断点
+                    start = max(resume_at.get(cate, 1), pages_per_cate + 1)
+                    page_nums = range(start, FULL_MAX_PAGES + 1)
+                for page in page_nums:
+                    try:
+                        raw_items = await _fetch_page(api, search_params, page, budget)
+                    except _QuotaExceeded:
+                        stopped = "quota"
+                        logger.warning("home.filter 扫描：日配额 %d 次用尽，提前结束", DAILY_QUOTA)
+                        break
+                    except _CooldownError as exc:
+                        _record_run(
+                            started,
+                            CoinFetchStatus.HTTP_ERROR,
+                            http_status=exc.status,
+                            error=str(exc),
+                            target=_target(cates, pages, items, missing),
+                        )
+                        logger.warning("home.filter 扫描被限速（%d），冷却 %d 小时", exc.status, COOLDOWN_HOURS)
+                        return ScanResult(
+                            status=CoinFetchStatus.HTTP_ERROR,
+                            pages=pages,
+                            items=items,
+                            updated=updated,
+                            missing=missing,
+                            cates=len(cates),
+                            stopped="cooldown",
+                        )
+                    except GapiError as exc:
+                        stopped = "page_error"
+                        logger.warning("home.filter 第 %d 页失败，跳过：%s", page, exc)
+                        await _pause()
+                        continue
 
-                if not raw_items:
-                    break
-
-                pages += 1
-                rows: list[dict[str, object]] = []
-                for item in raw_items:
-                    items += 1
-                    item_key = item.get("item_id")
-                    if item_key is not None:
-                        if item_key in seen_items:
-                            continue
-                        seen_items.add(item_key)
-                    row = update_row(item)
-                    if row is not None:
-                        rows.append(row)
-                if rows:
-                    done, absent = repository.update_coin_lot_filter_heat(rows)
-                    updated += done
-                    missing += absent
-
-                if cutoff is not None:
-                    stale_pages = stale_pages + 1 if _page_all_stale(raw_items, cutoff, config.app.tz) else 0
-                    if stale_pages >= STALE_PAGES_TO_STOP:
-                        stopped = "incremental"
+                    if not raw_items:
+                        if phase == "deep":  # 该分类已扫完：清断点，下一轮从头开始
+                            repository.set_coin_filter_scan_page(cate, 1)
                         break
 
-                await _pause()
+                    pages += 1
+                    rows: list[dict[str, object]] = []
+                    for item in raw_items:
+                        items += 1
+                        item_key = item.get("item_id")
+                        if item_key is not None:
+                            if item_key in seen_items:
+                                continue
+                            seen_items.add(item_key)
+                        row = update_row(item)
+                        if row is not None:
+                            rows.append(row)
+                    if rows:
+                        done, absent = repository.update_coin_lot_filter_heat(rows)
+                        updated += done
+                        missing += absent
+                    if phase == "deep":  # 断点推进：配额用尽时下一轮从这里继续
+                        repository.set_coin_filter_scan_page(cate, page + 1)
+
+                    if cutoff is not None:
+                        stale_pages = stale_pages + 1 if _page_all_stale(raw_items, cutoff, config.app.tz) else 0
+                        if stale_pages >= STALE_PAGES_TO_STOP:
+                            stopped = "incremental"
+                            break
+
+                    await _pause()
+                if stopped == "quota":
+                    break
             if stopped == "quota":
                 break
     finally:

@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+from datetime import timezone
+from types import SimpleNamespace
 
 import pytest
 
@@ -119,3 +122,66 @@ def test_update_filter_heat_writes_heat_and_winner(temp_db):
     assert lot["winner_nickname"] == "买家甲"
     assert json.loads(lot["tags"]) == {"发行年份": "1808"}
     assert lot["bid_source"] == "home_filter"
+
+
+class _FakeApi:
+    """按页返回预设条目，并记录请求过的页码（全量续扫用例）。"""
+
+    def __init__(self, pages: dict[int, list[dict]]) -> None:
+        self.pages = pages
+        self.requested: list[int] = []
+
+    async def __aenter__(self) -> _FakeApi:
+        return self
+
+    async def __aexit__(self, *exc_info: object) -> None:
+        return None
+
+    async def search_filter_items(self, search_params: dict, page: int) -> list[dict]:
+        self.requested.append(page)
+        return self.pages.get(page, [])
+
+
+async def _noop() -> None:
+    return None
+
+
+def _cfg() -> SimpleNamespace:
+    return SimpleNamespace(app=SimpleNamespace(tz=timezone.utc))
+
+
+def _item(page: int) -> dict:
+    return {"auction_id": 1, "item_id": page}
+
+
+def test_full_scan_resumes_from_saved_page(temp_db, monkeypatch):
+    repository.set_coin_filter_scan_page("11010", 30)
+    fake = _FakeApi({page: [_item(page)] for page in range(1, 31)})
+    monkeypatch.setattr(filter_scan, "MxiqiGapi", lambda cfg: fake)
+    monkeypatch.setattr(
+        repository, "list_coin_categories", lambda parent: [{"code": "11010"}]
+    )
+    monkeypatch.setattr(filter_scan, "DAILY_QUOTA", 21)  # 20 页顶部 + 1 页深处
+    monkeypatch.setattr(filter_scan, "_pause", _noop)
+
+    result = asyncio.run(filter_scan.scan(_cfg(), full=True))
+
+    assert fake.requested == [*range(1, 21), 30]  # 顶部页先扫完，再从断点续扫深处
+    assert result.stopped == "quota"
+    assert repository.coin_filter_scan_pages()["11010"] == 31
+
+
+def test_full_scan_resets_progress_when_category_done(temp_db, monkeypatch):
+    repository.set_coin_filter_scan_page("11010", 22)
+    fake = _FakeApi({page: [_item(page)] for page in range(1, 23)})  # 第 23 页为空 → 已扫完
+    monkeypatch.setattr(filter_scan, "MxiqiGapi", lambda cfg: fake)
+    monkeypatch.setattr(
+        repository, "list_coin_categories", lambda parent: [{"code": "11010"}]
+    )
+    monkeypatch.setattr(filter_scan, "DAILY_QUOTA", 30)
+    monkeypatch.setattr(filter_scan, "_pause", _noop)
+
+    asyncio.run(filter_scan.scan(_cfg(), full=True))
+
+    assert fake.requested == [*range(1, 21), 22, 23]  # 顶部 20 页 + 深处续扫到空页
+    assert repository.coin_filter_scan_pages() == {"11010": 1}

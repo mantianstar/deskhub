@@ -10,6 +10,39 @@
 
 ---
 
+## v1.101 — 2026-10-28 成本计量改为「请求数 + 累计输入」，预算与上下文封顶改为注入提示
+
+**起因**：复盘「规则里写了却没执行」——轮数一直由模型自报、预算只有标称上限没有可回读的计量；并行被当成省钱手段，长会话到 80 万 / 120 万也没有任何提示。
+
+**改了什么**：
+- 新增 `.trae/hooks/guard_budget.py`（PreToolUse，覆盖全部读写与命令工具）：按 `data/llm_usage.jsonl` 出「轮（批次）/ 请求 / 上下文」快照注入，模型照抄进回执；累计输入 400k / 800k / 1.2M 三档分别注入一行提示、5 行分析、交接摘要模板；单条上下文跨 40k / 60k / 80k 各注入一次封顶提示。**只注入，不新增 deny**，读不到流水 fail-open。
+- `guard_reset.py`：用户新消息只清 `reads / prints / searches / cmds` 并把请求数 / 批次数归零，保留 `created_ts` 与 `first_ctx`——否则第二句话之后累计输入会被重置，永远打不到高档位。
+- `guard_stop.py`：`ROUND_LINE_RE` 放宽为 `轮数：<数字>`（`/ 上限` 可选），回执首行模板改为 `- 轮数：3 ｜ 请求：4 ｜ 上下文：…`。
+- `guard_pytest.py`：带 `# rerun` 放行时注入「只重跑失败文件」，不再沉默放行。
+- 文档：`RULES.md` §零.3 / §二、`.trae/rules/project-rules.md`、`docs/token-cost.md`、`docs/task-routing.md`（预算档位表、「并行只省时间不省钱」、「探索型交子代理」判据与点名表）。
+- 预算主口径统一为「请求数 + 累计输入」：单任务 ≤15 请求、累计输入 ≤1.2M；检查点从「第 6 轮」改为「第 12 次请求」。
+
+**验证结论**：`pytest tests/test_hooks_contract.py tests/test_rules_guard.py -q` 全绿；`RULES.md` 仍 96 行（≤100）。
+
+**影响文件**：`.trae/hooks/guard_budget.py`（新增）、`.trae/hooks/guard_reset.py`、`.trae/hooks/guard_stop.py`、`.trae/hooks/guard_pytest.py`、`.trae/hooks.json`、`RULES.md`、`.trae/rules/project-rules.md`、`docs/token-cost.md`、`docs/task-routing.md`、`tests/test_hooks_contract.py`、`tests/test_rules_guard.py`。
+
+---
+
+## v1.100 — 2026-10-28 `home.filter` 全量扫描支持断点续扫（schema 24 → 25）
+
+**起因**：全量扫一轮约 3,014 页（9 个二级分类，站点 `totalSize` 封顶 10,000 → 单类最多 476 页），但日配额只有 300 次且每次都从第 1 页重扫，配额总是耗在第一个分类，后面的分类与页永远扫不到——「获取全」实际做不到。
+
+**改了什么**：
+- 新表 `coin_filter_scan_progress`（`category_code` → `next_page`）+ `repository.coin_filter_scan_pages()` / `set_coin_filter_scan_page()`；`SCHEMA_VERSION` 24 → 25，登记 v20/v21/v22/v23 → 25 的跨版本加列迁移（v25 本身只建表）。
+- `filter_scan.scan(full=True)` 从断点页开始逐页扫：每成功一页写 `page + 1`，命中空页则清零回 1（该分类扫完，下一轮重新开始）；配额用尽时断点已落库，下一轮接着扫。增量模式（默认 20 页/类）行为不变。
+- CLI `coins-filter-scan --full` 帮助文案改为「配额用尽下轮从断点续扫」。
+
+**验证结论**：`pytest -q` → 477 passed, 1 skipped（新增 2 条：配额中断后续扫、空页清零）；用现有库副本跑 `db.init_db` 升级到 25 且表已建。
+
+**影响文件**：`app/models.py`、`app/db.py`、`app/migrations/__init__.py`、`app/repository.py`、`app/coins/filter_scan.py`、`app/cli.py`、`tests/test_coins_filter_scan.py`、`tests/test_coins_analysis.py`、`tests/test_coins_categories.py`、`plan/coins.md`（§18.19.1 补单类页数上限）。
+
+---
+
 ## v1.99 — 2026-10-28 回执统一为用户样例的四行格式，补「整段缺失」诊断
 
 **起因**：v1.98 的三行版把轮数塞进「回执：」首行，与用户实际写法不一致（样例为「回执：」独立一行 + 三条项目符号）；另外 Stop 门禁对「回执根本没输出」只报「缺『回执：』三行」，没给可照抄的骨架，模型补的时候仍会漏。

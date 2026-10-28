@@ -15,12 +15,12 @@ AUDIT = Path(os.environ.get("DESKHUB_HOOK_AUDIT") or REPO / "data" / "hook_audit
 RECEIPT_RE = re.compile(r"^[ \t]*(?:[-*][ \t]*)?\**回执[：:]\**[ \t]*$", re.M)
 # 回执固定四行（RULES.md §零.3）：首行只有「回执：」，下面三行项目符号：
 #   回执：
-#   - 轮数：3 / 10 ｜ 请求：4 ｜ 上下文：20,447→44,057
+#   - 轮数：3 ｜ 请求：4 ｜ 上下文：20,447→44,057
 #   - 搜索/读取：Grep×3 · 读 364 行 ｜ 输出峰：6KB ｜ 越界：无
 #   - 成本：输入 342,213 + 输出 8,586 = 合计 350,799
-# 不在全文里猜「N / M」：轮数必须是回执之后单独一行。
+# 轮数按批次口径（同批并行算 1 次），不带「/ 上限」：`/数字` 只在旧写法里出现，按可选处理。
 ROUND_LINE_RE = re.compile(
-    r"^[ \t]*(?:[-*][ \t]*)?轮数[：:][ \t]*\d+[ \t]*[/／][ \t]*\d+",
+    r"^[ \t]*(?:[-*][ \t]*)?轮数[：:][ \t]*\d+(?:[ \t]*[/／][ \t]*\d+)?[ \t]*[｜|]",
     re.M,
 )
 # 「成本清单」只认固定行（docs/token-cost.md §3），不再猜「成本 + 数字」：
@@ -64,7 +64,7 @@ def missing_parts(message: str) -> list[str]:
     tail = message[match.end() :]
     missing: list[str] = []
     if not ROUND_LINE_RE.search(tail):
-        missing.append("轮数行（`- 轮数：X / M ｜ 请求：X ｜ 上下文：X→X`）")
+        missing.append("轮数行（`- 轮数：X ｜ 请求：X ｜ 上下文：X→X`）")
     if not COST_LINE_RE.search(tail):
         missing.append("token 成本清单（固定一行：`- 成本：输入 X + 输出 Y = 合计 Z`，无新增写 `- 成本：未计量`）")
     return missing
@@ -92,7 +92,7 @@ def main() -> None:
                     "按 RULES.md §零.3，本条回复缺 "
                     + "、".join(missing)
                     + "。请照抄四行骨架补齐：回执：\\n"
-                    + "- 轮数：X / M ｜ 请求：X ｜ 上下文：X→X\\n"
+                    + "- 轮数：X ｜ 请求：X ｜ 上下文：X→X\\n"
                     + "- 搜索/读取：… ｜ 输出峰：XKB ｜ 越界：无\\n"
                     + "- 成本：输入 X + 输出 Y = 合计 Z"
                 ),
