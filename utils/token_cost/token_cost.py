@@ -155,7 +155,11 @@ def split_round_anchor(fresh: list[dict]) -> tuple[int, dict, dict]:
 
 
 def print_round_table(usage_path: Path) -> None:
-    """本轮增量：只出上次出表之后新增的请求；游标与日志同目录，中断、换会话都不丢账。"""
+    """本轮增量：只出上次出表之后新增的请求；游标与日志同目录，中断、换会话都不丢账。
+
+    游标按出表后的最新行数写：这条 `--round` 自己的 usage 在读取之后才落盘，
+    若按出表时的行数写，它会滚进下一批冒充「上轮残留」。
+    """
     rows = load_usage_rows(usage_path)
     cursor_path = usage_path.parent / CURSOR_NAME
     cursor = int(cursor_path.read_text(encoding="utf-8").strip() or 0) if cursor_path.exists() else 0
@@ -174,7 +178,7 @@ def print_round_table(usage_path: Path) -> None:
     print(f"成本：输入 {total_input:,} + 输出 {total_output:,} = 合计 {total_input + total_output:,}（本轮 {len(fresh)} 次请求）")
     if 0 < leading < len(fresh):
         print(f"注：增量开头 {leading} 条早于本轮提问（上轮补记或别的任务残留），已计入成本，不作锚点")
-    cursor_path.write_text(f"{len(rows)}", encoding="utf-8")
+    cursor_path.write_text(f"{max(len(rows), len(load_usage_rows(usage_path)))}", encoding="utf-8")
 
 
 def _cell(text: str | None, limit: int | None = None) -> str:

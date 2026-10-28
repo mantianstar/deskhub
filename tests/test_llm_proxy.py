@@ -372,6 +372,27 @@ def test_usage_round_anchor_starts_at_question(tmp_path, capsys):
     assert "开头 1 条早于本轮提问" in out and "不作锚点" in out
 
 
+def test_usage_round_cursor_swallows_rows_logged_during_print(tmp_path, capsys, monkeypatch):
+    """出表期间才落盘的行（含这条 `--round` 自己的 usage）不滚进下一批当「上轮残留」。"""
+    module = _load_token_cost()
+    log_path = tmp_path / "llm_usage.jsonl"
+    base = [
+        {"ts": "2026-10-26T21:00:00+0800", "action": action, "object": "",
+         "prompt_tokens": 10, "completion_tokens": 1}
+        for action in ("提问", "读取")
+    ]
+    later = base + [
+        {"ts": "2026-10-26T21:00:05+0800", "action": "命令", "object": "",
+         "prompt_tokens": 12, "completion_tokens": 1}
+    ]
+    reads = iter([base, later])
+    monkeypatch.setattr(module, "load_usage_rows", lambda path: next(reads))
+
+    module.print_round_table(log_path)
+    assert "请求数：2" in capsys.readouterr().out
+    assert (tmp_path / module.CURSOR_NAME).read_text(encoding="utf-8").strip() == "3"
+
+
 def test_usage_table_clips_long_object(capsys):
     """对象列只留标识：长提问截到 30 字，文件路径转相对路径且不丢文件名。"""
     module = _load_token_cost()
