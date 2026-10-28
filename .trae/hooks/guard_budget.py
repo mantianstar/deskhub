@@ -4,11 +4,14 @@
 读不到 usage 流水一律 fail-open，能算多少算多少。
 
 口径：
-- 轮 = 批次：与上次调用间隔 ≤3 秒视为同一批（并行调用通常同秒落状态），只作参考；
-- 请求 = 本次任务（用户上一条消息之后，`guard_reset` 记的 `task_start_ts`）落进流水的条数；
+- 轮 = 本轮（`guard_reset` 记的 `task_start_ts` 之后）已落盘的请求数 + 在飞这一条：
+  一条请求里的并行工具调用天然同轮；不用「间隔 ≤3 秒」猜批次——快串行会被并成一批，
+  慢串行又被拆成多轮，两个方向都错；
+- 请求 = 本轮已落盘的请求条数 + 在飞这一条，与 `--round` 的「请求数」同口径；
 - 累计输入 = 本会话起点（`created_ts`）至今 `prompt_tokens` 之和，只用于 400k / 800k / 1.2M 判档；
   子代理请求同样写流水、无法从字段区分，一律计入（真实花费，不剔除）；
-- 上下文 = 会话首条 `first_ctx` → 上一条请求的 `prompt_tokens`。
+- 上下文 = 本轮首条「提问」的 `prompt_tokens` → 本轮末条已完成请求的 `prompt_tokens`；
+  本轮还没有流水时显示「待落盘」，不拿上一任务的末条兜底。
 """
 
 from __future__ import annotations
@@ -27,7 +30,6 @@ REPO = Path(__file__).resolve().parents[2]
 AUDIT = Path(os.environ.get("DESKHUB_HOOK_AUDIT") or REPO / "data" / "hook_audit.log")
 USAGE = Path(os.environ.get("DESKHUB_LLM_USAGE") or REPO / "data" / "llm_usage.jsonl")
 
-MAX_BATCH_GAP = 3
 BUDGET_LIMIT = 1_200_000
 TIERS = (400_000, 800_000, 1_200_000)
 CTX_WARNS = (40_000, 60_000, 80_000)
@@ -80,14 +82,14 @@ def _epoch(text: object) -> float | None:
     return None
 
 
-def load_rows(path: Path) -> list[tuple[float | None, int, str]]:
-    """读流水 → [(ts, prompt_tokens, object)]；坏行跳过，读不到返回空表。"""
+def load_rows(path: Path) -> list[tuple[float | None, int, str, str]]:
+    """读流水 → [(ts, prompt_tokens, action, object)]；坏行跳过，读不到返回空表。"""
     try:
         text = path.read_text(encoding="utf-8")
     except OSError:
         return []
 
-    rows: list[tuple[float | None, int, str]] = []
+    rows: list[tuple[float | None, int, str, str]] = []
     for line in text.splitlines():
         line = line.strip()
         if not line:
@@ -103,7 +105,9 @@ def load_rows(path: Path) -> list[tuple[float | None, int, str]]:
             prompt = int(usage.get("prompt_tokens") or 0)
         except (TypeError, ValueError):
             continue
-        rows.append((_epoch(obj.get("ts")), prompt, str(obj.get("object") or "-")))
+        rows.append(
+            (_epoch(obj.get("ts")), prompt, str(obj.get("action") or ""), str(obj.get("object") or "-"))
+        )
     return rows
 
 
@@ -119,7 +123,7 @@ def tier_text(
 
     if tier < 1_200_000:
         by_object = Counter()
-        for _, prompt, obj in rows:
+        for _, prompt, _action, obj in rows:
             by_object[obj[:40]] += prompt
         top = "、".join(f"`{name}` {_k(total)}" for name, total in by_object.most_common(3))
         repeats = [(name, count) for name, count in by_object.most_common() if count >= 2]
@@ -169,24 +173,24 @@ def main() -> None:
         task_start = int(slot.get("task_start_ts") or 0) or created
         slot["task_start_ts"] = task_start
 
-        if now - int(slot.get("last_call_ts") or 0) > MAX_BATCH_GAP:
-            slot["batches"] = int(slot.get("batches") or 0) + 1
-        slot["last_call_ts"] = now
-        batches = slot["batches"]
-
         data = load_rows(USAGE)
         session_rows = [row for row in data if row[0] is not None and row[0] >= created]
         cumulative = sum(row[1] for row in session_rows)
-        requests = max(sum(1 for row in session_rows if row[0] >= task_start), 1)
+        task_rows = [row for row in session_rows if row[0] >= task_start]
 
-        first_ctx = int(slot.get("first_ctx") or 0)
-        if not first_ctx:
-            first_ctx = session_rows[0][1] if session_rows else (data[-1][1] if data else 0)
-            slot["first_ctx"] = first_ctx
-        last_ctx = session_rows[-1][1] if session_rows else first_ctx
+        # 轮 / 请求都从流水推：本轮已落盘请求数 + 在飞这一条。一条请求里的并行工具调用
+        # 同属一轮、也只算一次工具往返；不用状态文件计数——并行 hook 会互相覆盖（实测 3→1 回退）。
+        rounds = requests = len(task_rows) + 1
+
+        start_ctx = next(
+            (row[1] for row in task_rows if row[2] == "提问"),
+            task_rows[0][1] if task_rows else 0,
+        )
+        last_ctx = task_rows[-1][1] if task_rows else start_ctx
+        ctx_text = f"{_k(start_ctx)}→{_k(last_ctx)}" if task_rows else "待落盘"
 
         lines = [
-            f"预算快照：轮 {batches} ｜ 请求 {requests} ｜ 上下文 {_k(first_ctx)}→{_k(last_ctx)}"
+            f"预算快照：轮 {rounds} ｜ 请求 {requests} ｜ 上下文 {ctx_text}"
             "（照抄进回执「- 轮数：」行）"
         ]
 
@@ -202,7 +206,7 @@ def main() -> None:
 
         _state.save(state)
 
-    audit(str(payload.get("tool_name") or "-"), "hint", f"batches={batches} req={requests} cum={cumulative}")
+    audit(str(payload.get("tool_name") or "-"), "hint", f"rounds={rounds} req={requests} cum={cumulative}")
     hint("\n".join(lines))
 
 

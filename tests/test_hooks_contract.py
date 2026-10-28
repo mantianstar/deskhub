@@ -204,22 +204,30 @@ def _context(out: str) -> str:
     return json.loads(out)["hookSpecificOutput"]["additionalContext"]
 
 
-def test_budget_hook_merges_calls_within_three_seconds(tmp_path: Path):
-    """同批并行调用算 1 轮；请求数按流水条数累加。"""
-    env, _ = _budget_env(tmp_path, [20_000, 21_000])
+def test_budget_hook_rounds_follow_logged_requests(tmp_path: Path):
+    """轮 / 请求都按本轮已落盘请求数 +1 算，不受工具调用次数或状态文件影响。"""
+    env, _ = _budget_env(tmp_path, [20_000])
     first = _context(_run_budget(env))
     second = _context(_run_budget(env))
-    assert "轮 1" in first and "轮 1" in second
-    assert "请求 2" in second
+    assert "轮 2 ｜ 请求 2" in first and "轮 2 ｜ 请求 2" in second
     assert '"permissionDecision"' not in _run_budget(env)
 
 
-def test_budget_hook_counts_new_batch_after_gap(tmp_path: Path):
-    """与上次调用间隔 >3 秒算新的一批。"""
-    env, _ = _budget_env(
-        tmp_path, [20_000, 21_000], {"batches": 1, "last_call_ts": int(time.time()) - 30}
+def test_budget_hook_context_starts_at_round_first_question(tmp_path: Path):
+    """起点认本轮首条「提问」，不拿上一任务末条兜底；结束取本轮末条。"""
+    env, _ = _budget_env(tmp_path, [20_000], {"task_start_ts": int(time.time()) - 100})
+    now = int(time.time())
+    rows = [
+        {"ts": _stamp(now - 300), "action": "命令", "object": "上个任务", "prompt_tokens": 68_366},
+        {"ts": _stamp(now - 60), "action": "提问", "object": "提交并推送 git", "prompt_tokens": 20_492},
+        {"ts": _stamp(now - 58), "action": "命令", "object": "git diff", "prompt_tokens": 21_961},
+    ]
+    (tmp_path / "usage.jsonl").write_text(
+        "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows), encoding="utf-8"
     )
-    assert "轮 2" in _context(_run_budget(env))
+    out = _context(_run_budget(env))
+    assert "上下文 20k→22k" in out
+    assert "68k" not in out
 
 
 def test_budget_hook_escalates_three_tiers(tmp_path: Path):
