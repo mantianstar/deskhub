@@ -42,6 +42,7 @@ SERIES_TEXT_FIELDS = (
     "obverse_desc",
     "reverse_desc",
     "comments",
+    "commemorated_topic",
 )
 ISSUE_TEXT_FIELDS = ("comment",)
 
@@ -53,6 +54,7 @@ _FIELD_LABELS = {
     "obverse_desc": "正面描述",
     "reverse_desc": "背面描述",
     "comments": "系列备注",
+    "commemorated_topic": "纪念主题",
     "comment": "单版备注",
 }
 

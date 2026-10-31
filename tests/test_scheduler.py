@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -74,6 +75,25 @@ async def test_daily_job_fires_at_7am_local_with_plan_settings(tmp_path):
 
         fields = {field.name: str(field) for field in job.trigger.fields}
         assert fields["hour"] == "7"
+        assert fields["minute"] == "0"
+        assert str(job.trigger.timezone) == "Asia/Shanghai"
+    finally:
+        active.shutdown(wait=False)
+
+
+@pytest.mark.asyncio
+async def test_deep_scan_job_fires_at_9pm_local(tmp_path):
+    """全量深扫：21:00 业务时区，单实例不重叠。"""
+    cfg = _config(tmp_path)
+    cfg = replace(cfg, coins=replace(cfg.coins, enabled=True))
+    active = scheduler.start(cfg)
+    try:
+        job = active.get_job(scheduler.DAILY_COINS_DEEP_JOB_ID)
+        assert job is not None
+        assert job.max_instances == 1
+
+        fields = {field.name: str(field) for field in job.trigger.fields}
+        assert fields["hour"] == "21"
         assert fields["minute"] == "0"
         assert str(job.trigger.timezone) == "Asia/Shanghai"
     finally:

@@ -6,16 +6,14 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
-
 import pytest
 from fastapi.testclient import TestClient
 
 from app import config, db, repository
 from app.coins import collection, explore, recommend
-from app.coins.numista import SeriesInfo
 from app.main import app as fastapi_app
 from app.models import (
+    CoinCollectionMember,
     CoinCollectionProfile,
     CoinCollectionSeries,
     CoinExploreCandidate,
@@ -45,16 +43,18 @@ def _series(
     denomination: str = "1 便士",
     size_mm: float = 31.0,
     composition: str = "Bronze",
+    object_type: str = "标准流通币",
     min_year: int = 1860,
     max_year: int = 1864,
     comments: str | None = None,
+    title: str | None = None,
 ) -> CoinSeries:
     return CoinSeries(
         id=None,
         numista_id=numista_id,
-        title=f"{issuer} {denomination}",
+        title=title or f"{issuer} {denomination}",
         url=None,
-        object_type="标准流通币",
+        object_type=object_type,
         issuer=issuer,
         min_year=min_year,
         max_year=max_year,
@@ -161,6 +161,8 @@ def _profile(
     owned: list[int] | None = None,
     upgrade: list[int] | None = None,
     specs: dict[int, CoinYearSpec] | None = None,
+    theme: str = "",
+    coin_name: str = "",
 ) -> CoinCollectionProfile:
     now = repository.utcnow()
     year_list = years or [1860, 1861, 1862, 1863]
@@ -178,6 +180,15 @@ def _profile(
             created_at=now,
             updated_at=now,
         ),
+        member=CoinCollectionMember(
+            id=1,
+            collection_id=1,
+            numista_series_id=1,
+            numista_series_name=None,
+            created_at=now,
+            theme=theme,
+            coin_name=coin_name,
+        ),
         member_series_ids=[1],
         min_year=year_list[0],
         max_year=year_list[-1],
@@ -185,9 +196,16 @@ def _profile(
         owned_years=owned_list,
         missing_years=[year for year in year_list if year not in owned_list],
         upgrade_years=upgrade or [],
-        year_specs=specs or {year: [CoinYearSpec(year, year, 1, 1000, 0.3, size_mm, 9.4, 10.0, 20.0, "CNY", False)] for year in year_list},
+        year_specs=(
+            {(year, coin_name or ""): values[0] for year, values in specs.items()}
+            if specs
+            else {(year, coin_name or ""): CoinYearSpec(year, year, 1, 1000, 0.3, size_mm, 9.4, 10.0, 20.0, "CNY", False) for year in year_list}
+        ),
+        owned_keys={(year, coin_name or "") for year in owned_list},
+        upgrade_keys={(year, coin_name or "") for year in (upgrade or [])},
         size_mm=size_mm,
         size_band=band,
+        year_names={year: coin_name for year in year_list if coin_name},
     )
 
 
@@ -352,7 +370,275 @@ def test_build_profile_excludes_non_bronze_and_proof_years():
     )
 
     assert profile.years == [1860]  # 银币年份与精制年份都被剔除
-    assert profile.year_specs[1860][0].mintage == 1000
+    assert profile.year_specs[(1860, "")].mintage == 1000
+
+
+def test_build_profile_named_series_do_not_share_grades():
+    """同名面值同一年靠主题 / 名称区分：女排的品相不会算进男排的已有年份。"""
+    now = repository.utcnow()
+
+    def china_series(collection_id: int, coin_name: str) -> CoinCollectionSeries:
+        return CoinCollectionSeries(
+            id=collection_id,
+            collection_key=f"cn-2015-5-volleyball-{coin_name}",
+            name="中国 · 5 元",
+            country="中国",
+            ruler=None,
+            denomination="5 元",
+            size_mm=None,
+            size_band=None,
+            created_at=now,
+            updated_at=now,
+        )
+
+    def china_member(collection_id: int, coin_name: str) -> CoinCollectionMember:
+        return CoinCollectionMember(
+            id=collection_id,
+            collection_id=collection_id,
+            numista_series_id=1,
+            numista_series_name=None,
+            created_at=now,
+            theme="亚运会",
+            coin_name=coin_name,
+        )
+
+    series = _series(
+        1,
+        issuer="中国",
+        ruler=None,
+        denomination="5 元",
+        composition="镍包钢",
+        object_type="纪念币",
+        min_year=2015,
+        max_year=2015,
+    )
+    issues = {1: [_issue(11, 1, year=2015)]}
+    grades = [
+        CoinPurchaseGrade(None, "中国", "2015", "5 元", "好", now, "亚运会", "女排"),
+    ]
+
+    series.issue_series = "亚运会"
+    series.issue_theme = "女排"
+    women = collection.build_profile(
+        china_series(1, "女排"),
+        [series],
+        member=china_member(1, "女排"),
+        issues_by_series=issues,
+        values_by_series={},
+        grades=grades,
+    )
+    series.issue_theme = "男排"
+    men = collection.build_profile(
+        china_series(2, "男排"),
+        [series],
+        member=china_member(2, "男排"),
+        issues_by_series=issues,
+        values_by_series={},
+        grades=grades,
+    )
+
+    assert women.owned_years == [2015]
+    assert women.missing_years == []
+    assert men.owned_years == []
+    assert men.missing_years == [2015]
+
+
+def test_build_profile_matches_grade_by_member_denomination():
+    """品相按成员面值匹配：收藏系列写 5 元、成员是 1 元时，用成员的 1 元。"""
+    now = repository.utcnow()
+    collection_row = CoinCollectionSeries(
+        id=1,
+        collection_key="cn-panda",
+        name="中国 · 熊猫",
+        country="中国",
+        ruler=None,
+        denomination="5 元",
+        size_mm=None,
+        size_band=None,
+        created_at=now,
+        updated_at=now,
+    )
+    member = CoinCollectionMember(
+        id=1,
+        collection_id=1,
+        numista_series_id=1,
+        numista_series_name=None,
+        created_at=now,
+    )
+    series = _series(
+        1,
+        issuer="中国",
+        ruler=None,
+        denomination="1 元",
+        min_year=2010,
+        max_year=2010,
+    )
+    profile = collection.build_profile(
+        collection_row,
+        [series],
+        member=member,
+        issues_by_series={1: [_issue(11, 1, year=2010)]},
+        values_by_series={},
+        grades=[
+            CoinPurchaseGrade(None, "中国", "2010", "1 元", "好", now),
+        ],
+    )
+
+    assert profile.owned_years == [2010]
+    assert profile.missing_years == []
+
+
+def test_build_profile_treats_hong_kong_fen_as_sin():
+    """香港面值「分」与「仙」同义：1926 年 1 仙的品相记成 1 Cent 也要算已有。"""
+    now = repository.utcnow()
+    collection_row = CoinCollectionSeries(
+        id=1,
+        collection_key="hk-george-v-1-cent",
+        name="香港 · 乔治五世 · 1 仙",
+        country="香港",
+        ruler="乔治五世",
+        denomination="1 仙",
+        size_mm=None,
+        size_band=None,
+        created_at=now,
+        updated_at=now,
+    )
+    member = CoinCollectionMember(
+        id=1,
+        collection_id=1,
+        numista_series_id=1,
+        numista_series_name=None,
+        created_at=now,
+    )
+    series = _series(
+        1,
+        issuer="香港",
+        ruler="乔治五世",
+        denomination="1 仙",
+        min_year=1926,
+        max_year=1926,
+    )
+    profile = collection.build_profile(
+        collection_row,
+        [series],
+        member=member,
+        issues_by_series={1: [_issue(11, 1, year=1926)]},
+        values_by_series={},
+        grades=[
+            CoinPurchaseGrade(None, "香港", "1926", "1 Cent", "好", now),
+        ],
+    )
+
+    assert profile.owned_years == [1926]
+    assert profile.missing_years == []
+
+
+def test_build_profiles_merges_members_into_one_card():
+    """收藏系列级画像：一个收藏系列一张卡，年份标签为 `1995(金丝猴)`。"""
+    now = repository.utcnow()
+    collection_row = CoinCollectionSeries(
+        id=1,
+        collection_key="cn-1995-rare-animals",
+        name="中国 · 5 元",
+        country="中国",
+        ruler=None,
+        denomination="5 元",
+        size_mm=None,
+        size_band=None,
+        created_at=now,
+        updated_at=now,
+    )
+    members = [
+        CoinCollectionMember(
+            id=1,
+            collection_id=1,
+            numista_series_id=1,
+            numista_series_name=None,
+            created_at=now,
+            theme="珍稀动物",
+            coin_name="金丝猴",
+        ),
+        CoinCollectionMember(
+            id=2,
+            collection_id=1,
+            numista_series_id=2,
+            numista_series_name=None,
+            created_at=now,
+            theme="珍稀动物",
+            coin_name="白鳍豚",
+        ),
+    ]
+    series_by_id = {
+        1: _series(
+            1, issuer="中国", ruler=None, denomination="5 元",
+            composition="镍包钢", object_type="纪念币", min_year=1995, max_year=1995,
+        ),
+        2: _series(
+            2, issuer="中国", ruler=None, denomination="5 元",
+            composition="镍包钢", object_type="纪念币", min_year=1996, max_year=1996,
+        ),
+    }
+    series_by_id[1].issue_series = "珍稀动物"
+    series_by_id[1].issue_theme = "金丝猴"
+    series_by_id[2].issue_series = "珍稀动物"
+    series_by_id[2].issue_theme = "白鳍豚"
+
+    profiles = collection.build_profiles(
+        [collection_row],
+        members,
+        series_by_id,
+        issues_by_series={1: [_issue(11, 1, year=1995)], 2: [_issue(21, 2, year=1996)]},
+        values_by_series={},
+        grades=[
+            CoinPurchaseGrade(None, "中国", "1995", "5 元", "好", now, "珍稀动物", "金丝猴"),
+        ],
+    )
+
+    assert len(profiles) == 1
+    profile = profiles[0]
+    assert profile.member is None
+    assert profile.member_series_ids == [1, 2]
+    assert profile.years == [1995, 1996]
+    assert profile.owned_years == [1995]
+    assert profile.missing_years == [1996]
+    assert profile.year_names == {1995: "金丝猴", 1996: "白鳍豚"}
+    assert profile.year_label(1995) == "1995(金丝猴)"
+    assert profile.year_label(1996) == "1996(白鳍豚)"
+
+
+def test_build_profile_keeps_commemorative_series_of_any_composition():
+    """纪念币（object_type 含纪念）不看材质：镍包钢 / 黄铜也进画像。"""
+    series = _series(
+        1,
+        issuer="中国",
+        ruler=None,
+        denomination="10 元",
+        composition="镍包钢",
+        object_type="纪念币",
+        min_year=2015,
+        max_year=2015,
+    )
+    profile = collection.build_profile(
+        CoinCollectionSeries(
+            id=1,
+            collection_key="cn-2015-10",
+            name="中国 · 10 元",
+            country="中国",
+            ruler=None,
+            denomination="10 元",
+            size_mm=None,
+            size_band=None,
+            created_at=repository.utcnow(),
+            updated_at=repository.utcnow(),
+        ),
+        [series],
+        issues_by_series={1: [_issue(11, 1, year=2015)]},
+        values_by_series={},
+        grades=[],
+    )
+
+    assert profile.years == [2015]
+    assert profile.missing_years == [2015]
 
 
 # ---------------------------------------------------------------- 推荐
@@ -414,7 +700,7 @@ def test_japanese_year_labels_translate_back():
         },
     )
 
-    labels = recommend.year_labels(profile, 6, profile.year_specs[6][0])
+    labels = recommend.year_labels(profile, 6, profile.year_specs[(6, "")])
 
     assert "明治6年" in labels
     assert "明治六年" in labels
@@ -680,6 +966,50 @@ def test_lot_matching_handles_arabic_and_chinese_year_forms():
     assert not recommend.lot_matches(item, lot("日本明治七年二钱"))
 
 
+def test_lot_matching_requires_coin_name_when_series_has_one():
+    """系列填了名称时，标题缺名称不判精准（主题不单独命中）。"""
+    profile = _profile(
+        key="cn-2015-5-volleyball-women",
+        country="中国",
+        ruler="亚运会",
+        denomination="5 元",
+        years=[2015],
+        owned=[],
+        theme="亚运会",
+        coin_name="女排",
+    )
+    item = recommend.build_recommendations([profile], min_results=10)[0]
+
+    def lot(title: str) -> CoinTodayLot:
+        return CoinTodayLot(1, 1, title, 0.0, 10.0, [], "店", "专场", None)
+
+    assert recommend.lot_matches(item, lot("2015 中国 亚运会 5元 女排"))
+    assert not recommend.lot_matches(item, lot("2015 中国 亚运会 5元"))
+    assert not recommend.lot_matches(item, lot("2015 中国 亚运会 5元 男排"))
+
+
+def test_lot_matching_name_gate_applies_to_denomination_explore():
+    """P5 面值探索不卡年份，但名称仍是硬门槛。"""
+    profile = _profile(
+        key="cn-2015-5-volleyball-women",
+        country="中国",
+        ruler="亚运会",
+        denomination="5 元",
+        years=[2015],
+        owned=[],
+        coin_name="女排",
+    )
+    item = CoinRecommendation(
+        5, profile.collection, 2015, [], "中国 5 元", 1.0, "面值探索", coin_name="女排"
+    )
+
+    def lot(title: str) -> CoinTodayLot:
+        return CoinTodayLot(1, 1, title, 0.0, 10.0, [], "店", "专场", None)
+
+    assert recommend.lot_matches(item, lot("中国 5元 女排"))
+    assert not recommend.lot_matches(item, lot("中国 5元"))
+
+
 # ---------------------------------------------------------------- 映射表读写
 
 
@@ -727,7 +1057,13 @@ def test_collection_pages_create_map_and_render(web):
     repository.upsert_coin_purchase_grade("英国", "1860", "1 便士", "差")
     # 同国家 / 面值的另一个候选，用于验证候选下拉里的年份范围
     repository.upsert_coin_series_cn(
-        _series(671, ruler="爱德华七世", min_year=1874, max_year=1901)
+        _series(
+            671,
+            ruler="爱德华七世",
+            min_year=1874,
+            max_year=1901,
+            title="爱德华七世 1 便士",
+        )
     )
 
     response = web.post(
@@ -754,12 +1090,14 @@ def test_collection_pages_create_map_and_render(web):
     assert page.status_code == 200
     assert "英国 · 维多利亚 · 1 便士" in page.text
     assert "670" in page.text
+    assert "英国 1 便士" in page.text  # 成员展示 coin_series_cn.title
     assert "1860–1864" in page.text  # 成员年份范围
     assert '<option value="维多利亚" selected>' in page.text  # 执政者默认取收藏系列
     assert "1874–1901" not in page.text  # 爱德华七世不在默认执政者下
 
     page = web.get(f"/coins/collections?expand={collection_row.id}&mruler=__all__")
     assert "1874–1901" in page.text  # 切到「全部」后出现候选年份范围
+    assert "爱德华七世 1 便士" in page.text  # 候选 series 展示 coin_series_cn.title
 
     page = web.get("/coins/collection")
     assert page.status_code == 200
@@ -770,6 +1108,38 @@ def test_collection_pages_create_map_and_render(web):
     assert "币面有戳记" in page.text  # 年份规格字典的备注列
     assert 'class="row-year-upgrade"' in page.text  # 需升级年份行
     assert 'class="row-year-missing"' in page.text  # 缺失年份行
+
+
+def test_collection_grade_panel_uses_member_denomination(web):
+    """品相录入面板的隐藏面值取成员面值：收藏系列写 5 元、成员是 1 元时用 1 元。"""
+    collection_id = repository.upsert_coin_collection_series(
+        collection_key="cn-panda",
+        name="中国 · 熊猫",
+        country="中国",
+        ruler=None,
+        denomination="5 元",
+        size_mm=None,
+        size_band=None,
+    )
+    series_id = repository.upsert_coin_series_cn(
+        _series(
+            900,
+            issuer="中国",
+            ruler=None,
+            denomination="1 元",
+            min_year=2010,
+            max_year=2010,
+        )
+    )
+    repository.upsert_coin_issue_cn(_issue(9101, series_id, year=2010, mintage=1000))
+    repository.upsert_coin_collection_member(collection_id, 900, "中国 1 元")
+
+    page = web.get(f"/coins/collections?expand={collection_id}")
+    assert page.status_code == 200
+    panel = page.text.split('class="coin-grade-panel"', 1)[1].split("</form>", 1)[0]
+    assert 'name="denomination" value="1 元"' in panel
+    assert 'data-denomination="1 元"' in panel
+    assert 'value="5 元"' not in panel
 
 
 def test_collection_member_filter_by_country_and_denomination(web):
@@ -796,6 +1166,7 @@ def test_collection_member_filter_by_country_and_denomination(web):
     assert '<option value="2 钱" selected>' in page.text
     assert 'value="2317"' in page.text
     assert "1873–1892" in page.text
+    assert "日本 2 钱" in page.text  # 候选 series 展示 coin_series_cn.title
     # 英国候选不应出现在日本 / 2 钱筛选结果里
     assert 'value="670"' not in page.text
 
@@ -1285,57 +1656,6 @@ def test_explore_candidate_status_ignored_is_hidden_and_not_resurrected(temp_db)
     assert repository.list_coin_explore_candidates() == []
 
 
-def test_build_seeds_uses_profile_size_when_collection_size_missing():
-    """映射行没填 size_mm 时，种子要用画像从成员系列算出的尺寸（否则永远 0 个种子）。"""
-    profile = _profile(size_mm=31.0)
-    profile = replace(profile, collection=replace(profile.collection, size_mm=None))
-
-    seeds = explore.build_seeds([profile])
-
-    assert [(seed.name, seed.size_mm) for seed in seeds] == [
-        ("英国 · 维多利亚 · 1 便士", 31.0)
-    ]
-
-
-def test_match_seed_requires_copper_and_size_tolerance():
-    seed = explore.ExploreSeed(key="k", name="n", query="penny", size_mm=31.0)
-    info = SeriesInfo(
-        numista_id=1,
-        title=None,
-        url=None,
-        object_type=None,
-        issuer=None,
-        min_year=None,
-        max_year=None,
-        ruler=None,
-        denomination=None,
-        size_mm=32.5,
-        weight_g=None,
-        thickness_mm=None,
-        shape=None,
-        composition="Bronze",
-        edge=None,
-        obverse_desc=None,
-        obverse_lettering=None,
-        obverse_picture=None,
-        reverse_desc=None,
-        reverse_lettering=None,
-        reverse_picture=None,
-        catalog_no=None,
-        comments=None,
-        mints=[],
-    )
-    matched = explore.match_seed(info, [seed], 2.0)
-    assert matched is not None and matched[1] == pytest.approx(1.5)
-    assert explore.match_seed(info, [seed], 1.0) is None
-    assert (
-        explore.match_seed(
-            SeriesInfo(**{**info.__dict__, "composition": "Copper-nickel"}), [seed], 5.0
-        )
-        is None
-    )
-
-
 def test_explore_profiles_feed_similar_recommendations(temp_db):
     repository.upsert_coin_explore_candidate(_explore_candidate(990002))
     candidate_profiles = collection.load_explore_profiles()
@@ -1416,3 +1736,37 @@ def test_explore_page_filters_by_country_ruler_denomination(web):
 
     page = web.get("/coins/explore", params={"country": "法国"})
     assert "990005" in page.text and "990006" not in page.text
+
+
+def test_collection_member_add_keeps_selected_filters(web):
+    """加入成员后重定向带上已选国家 / 执政者 / 面值，避免条件被重置。"""
+    repository.upsert_coin_series_cn(_series(672))
+    collection_id = repository.upsert_coin_collection_series(
+        collection_key="uk-victoria-penny",
+        name="英国 · 维多利亚 · 1 便士",
+        country="英国",
+        ruler="维多利亚",
+        denomination="1 便士",
+        size_mm=None,
+        size_band=None,
+    )
+
+    response = web.post(
+        "/coins/collections/members/add",
+        data={
+            "collection_id": collection_id,
+            "numista_series_id": 672,
+            "mcountry": "英国",
+            "mruler": "__all__",
+            "mdenomination": "1 便士",
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 302
+    location = response.headers["location"]
+    assert f"expand={collection_id}" in location
+    assert "mcountry=" in location
+    assert "mruler=__all__" in location
+    assert "mdenomination=" in location
+    assert location.endswith(f"#collection-{collection_id}")

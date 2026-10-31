@@ -74,14 +74,22 @@ coins:
     # 面值层级：同一组里的面值视为同一层级（跨系列相似推荐用）
     denomination_tiers:
       - ["penny", "便士", "10 centimes", "10 分"]
-    # 候选池扫描：从收藏画像的尺寸出发，用目录页筛选外部铜币（参数即 Numista URL 参数）
-    explore_size_tolerance_mm: 2.0        # 与种子系列尺寸差 ≤ 此值才入候选池
-    explore_max_details: 20               # 单轮最多取几个候选的详情（每个详情另取一次年份）
+    # 候选池扫描：按目录页服务端筛选外部铜币（参数即 Numista URL 参数）
+    # 种子逻辑已移除，尺寸容差不再参与候选池筛选（保留备用）
+    # explore_size_tolerance_mm: 2.0      # 与种子系列尺寸差 ≤ 此值才入候选池
+    explore_max_details: 50               # 单轮最多取几个候选的详情（每个详情另取一次年份）
     explore_catalogue:                    # 目录筛选（后续换条件只改这里）
-      collectible_type: 1                 # st：1 = Standard circulation coins
-      year: "1800-2026"                   # a：年份区间
-      composition_id: 5                   # m：5 = Bronze
-      diameter_mm: "28-33"                # t：长度或直径（mm）
+      # 原条件（2026-10-29 按新页面替换，保留备用；来源：
+      # https://en.numista.com/catalogue/index.php?e=chine&r=&st=2&cat=y...）
+      # collectible_type: 1                 # st：1 = Standard circulation coins
+      # year: "1800-2026"                   # a：年份区间
+      # composition_id: 5                   # m：5 = Bronze
+      # diameter_mm: "28-33"                # t：长度或直径（mm）
+      issuer: chine                       # e：发行方 China
+      collectible_type: 2                 # st：2 = Circulating commemorative coins
+      year: ""                            # a：年份（空 = 不限）
+      composition_id: ""                  # m：材质（空 = 不限）
+      diameter_mm: ""                     # t：长度或直径（空 = 不限）
       per_page: 200                       # q：每页条数（10/20/50/100/200）
   # Numista 目录接口（铜币参考库：按国家/年份/面值查系列，按系列号查全部单版）
   # API Key 只写环境变量名，真实值放 .env（见 .env.example）
@@ -92,7 +100,7 @@ coins:
     max_series: 10                        # 单次搜索最多取几个系列的详情（Type Detail 有配额）
     timeout_seconds: 20
     monthly_limit: 1500                   # 每月请求上限（免费额度 2000，留 25% 余量）
-    max_requests_per_run: 40              # 单轮请求上限（一次 CLI 最多打几次接口）
+    max_requests_per_run: 100              # 单轮请求上限（一次 CLI 最多打几次接口）
     # 取类型页（各品相估值 + Frequency）走网页表格：numista.com 有 Cloudflare 校验，
     # 普通 HTTP 客户端一律 403，只能挂到你**自己用调试端口开的 Chrome** 上（见 README）
     cdp_url: http://127.0.0.1:9222

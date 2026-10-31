@@ -60,7 +60,7 @@ def test_fresh_db_has_is_graded_column(tmp_path):
 
     with db.connect() as conn:
         assert "is_graded" in _columns(conn, "coin_lots")
-        assert _version(conn) == "25"
+        assert _version(conn) == "29"
 
 
 def test_v21_db_upgrade_backfills_is_graded_locally(tmp_path):
@@ -93,7 +93,7 @@ def test_v21_db_upgrade_backfills_is_graded_locally(tmp_path):
             row["mxiqi_id"]: row["is_graded"]
             for row in conn.execute("SELECT mxiqi_id, is_graded FROM coin_lots")
         }
-        assert _version(conn) == "25"
+        assert _version(conn) == "29"
     assert rows == {"a": 1, "b": 0}
 
 
@@ -123,10 +123,107 @@ def test_v22_upgrade_is_idempotent(tmp_path):
     with db.connect() as conn:
         columns = [row["name"] for row in conn.execute("PRAGMA table_info(coin_lots)")]
         assert columns.count("is_graded") == 1
-        assert _version(conn) == "25"
+        assert _version(conn) == "29"
 
 
-# ---------------------------------------------------------------- 采集 → 落库
+def test_v27_adds_theme_columns_and_rebuilds_grade_index(tmp_path):
+    """v26 老库：补「主题 / 名称」两列（旧行空串），唯一索引从 3 列换成 5 列，重复启动不报错。"""
+    path = tmp_path / "old.db"
+    conn = sqlite3.connect(path)
+    conn.executescript(
+        """
+        CREATE TABLE schema_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+        INSERT INTO schema_meta (key, value) VALUES ('schema_version', '26');
+        CREATE TABLE coin_purchase_grades (
+          id           INTEGER PRIMARY KEY AUTOINCREMENT,
+          country      TEXT NOT NULL,
+          era          TEXT NOT NULL,
+          denomination TEXT NOT NULL,
+          grade        TEXT NOT NULL,
+          updated_at   TEXT NOT NULL
+        );
+        CREATE UNIQUE INDEX uidx_coin_purchase_grades
+          ON coin_purchase_grades(country, era, denomination);
+        INSERT INTO coin_purchase_grades (country, era, denomination, grade, updated_at)
+          VALUES ('英国', '1910', '1 便士', '好', '2026-10-01T00:00:00Z');
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    db.init_db(path)
+    db.init_db(path)
+
+    with db.connect() as conn:
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(coin_purchase_grades)")}
+        assert {"theme", "coin_name"} <= columns
+        rows = [tuple(row) for row in conn.execute("SELECT theme, coin_name FROM coin_purchase_grades")]
+        assert rows == [("", "")]
+        index_columns = [
+            row["name"]
+            for row in conn.execute("PRAGMA index_info(uidx_coin_purchase_grades)")
+        ]
+        assert index_columns == ["country", "era", "denomination", "theme", "coin_name"]
+        assert _version(conn) == "29"
+
+
+def test_v28_pushes_theme_to_members_and_drops_series_columns(tmp_path):
+    """v27 老库：系列级主题 / 名称复制给每个成员，然后删掉系列上的旧列；重复启动不报错。"""
+    path = tmp_path / "v27.db"
+    conn = sqlite3.connect(path)
+    conn.executescript(
+        """
+        CREATE TABLE schema_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+        INSERT INTO schema_meta (key, value) VALUES ('schema_version', '27');
+        CREATE TABLE coin_collection_series (
+          id             INTEGER PRIMARY KEY AUTOINCREMENT,
+          collection_key TEXT NOT NULL UNIQUE,
+          name           TEXT NOT NULL,
+          country        TEXT NOT NULL,
+          ruler          TEXT,
+          denomination   TEXT NOT NULL,
+          size_mm        REAL,
+          size_band      TEXT,
+          created_at     TEXT NOT NULL,
+          updated_at     TEXT NOT NULL,
+          theme          TEXT,
+          coin_name      TEXT
+        );
+        CREATE TABLE coin_collection_series_members (
+          id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+          collection_id       INTEGER NOT NULL REFERENCES coin_collection_series(id) ON DELETE CASCADE,
+          numista_series_id   INTEGER NOT NULL UNIQUE,
+          numista_series_name TEXT,
+          created_at          TEXT NOT NULL
+        );
+        INSERT INTO coin_collection_series
+          (collection_key, name, country, ruler, denomination, created_at, updated_at, theme, coin_name)
+          VALUES ('cn-2015-5', '中国 · 5 元', '中国', NULL, '5 元', '2026-10-01', '2026-10-01', '亚运会', '女排');
+        INSERT INTO coin_collection_series_members
+          (collection_id, numista_series_id, numista_series_name, created_at)
+          VALUES (1, 101, '女排', '2026-10-01'), (1, 102, '男排', '2026-10-01');
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    db.init_db(path)
+    db.init_db(path)
+
+    with db.connect() as conn:
+        series_columns = _columns(conn, "coin_collection_series")
+        assert "theme" not in series_columns
+        assert "coin_name" not in series_columns
+        assert {"theme", "coin_name"} <= _columns(conn, "coin_collection_series_members")
+        rows = [
+            tuple(row)
+            for row in conn.execute(
+                "SELECT numista_series_id, theme, coin_name "
+                "FROM coin_collection_series_members ORDER BY numista_series_id"
+            )
+        ]
+        assert rows == [(101, "亚运会", "女排"), (102, "亚运会", "女排")]
+        assert _version(conn) == "29"
 
 
 @pytest.fixture()

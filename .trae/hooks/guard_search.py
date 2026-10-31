@@ -1,11 +1,12 @@
 """PreToolUse(Grep|Glob|LS) 门禁：搜过的词 / 目录不再搜第二遍。
 
 三类判据：
-1. 同一 (工具, 关键词, 范围, 过滤项) 第二次 → 拒绝；
-2. 上一次搜的范围包含这一次（先搜仓库根、再搜子目录）→ 拒绝；
+1. 同一 (工具, 关键词, 范围, 过滤项) 第二次 → 追加提示、照常放行；
+2. 上一次搜的范围包含这一次（先搜仓库根、再搜子目录）→ 追加提示、照常放行；
 3. 其余放行，但每一次都落审计——搜索类动作以前完全没有记录，事后数不清本轮搜了几次。
 
-搜索没有输出体量问题（Grep 自带 head_limit），所以这里只判重、不判大小。
+只提示不拒绝：一次 deny 约等于一次完整重发（本仓库实测 5 万 token/条），
+一次重复搜索只有几百 token。搜索没有输出体量问题（Grep 自带 head_limit），所以这里只判重、不判大小。
 """
 
 from __future__ import annotations
@@ -45,17 +46,11 @@ def audit(tool: str, obj: str, decision: str, detail: str = "") -> None:
         pass
 
 
-def deny(reason: str) -> None:
+def hint(text: str) -> None:
+    """放行但补一句上下文：不拦这次，只纠正下一次的搜法。"""
     print(
         json.dumps(
-            {
-                "hookSpecificOutput": {
-                    "hookEventName": "PreToolUse",
-                    "permissionDecision": "deny",
-                    "permissionDecisionReason": reason,
-                    "additionalContext": reason,
-                }
-            },
+            {"hookSpecificOutput": {"hookEventName": "PreToolUse", "additionalContext": text}},
             ensure_ascii=False,
         )
     )
@@ -148,8 +143,8 @@ def main() -> None:
             None,
         )
         if previous is not None:
-            audit(tool, label(entry), "deny", f"repeat path={entry['path']} prev={previous.get('path')}")
-            deny(explain(entry, previous))
+            audit(tool, label(entry), "hint", f"repeat path={entry['path']} prev={previous.get('path')}")
+            hint("已放行，仅提示：" + explain(entry, previous))
             return
 
         searches.append(entry)

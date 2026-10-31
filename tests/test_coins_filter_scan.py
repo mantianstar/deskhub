@@ -185,3 +185,19 @@ def test_full_scan_resets_progress_when_category_done(temp_db, monkeypatch):
 
     assert fake.requested == [*range(1, 21), 22, 23]  # 顶部 20 页 + 深处续扫到空页
     assert repository.coin_filter_scan_pages() == {"11010": 1}
+
+
+def test_allocate_pages_follows_yesterday_weights():
+    pages = filter_scan.allocate_pages(
+        {"11070": 1039, "11020": 236, "11040": 57, "11050": 38, "11030": 3, "11010": 1, "11060": 0},
+        420,
+        minimum=1,
+    )
+    assert sum(pages.values()) == 420  # 配额不超发
+    assert pages["11070"] > pages["11020"] > pages["11040"] > pages["11050"]
+    assert pages["11060"] == 1  # 昨日无成交也保底 1 页
+
+
+def test_allocate_pages_splits_evenly_without_weights():
+    assert filter_scan.allocate_pages({"a": 0, "b": 0}, 9, minimum=1) == {"a": 5, "b": 4}
+    assert filter_scan.allocate_pages({"a": 1}, 0) == {"a": 0}

@@ -62,9 +62,9 @@ async def run_coins_finalize(config: Config) -> str:
     )
 
 
-async def run_coins_filter_scan(config: Config) -> str:
-    """扫 home.filter 给已入库拍品回填热度（只更新库里已有的拍品）。"""
-    result = await coins_filter_scan.scan(config)
+async def run_coins_filter_scan(config: Config, *, full: bool = False) -> str:
+    """扫 home.filter 给已入库拍品回填热度（只更新库里已有的拍品；`full=True` 走深扫续扫）。"""
+    result = await coins_filter_scan.scan(config, full=full)
     if result.stopped == "cooldown":
         return f"home.filter 扫描冷却中（{coins_filter_scan.COOLDOWN_HOURS} 小时内限速），跳过"
     if result.status == "skipped":

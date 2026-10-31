@@ -93,7 +93,7 @@ Numista 类型页（估值 / 稀有度）────────┘            
 | 模块 | 关键函数 |
 |---|---|
 | `app/coins/collection.py` | `build_year_specs`、`build_profile(s)`、`load_profiles`、`load_explore_profiles` |
-| `app/coins/explore.py` | `build_seeds`、`match_seed`、`scan_candidates`、`load_candidate_profiles`、`adopt_candidate` |
+| `app/coins/explore.py` | `scan_candidates`、`load_candidate_profiles`、`adopt_candidate` |
 | `app/coins/recommend.py` | `build_recommendations`、`year_labels`、`match_lots`、`load_recommendations` |
 | `app/coins/search.py` | `search_lots`（全局拍品搜索：FTS 候选 + 推荐标签 + 排序） |
 | `app/coins/matcher.py` | `match_lot`、`rematch_all` |

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-SCHEMA_VERSION = "25"
+SCHEMA_VERSION = "29"
 
 # 所有时间列存 UTC ISO8601 字符串（SQLite 无原生时间类型）
 DDL = """
@@ -282,6 +282,10 @@ CREATE TABLE IF NOT EXISTS coin_series (
   catalog_no        TEXT,                      -- 目录号（全部引用，如 KM#790,Sp#3961）
   comments          TEXT,                      -- 系列备注（Numista type 的 comments）
   mints             TEXT,                      -- 造币厂（JSON 数组，如 ["Royal Mint (Tower Hill)"]）
+  series            TEXT,                      -- 所属系列（JSON 数组）
+  commemorated_topic TEXT,                     -- 纪念主题
+  issue_series      TEXT NOT NULL DEFAULT '',  -- 发行系列（人工维护，采集不覆盖）
+  issue_theme       TEXT NOT NULL DEFAULT '',  -- 发行主题（人工维护，采集不覆盖）
   fetched_at        TEXT    NOT NULL
 );
 
@@ -312,6 +316,10 @@ CREATE TABLE IF NOT EXISTS coin_series_cn (
   catalog_no        TEXT,
   comments          TEXT,
   mints             TEXT,
+  series            TEXT,
+  commemorated_topic TEXT,
+  issue_series      TEXT NOT NULL DEFAULT '',
+  issue_theme       TEXT NOT NULL DEFAULT '',
   fetched_at        TEXT    NOT NULL
 );
 
@@ -399,10 +407,12 @@ CREATE TABLE IF NOT EXISTS coin_purchase_grades (
   era          TEXT NOT NULL,   -- 年份 / 年号（与 coin_orders.era 同源）
   denomination TEXT NOT NULL,
   grade        TEXT NOT NULL CHECK (grade IN ('好','普通','差')),
-  updated_at   TEXT NOT NULL
+  updated_at   TEXT NOT NULL,
+  theme        TEXT NOT NULL DEFAULT '',  -- 纪念币主题（共享分组字段，空串 = 未区分）
+  coin_name    TEXT NOT NULL DEFAULT ''   -- 纪念币名称（单枚 / 单套，空串 = 未区分）
 );
 CREATE UNIQUE INDEX IF NOT EXISTS uidx_coin_purchase_grades
-  ON coin_purchase_grades(country, era, denomination);
+  ON coin_purchase_grades(country, era, denomination, theme, coin_name);
 
 -- 收藏系列（spec §14.17）：Numista 系列划分过细，把「同执政者同面值、尺寸差 ≤ 2mm」的
 -- 多个 Numista series 手工合并成一个收藏系列。`collection_key` 是自定义 series id。
@@ -420,11 +430,14 @@ CREATE TABLE IF NOT EXISTS coin_collection_series (
 );
 
 -- 收藏系列 ↔ Numista 系列的手工映射（一个 Numista series 只能属于一个收藏系列）
+-- 主题 / 名称挂在成员上：同一收藏系列可含多个成员（如 女排 / 男排），画像与品相匹配都以成员为单位。
 CREATE TABLE IF NOT EXISTS coin_collection_series_members (
   id                  INTEGER PRIMARY KEY AUTOINCREMENT,
   collection_id       INTEGER NOT NULL REFERENCES coin_collection_series(id) ON DELETE CASCADE,
   numista_series_id   INTEGER NOT NULL UNIQUE,
   numista_series_name TEXT,
+  theme               TEXT    NOT NULL DEFAULT '',  -- 纪念币主题（空串 = 未区分）
+  coin_name           TEXT    NOT NULL DEFAULT '',  -- 纪念币名称（空串 = 未区分）
   created_at          TEXT    NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_coin_collection_members
@@ -621,6 +634,9 @@ class CoinOrderCombo:
     denomination: str
     order_count: int
     grade: str | None
+    # 纪念币主题 / 名称：订单侧无此概念，恒为空串，匹配时由品相行的键决定
+    theme: str = ""
+    coin_name: str = ""
     # 派生展示字段（不落库）：命中的收藏系列名，按国家 + 面值匹配
     collection_name: str = ""
     # 派生展示字段（不落库）：日本年号的「年号 + 年号年份」（如 明治六年），无公历年为空
@@ -629,7 +645,7 @@ class CoinOrderCombo:
 
 @dataclass
 class CoinPurchaseGrade:
-    """人工录入的一条品相（`(country, era, denomination)` 唯一）。"""
+    """人工录入的一条品相（`(country, era, denomination, theme, coin_name)` 唯一）。"""
 
     id: int | None
     country: str
@@ -637,6 +653,9 @@ class CoinPurchaseGrade:
     denomination: str
     grade: str
     updated_at: str
+    # 纪念币主题 / 名称（空串 = 未区分，沿用旧的「国家 + 年份 + 面值」口径）
+    theme: str = ""
+    coin_name: str = ""
 
 
 @dataclass
@@ -791,6 +810,10 @@ class CoinSeries:
     comments: str | None
     mints: list[str]
     fetched_at: str
+    series: list[str] = field(default_factory=list)
+    commemorated_topic: str | None = None
+    issue_series: str = ""  # 发行系列（人工维护，采集不覆盖）
+    issue_theme: str = ""  # 发行主题（人工维护，采集不覆盖）
 
 
 @dataclass
@@ -962,13 +985,16 @@ class CoinCollectionSeries:
 
 @dataclass
 class CoinCollectionMember:
-    """收藏系列 ↔ Numista 系列的手工映射。"""
+    """收藏系列 ↔ Numista 系列的手工映射（画像 / 品相匹配的最小单元）。"""
 
     id: int | None
     collection_id: int
     numista_series_id: int
     numista_series_name: str | None
     created_at: str
+    # 纪念币主题 / 名称（空串 = 未区分，日本 / 南非等旧数据均为空）
+    theme: str = ""
+    coin_name: str = ""
 
 
 @dataclass(frozen=True)
@@ -999,9 +1025,26 @@ class CoinYearSpec:
         }
 
 
+@dataclass(frozen=True)
+class CoinYearEntry:
+    """画像里的一枚「(年份, 名称)」：唯一键，同一年不同名称各算一枚。"""
+
+    year: int
+    name: str
+    spec: CoinYearSpec
+    status: str = "missing"  # owned | missing | upgrade
+
+    @property
+    def label(self) -> str:
+        return f"{self.year}({self.name})" if self.name else str(self.year)
+
+
 @dataclass
 class CoinCollectionProfile:
-    """一个收藏系列的画像（spec §14.17 第 5 条）。"""
+    """一个收藏系列的画像（spec §14.17 第 5 条）；成员只用于品相匹配与名称标注。
+
+    成员级画像（`member` 非空）仍由 `/coins/collections` 编辑区使用。
+    """
 
     collection: CoinCollectionSeries
     member_series_ids: list[int]
@@ -1011,12 +1054,69 @@ class CoinCollectionProfile:
     owned_years: list[int]
     missing_years: list[int]
     upgrade_years: list[int]
-    year_specs: dict[int, list[CoinYearSpec]]
+    year_specs: dict[tuple[int, str], CoinYearSpec]
     size_mm: float | None
     size_band: str | None
+    member: CoinCollectionMember | None = None
+    year_names: dict[int, str] = field(default_factory=dict)  # 年份 → 该年发行量最大条目的名称
+    commemorated_topic: str = ""  # Numista 系列的纪念主题（相似推荐搜索词用）
+    issue_series: str = ""  # 纪念币的发行系列（匹配品相用）
+    issue_theme: str = ""  # 纪念币的发行主题（匹配品相与年份标注用）
+    is_commemorative: bool = False  # 货币品类：Numista object_type 含「纪念」
+    owned_keys: set[tuple[int, str]] = field(default_factory=set)  # 已有品相的 (年份, 名称)
+    upgrade_keys: set[tuple[int, str]] = field(default_factory=set)  # 品相为「差」的 (年份, 名称)
 
-    def year_specs_dict(self) -> dict[str, list[dict]]:
-        return {str(year): [spec.as_dict() for spec in specs] for year, specs in self.year_specs.items()}
+    @property
+    def entries(self) -> list[CoinYearEntry]:
+        """(年份, 名称) 唯一的一组条目，页面按年份并排展示。"""
+        rows: list[CoinYearEntry] = []
+        for (year, name), spec in self.year_specs.items():
+            if (year, name) in self.upgrade_keys:
+                status = "upgrade"
+            elif (year, name) in self.owned_keys:
+                status = "owned"
+            else:
+                status = "missing"
+            rows.append(CoinYearEntry(year, name, spec, status))
+        return rows
+
+    @property
+    def owned_entries(self) -> list[CoinYearEntry]:
+        return [entry for entry in self.entries if entry.status in ("owned", "upgrade")]
+
+    @property
+    def missing_entries(self) -> list[CoinYearEntry]:
+        return [entry for entry in self.entries if entry.status == "missing"]
+
+    @property
+    def upgrade_entries(self) -> list[CoinYearEntry]:
+        return [entry for entry in self.entries if entry.status == "upgrade"]
+
+    @property
+    def theme(self) -> str:
+        return self.issue_theme
+
+    @property
+    def coin_name(self) -> str:
+        return ""
+
+    @property
+    def display_name(self) -> str:
+        """画像卡标题：成员级取成员名，收藏系列级即收藏系列名。"""
+        if self.member and self.member.numista_series_name:
+            return self.member.numista_series_name
+        return self.collection.name
+
+    def year_label(self, year: int) -> str:
+        """年份标签：有成员名称时 `1995(金丝猴)`，否则只显示年份。"""
+        name = (self.year_names.get(year) or "").strip()
+        return f"{year}({name})" if name else str(year)
+
+    def year_specs_dict(self) -> dict[str, dict]:
+        return {
+            (f"{year}({name})" if name else str(year)): spec.as_dict()
+            for (year, name), spec in self.year_specs.items()
+        }
 
 
 @dataclass(frozen=True)
@@ -1072,6 +1172,11 @@ class CoinRecommendation:
     # 相似推荐卡最多展示几条拍品：第一轮 1 条，第二轮兜底卡按剩余名额多条
     lot_limit: int = 1
     matched_lots: list[CoinTodayLot] = field(default_factory=list)
+    # 成员级名称（如「女排」）：同收藏系列下多个成员共用国家 / 面值，靠名称区分
+    coin_name: str = ""
+    commemorated_topic: str = ""  # 纪念主题（相似推荐搜索词用）
+    issue_theme: str = ""  # 发行主题（纪念币精准匹配用；候选池通常为空）
+    is_commemorative: bool = False  # 货币品类（面值探索搜索词补「纪念币」）
 
     @property
     def year_label(self) -> str:

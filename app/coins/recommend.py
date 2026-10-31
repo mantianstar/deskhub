@@ -25,6 +25,7 @@ from app.coins import translate
 from app.config import CoinCollectionConfig, Config
 from app.models import (
     CoinCollectionProfile,
+    CoinCollectionSeries,
     CoinLot,
     CoinRecommendation,
     CoinTodayLot,
@@ -166,12 +167,55 @@ def _sensitivity(spec: CoinYearSpec | None) -> float:
 
 
 def _spec(profile: CoinCollectionProfile, year: int) -> CoinYearSpec | None:
-    specs = profile.year_specs.get(year) or []
-    return specs[0] if specs else None
+    specs = [
+        spec for (spec_year, _), spec in profile.year_specs.items() if spec_year == year
+    ]
+    return max(specs, key=lambda spec: spec.mintage or 0) if specs else None
 
 
-def _keyword(profile: CoinCollectionProfile, labels: list[str], denomination: str) -> str:
-    parts = [profile.collection.country.strip(), labels[0] if labels else "", denomination.strip()]
+def _keyword(
+    profile: CoinCollectionProfile, labels: list[str], denomination: str, coin_name: str = ""
+) -> str:
+    parts = [
+        profile.collection.country.strip(),
+        (coin_name or "").strip(),
+        labels[0] if labels else "",
+        denomination.strip(),
+    ]
+    return " ".join(part for part in parts if part)
+
+
+def _similar_keyword(
+    collection: CoinCollectionSeries,
+    commemorated_topic: str,
+    labels: list[str],
+    denomination: str,
+    coin_name: str = "",
+    *,
+    with_year: bool = True,
+    commemorative: bool = False,
+) -> str:
+    """相似推荐搜索词：纪念币用「国家 主题 纪念币」（国家可省），其余沿用通用拼法。
+
+    面值探索（`with_year=False`）无主题时，纪念币品类也补「纪念币」后缀。
+    """
+    topic = (commemorated_topic or "").strip()
+    if topic:
+        suffix = "" if topic.endswith("纪念币") else " 纪念币"
+        return " ".join(
+            part for part in (collection.country.strip(), f"{topic}{suffix}") if part
+        )
+    if with_year:
+        parts = [
+            collection.country.strip(),
+            (coin_name or "").strip(),
+            labels[0] if labels else "",
+            denomination.strip(),
+        ]
+    else:
+        parts = [collection.country.strip(), denomination.strip()]
+        if commemorative:
+            parts.append("纪念币")
     return " ".join(part for part in parts if part)
 
 
@@ -191,8 +235,7 @@ def _profile_size(profile: CoinCollectionProfile) -> float | None:
         return profile.collection.size_mm
     sizes = [
         spec.size_mm
-        for specs in profile.year_specs.values()
-        for spec in specs
+        for spec in profile.year_specs.values()
         if spec.size_mm is not None
     ]
     return round(statistics.median(sizes), 2) if sizes else None
@@ -285,6 +328,7 @@ def build_recommendations(
         for year in profile.missing_years:
             spec = _spec(profile, year)
             labels = year_labels(profile, year, spec)
+            coin_name = profile.year_names.get(year, "")
             score = round(
                 _position_weight(profile, year, profiles) * scarcity_weight(spec, rarity_floor), 6
             )
@@ -294,16 +338,19 @@ def build_recommendations(
                     collection=profile.collection,
                     year=year,
                     year_labels=labels,
-                    keyword=_keyword(profile, labels, profile.collection.denomination),
+                    keyword=_keyword(profile, labels, profile.collection.denomination, coin_name),
                     score=score,
                     reason="缺失年份",
                     spec=spec,
+                    coin_name=coin_name,
+                    issue_theme=profile.issue_theme,
+                    is_commemorative=profile.is_commemorative,
                 )
             )
     missing_items.sort(key=lambda item: (-item.score, item.collection.name, item.year))
     for item in missing_items:
         items.append(item)
-        existing.add((item.collection.collection_key, item.year))
+        existing.add((item.collection.collection_key, item.coin_name, item.year))
 
     # 优先级 2：差品升级（每个系列最多 top 个）
     upgrade_items: list[CoinRecommendation] = []
@@ -312,6 +359,7 @@ def build_recommendations(
         for year in profile.upgrade_years:
             spec = _spec(profile, year)
             labels = year_labels(profile, year, spec)
+            coin_name = profile.year_names.get(year, "")
             score = round(_sensitivity(spec) * scarcity_weight(spec, rarity_floor), 6)
             per_series.append(
                 CoinRecommendation(
@@ -319,17 +367,20 @@ def build_recommendations(
                     collection=profile.collection,
                     year=year,
                     year_labels=labels,
-                    keyword=_keyword(profile, labels, profile.collection.denomination),
+                    keyword=_keyword(profile, labels, profile.collection.denomination, coin_name),
                     score=score,
                     reason="差品升级",
                     spec=spec,
+                    coin_name=coin_name,
+                    issue_theme=profile.issue_theme,
+                    is_commemorative=profile.is_commemorative,
                 )
             )
         per_series.sort(key=lambda item: (-item.score, item.year))
         upgrade_items.extend(per_series[:top_upgrades_per_series])
     upgrade_items.sort(key=lambda item: (-item.score, item.collection.name, item.year))
     for item in upgrade_items:
-        key = (item.collection.collection_key, item.year)
+        key = (item.collection.collection_key, item.coin_name, item.year)
         if key in existing:
             continue
         items.append(item)
@@ -342,13 +393,14 @@ def build_recommendations(
 
     explore = explore_profiles if explore_profiles is not None else profiles
     candidates: list[tuple[float, float, CoinRecommendation]] = []
-    seen: set[tuple[str, int]] = set()
+    seen: set[tuple[str, str, int]] = set()
     for profile in profiles:
         for other, size_diff in similar_profiles(
             profile, explore, denomination_tiers=denomination_tiers
         ):
             for year in other.missing_years:
-                key = (other.collection.collection_key, year)
+                coin_name = other.year_names.get(year, "")
+                key = (other.collection.collection_key, coin_name, year)
                 if key in existing or key in seen:
                     continue
                 spec = _spec(other, year)
@@ -362,10 +414,20 @@ def build_recommendations(
                             collection=other.collection,
                             year=year,
                             year_labels=labels,
-                            keyword=_keyword(other, labels, other.collection.denomination),
+                            keyword=_similar_keyword(
+                                other.collection,
+                                other.commemorated_topic or other.issue_theme,
+                                labels,
+                                other.collection.denomination,
+                                coin_name,
+                            ),
                             score=round(1 / (size_diff + 1), 6),
                             reason="年份匹配",
                             spec=spec,
+                            coin_name=coin_name,
+                            commemorated_topic=other.commemorated_topic,
+                            issue_theme=other.issue_theme,
+                            is_commemorative=other.is_commemorative,
                         ),
                     )
                 )
@@ -385,17 +447,22 @@ def build_recommendations(
                     collection=item.collection,
                     year=item.year,
                     year_labels=item.year_labels,
-                    keyword=" ".join(
-                        part
-                        for part in [
-                            item.collection.country.strip(),
-                            item.collection.denomination.strip(),
-                        ]
-                        if part
+                    keyword=_similar_keyword(
+                        item.collection,
+                        item.commemorated_topic or item.issue_theme,
+                        item.year_labels,
+                        item.collection.denomination,
+                        item.coin_name,
+                        with_year=False,
+                        commemorative=item.is_commemorative,
                     ),
                     score=item.score,
                     reason="面值探索",
                     spec=item.spec,
+                    coin_name=item.coin_name,
+                    commemorated_topic=item.commemorated_topic,
+                    issue_theme=item.issue_theme,
+                    is_commemorative=item.is_commemorative,
                 ),
             )
         )
@@ -490,7 +557,13 @@ class LotMatch:
 
 
 def lot_matches(item: CoinRecommendation, lot: CoinLot | CoinTodayLot) -> bool:
-    """拍品标题必须同时命中国家、面值；P5 面值探索不卡年份。"""
+    """拍品标题必须同时命中国家、面值；纪念币再卡主题，P5 面值探索不卡年份。
+
+    纪念币按品类单独判定：相似推荐（候选池发行主题多为空）用纪念主题 `commemorated_topic`，
+    精准匹配用发行主题 `issue_theme`；主题是硬门槛，必须先于 P5 的「不卡年份」放行。
+    收藏系列填了名称（如「女排」）时，名称是精准匹配的硬门槛——同名面值下的一年多主题
+    只能靠名称区分；非纪念币且名称未填的系列退回「国家 + 面值 + 年份」。
+    """
     title = lot.title
     if not textmatch.contains(title, item.collection.country):
         return False
@@ -498,6 +571,13 @@ def lot_matches(item: CoinRecommendation, lot: CoinLot | CoinTodayLot) -> bool:
         textmatch.contains(title, variant)
         for variant in denomination_variants(item.collection.denomination)
     ):
+        return False
+    theme = (item.commemorated_topic if item.priority >= 4 else item.issue_theme) or ""
+    theme = theme.strip()
+    if theme and not textmatch.contains(title, theme):
+        return False
+    coin_name = (item.coin_name or "").strip()
+    if coin_name and not textmatch.contains(title, coin_name):
         return False
     if item.priority == 5:
         return True

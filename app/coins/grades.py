@@ -89,14 +89,26 @@ _COLONIAL_PREFIXES = (
 _COUNTRY_ALIASES = {"泽西岛": "泽西", "根西岛": "根西", "印度 - British": "印度"}
 
 
+_COUNTRY_PAREN = re.compile(r"[（(][^）)]*[）)]")
+_CHINA_COUNTRY_NAMES = {"中国", "中华人民共和国", "china", "people's republic of china"}
+
+
 def normalize_country(value: str | None) -> str:
-    """国家：去「X属」殖民前缀（`英属新西兰` → `新西兰`）+ 别名（`泽西岛` → `泽西`）；去掉后为空则原样保留。"""
+    """国家：去逗号后的限定语与括号注记（`中国, People's Republic of` → `中国`、
+    `多米尼加共和国 (1844-date)` → `多米尼加共和国`），再去「X属」殖民前缀与别名。"""
     text = (value or "").strip()
+    text = re.split(r"[,，]", text, maxsplit=1)[0].strip()
+    text = _COUNTRY_PAREN.sub("", text).strip()
     for prefix in _COLONIAL_PREFIXES:
         if text.startswith(prefix) and len(text) > len(prefix):
             text = text[len(prefix) :].strip()
             break
     return _COUNTRY_ALIASES.get(text, text)
+
+
+def is_china_country(value: str | None) -> bool:
+    """国家是否为中国（`normalize_country` 之后判断，兼容中英文写法）。"""
+    return normalize_country(value).lower() in _CHINA_COUNTRY_NAMES
 
 
 def _era_number(text: str) -> int | None:
@@ -220,11 +232,19 @@ def normalize_denomination(value: str | None) -> str:
     return text
 
 
-def normalize_key(country: str | None, era: str | None, denomination: str | None) -> tuple[str, str, str]:
+def normalize_key(
+    country: str | None,
+    era: str | None,
+    denomination: str | None,
+    theme: str | None = None,
+    coin_name: str | None = None,
+) -> tuple[str, str, str, str, str]:
     return (
         normalize_country(country),
         normalize_year(era),
         normalize_denomination(denomination),
+        (theme or "").strip(),
+        (coin_name or "").strip(),
     )
 
 
@@ -234,20 +254,21 @@ def build_combos(
 ) -> list[CoinOrderCombo]:
     """历史订单按「国家 + 年份 + 面值」（统一后）去重，LEFT JOIN 已录品相。
 
-    只取三者齐全的组合（缺一的行拼不出可辨认的币种，见 spec §14.16）；
+    订单侧没有主题 / 名称（恒为空串），品相侧的具名行会另起一行，与旧的空串行并存。
+    只取国家 / 年份 / 面值三者齐全的组合（缺一的行拼不出可辨认的币种，见 spec §14.16）；
     已录品相但**没有对应订单**的组合（手工新增的）也作为一行列出（`order_count = 0`）。
     """
-    counts: dict[tuple[str, str, str], int] = {}
+    counts: dict[tuple[str, str, str, str, str], int] = {}
     for order in orders:
         key = normalize_key(order.country, order.era, order.denomination)
-        if not all(key):
+        if not all(key[:3]):
             continue
         counts[key] = counts.get(key, 0) + 1
 
-    graded: dict[tuple[str, str, str], str] = {}
+    graded: dict[tuple[str, str, str, str, str], str] = {}
     for grade in grades:
-        key = normalize_key(grade.country, grade.era, grade.denomination)
-        if all(key):
+        key = normalize_key(grade.country, grade.era, grade.denomination, grade.theme, grade.coin_name)
+        if all(key[:3]):
             graded[key] = grade.grade
 
     return [
@@ -257,6 +278,8 @@ def build_combos(
             denomination=key[2],
             order_count=counts.get(key, 0),
             grade=graded.get(key),
+            theme=key[3],
+            coin_name=key[4],
             era_label=japanese_era_label(key[0], key[1]),
         )
         for key in sorted(set(counts) | set(graded))

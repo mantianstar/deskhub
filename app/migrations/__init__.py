@@ -28,6 +28,10 @@ from app.migrations import (
     v22,
     v23,
     v24,
+    v26,
+    v27,
+    v28,
+    v29,
 )
 
 # (from_version, to_version) -> {表名: {列名: 列定义}}
@@ -94,6 +98,60 @@ COLUMN_MIGRATIONS: dict[tuple[str, str], dict[str, dict[str, str]]] = {
         "coin_categories": v23.COLUMNS["coin_categories"],
     },
     ("23", "25"): v24.COLUMNS,
+    # v26 给系列加「所属系列 / 纪念主题」两列；跨版本升级把中间版本的加列一并带上
+    ("20", "26"): {
+        "coin_lots": {
+            **v21.COLUMNS["coin_lots"],
+            **v22.COLUMNS["coin_lots"],
+            **v24.COLUMNS["coin_lots"],
+        },
+        "coin_categories": v23.COLUMNS["coin_categories"],
+        **v26.COLUMNS,
+    },
+    ("21", "26"): {
+        "coin_lots": {**v22.COLUMNS["coin_lots"], **v24.COLUMNS["coin_lots"]},
+        "coin_categories": v23.COLUMNS["coin_categories"],
+        **v26.COLUMNS,
+    },
+    ("22", "26"): {
+        "coin_lots": v24.COLUMNS["coin_lots"],
+        "coin_categories": v23.COLUMNS["coin_categories"],
+        **v26.COLUMNS,
+    },
+    ("23", "26"): {**v24.COLUMNS, **v26.COLUMNS},
+    ("24", "26"): v26.COLUMNS,
+    ("25", "26"): v26.COLUMNS,
+    # v27 给品相表 / 收藏系列加「主题 / 名称」两列；跨版本升级把中间版本的加列一并带上
+    ("20", "27"): {
+        "coin_lots": {
+            **v21.COLUMNS["coin_lots"],
+            **v22.COLUMNS["coin_lots"],
+            **v24.COLUMNS["coin_lots"],
+        },
+        "coin_categories": v23.COLUMNS["coin_categories"],
+        **v26.COLUMNS,
+        **v27.COLUMNS,
+    },
+    ("21", "27"): {
+        "coin_lots": {**v22.COLUMNS["coin_lots"], **v24.COLUMNS["coin_lots"]},
+        "coin_categories": v23.COLUMNS["coin_categories"],
+        **v26.COLUMNS,
+        **v27.COLUMNS,
+    },
+    ("22", "27"): {
+        "coin_lots": v24.COLUMNS["coin_lots"],
+        "coin_categories": v23.COLUMNS["coin_categories"],
+        **v26.COLUMNS,
+        **v27.COLUMNS,
+    },
+    ("23", "27"): {**v24.COLUMNS, **v26.COLUMNS, **v27.COLUMNS},
+    ("24", "27"): {**v26.COLUMNS, **v27.COLUMNS},
+    ("25", "27"): {**v26.COLUMNS, **v27.COLUMNS},
+    ("26", "27"): v27.COLUMNS,
+    # v28 把主题 / 名称下推到收藏系列成员
+    ("26", "28"): {**v27.COLUMNS, **v28.COLUMNS},
+    ("27", "28"): v28.COLUMNS,
+    ("28", "29"): v29.COLUMNS,
 }
 
 # (from_version, to_version) -> 建表之外还要跑一次的数据回填
@@ -110,7 +168,54 @@ DATA_MIGRATIONS: dict[tuple[str, str], Callable[[sqlite3.Connection], None]] = {
     ("21", "24"): v22.backfill_is_graded,
     ("20", "25"): v22.backfill_is_graded,
     ("21", "25"): v22.backfill_is_graded,
+    ("20", "26"): v26.upgrade_from_20,
+    ("21", "26"): v26.upgrade_from_21,
+    ("22", "26"): v26.cleanup_china_and_countries,
+    ("23", "26"): v26.cleanup_china_and_countries,
+    ("24", "26"): v26.cleanup_china_and_countries,
+    ("25", "26"): v26.cleanup_china_and_countries,
+    ("20", "27"): v27.upgrade_from_20,
+    ("21", "27"): v27.upgrade_from_21,
+    ("22", "27"): v27.upgrade_from_22,
+    ("23", "27"): v27.upgrade_from_22,
+    ("24", "27"): v27.upgrade_from_22,
+    ("25", "27"): v27.upgrade_from_22,
+    ("26", "27"): v27.upgrade_from_26,
+    ("26", "28"): v28.upgrade_from_26,
+    ("27", "28"): v28.push_down,
 }
+
+
+def _then_steps(
+    first: Callable[[sqlite3.Connection], None],
+    second: Callable[[sqlite3.Connection], None],
+) -> Callable[[sqlite3.Connection], None]:
+    """把两段数据迁移按顺序串起来（跨版本直升级用）。"""
+
+    def run(conn: sqlite3.Connection) -> None:
+        first(conn)
+        second(conn)
+
+    return run
+
+
+# 跨版本直升级到 v28：加列沿用 v27 的组合，数据迁移先跑 v27 的回填，再下推主题 / 名称
+for _from in ("20", "21", "22", "23", "24", "25"):
+    COLUMN_MIGRATIONS[(_from, "28")] = {
+        **COLUMN_MIGRATIONS[(_from, "27")],
+        **v28.COLUMNS,
+    }
+    DATA_MIGRATIONS[(_from, "28")] = _then_steps(
+        DATA_MIGRATIONS[(_from, "27")], v28.push_down
+    )
+
+# 跨版本直升级到 v29：沿用 v28 的加列与回填，再补发行系列 / 发行主题两列
+for _from in ("20", "21", "22", "23", "24", "25", "26", "27"):
+    COLUMN_MIGRATIONS[(_from, "29")] = {
+        **COLUMN_MIGRATIONS[(_from, "28")],
+        **v29.COLUMNS,
+    }
+    DATA_MIGRATIONS[(_from, "29")] = DATA_MIGRATIONS[(_from, "28")]
 
 
 def apply_columns(conn: sqlite3.Connection, tables: dict[str, dict[str, str]]) -> list[str]:

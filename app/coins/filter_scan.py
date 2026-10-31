@@ -35,6 +35,7 @@ RUN_KIND = "home_filter"
 PROVIDER = "mxiqi_filter"
 PARENT_CODE = "11000"
 PAGES_PER_CATE = 20
+MIN_DEEP_PAGES = 5  # 深扫按未覆盖成交比例分配时，每个分类保底页数
 FULL_MAX_PAGES = 500  # 站点 totalSize 封顶 10000 / 21 条每页 = 476 页，500 只是兜底
 PAGE_INTERVAL_SECONDS = 0.5
 PAGE_JITTER_SECONDS = 0.2
@@ -157,6 +158,34 @@ def _day_start(config: Config) -> str:
     )
 
 
+def allocate_pages(weights: dict[str, int], budget: int, *, minimum: int = 0) -> dict[str, int]:
+    """按权重把 `budget` 页分给各分类（最大余数法），每类先保底 `minimum` 页。"""
+    cates = list(weights)
+    if not cates or budget <= 0:
+        return {cate: 0 for cate in cates}
+    floor_min = min(minimum, budget // len(cates))
+    pages = {cate: floor_min for cate in cates}
+    rest = budget - floor_min * len(cates)
+    if rest <= 0:
+        return pages
+    total = sum(max(0, weights[cate]) for cate in cates)
+    if total > 0:
+        shares = {cate: rest * max(0, weights[cate]) / total for cate in cates}
+    else:  # 昨日没有成交：均分
+        shares = {cate: rest / len(cates) for cate in cates}
+    for cate in cates:
+        pages[cate] += int(shares[cate])
+    leftover = rest - sum(int(shares[cate]) for cate in cates)
+    for cate in sorted(cates, key=lambda c: shares[c] - int(shares[c]), reverse=True)[:leftover]:
+        pages[cate] += 1
+    return pages
+
+
+def _gap_weights() -> dict[str, int]:
+    """各二级分类尚未回填出价人数的成交拍品数，作为深扫配额权重（缺口越大多分页）。"""
+    return repository.count_uncovered_sold_by_category()
+
+
 def _home_filter_runs(limit: int = 50) -> list[CoinFetchRun]:
     return [run for run in repository.latest_coin_fetch_runs(limit) if run.kind == RUN_KIND]
 
@@ -268,8 +297,8 @@ async def scan(
 ) -> ScanResult:
     """扫硬币二级分类的 `home.filter`，回填已入库拍品的热度。
 
-    `full=True` 先扫各分类前 `pages_per_cate` 页，剩余配额再按二级分类断点续扫
-    深处（约 3000+ 页，受日配额约束），配额用尽后下一轮从断点继续。默认每个
+    `full=True` 先扫各分类前 `pages_per_cate` 页，剩余配额按**未回填出价人数的成交数**
+    分配后再按二级分类断点续扫深处（约 3000+ 页），配额用尽后下一轮从断点继续。默认每个
     二级分类只扫前 `pages_per_cate` 页。增量模式用「上次成功扫描开始时间 - 1h」
     做停止条件。
     """
@@ -300,6 +329,17 @@ async def _scan(
     cutoff = None if full else _incremental_cutoff()
     used = repository.count_api_calls_since(PROVIDER, _day_start(config))
 
+    # 全量模式的深扫配额按「未回填出价人数的成交数」分配给各二级分类：缺口越大的分类
+    # 分到越多页，避免有库存但近期没成交的分类长期停在顶部页
+    deep_pages: dict[str, int] = {}
+    if full:
+        weights = _gap_weights()
+        pool = max(DAILY_QUOTA - used - pages_per_cate * len(cates), 0)
+        deep_pages = allocate_pages(
+            {cate: weights.get(cate, 0) for cate in cates}, pool, minimum=MIN_DEEP_PAGES
+        )
+        logger.info("深扫配额按未覆盖成交数分配（可用 %d 页）：%s", pool, deep_pages)
+
     def budget() -> None:
         nonlocal used
         if used >= DAILY_QUOTA:
@@ -326,9 +366,10 @@ async def _scan(
                 stale_pages = 0
                 if phase == "top":  # 每轮必扫：最新拍品在最前面
                     page_nums = range(1, pages_per_cate + 1)
-                else:  # 深处续扫：从断点接着往下，顶部页不推进断点
+                else:  # 深处续扫：从断点接着往下，顶部页不推进断点；只扫本类分到的页数
                     start = max(resume_at.get(cate, 1), pages_per_cate + 1)
-                    page_nums = range(start, FULL_MAX_PAGES + 1)
+                    stop = min(FULL_MAX_PAGES, start + deep_pages.get(cate, 0) - 1)
+                    page_nums = range(start, stop + 1)
                 for page in page_nums:
                     try:
                         raw_items = await _fetch_page(api, search_params, page, budget)
@@ -397,6 +438,9 @@ async def _scan(
                 break
     finally:
         await api.__aexit__()
+
+    if stopped is None and used >= DAILY_QUOTA:
+        stopped = "quota"  # 分配额度刚好用尽：与「配额耗尽」同口径记录
 
     target = _target(cates, pages, items, missing)
     _record_run(

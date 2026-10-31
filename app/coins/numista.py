@@ -38,14 +38,14 @@ import logging
 import re
 import time
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import AsyncIterator
 
 import httpx
 
 from app import llm, repository, textmatch
 from app.config import Config
-from app.coins import translate, translate_llm
+from app.coins import grades, translate, translate_llm
 from app.models import CoinIssue, CoinSeries
 
 logger = logging.getLogger(__name__)
@@ -266,6 +266,8 @@ class SeriesInfo:
     catalog_no: str | None
     comments: str | None
     mints: list[str]
+    series: list[str] = field(default_factory=list)
+    commemorated_topic: str | None = None
 
 
 @dataclass(frozen=True)
@@ -317,6 +319,28 @@ def _flag(comment: str | None, *keywords: str) -> bool | None:
     return any(keyword in low for keyword in keywords)
 
 
+def _series_names(raw: object) -> list[str]:
+    """接口里的 `series` 可能是对象 / 数组 / 字符串，统一成名称列表。"""
+    items = raw if isinstance(raw, list) else [raw]
+    names: list[str] = []
+    for item in items:
+        if isinstance(item, dict):
+            name = item.get("name")
+        elif isinstance(item, str):
+            name = item
+        else:
+            name = None
+        if name:
+            names.append(str(name))
+    return names
+
+
+def _topic_text(raw: object) -> str | None:
+    if isinstance(raw, dict):
+        raw = raw.get("name") or raw.get("title")
+    return str(raw) if raw else None
+
+
 def series_from_type(data: dict) -> SeriesInfo:
     """`GET /types/{id}` 的返回 → `SeriesInfo`。"""
     ruler = ",".join(
@@ -329,7 +353,7 @@ def series_from_type(data: dict) -> SeriesInfo:
         title=data.get("title"),
         url=data.get("url"),
         object_type=(data.get("object_type") or {}).get("name"),
-        issuer=(data.get("issuer") or {}).get("name"),
+        issuer=grades.normalize_country((data.get("issuer") or {}).get("name")),
         min_year=data.get("min_year"),
         max_year=data.get("max_year"),
         ruler=ruler or None,
@@ -353,6 +377,8 @@ def series_from_type(data: dict) -> SeriesInfo:
             for mint in data.get("mints") or []
             if isinstance(mint, dict) and mint.get("name")
         ],
+        series=_series_names(data.get("series")),
+        commemorated_topic=_topic_text(data.get("commemorated_topic")),
     )
 
 
@@ -544,6 +570,8 @@ def _series_row(info: SeriesInfo, fetched_at: str) -> CoinSeries:
         catalog_no=info.catalog_no,
         comments=info.comments,
         mints=info.mints,
+        series=info.series,
+        commemorated_topic=info.commemorated_topic,
         fetched_at=fetched_at,
     )
 

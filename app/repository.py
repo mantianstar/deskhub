@@ -734,7 +734,7 @@ def list_coin_purchase_grades() -> list[CoinPurchaseGrade]:
     with db.connect() as conn:
         rows = conn.execute(
             """
-            SELECT id, country, era, denomination, grade, updated_at
+            SELECT id, country, era, denomination, grade, updated_at, theme, coin_name
             FROM coin_purchase_grades ORDER BY country, era, denomination
             """
         ).fetchall()
@@ -746,35 +746,48 @@ def list_coin_purchase_grades() -> list[CoinPurchaseGrade]:
             denomination=row["denomination"],
             grade=row["grade"],
             updated_at=row["updated_at"],
+            theme=row["theme"] or "",
+            coin_name=row["coin_name"] or "",
         )
         for row in rows
     ]
 
 
-def upsert_coin_purchase_grade(country: str, era: str, denomination: str, grade: str) -> None:
-    """按「国家 + 年份 + 面值」写一档品相（冲突则覆盖，幂等重存）。"""
+def upsert_coin_purchase_grade(
+    country: str,
+    era: str,
+    denomination: str,
+    grade: str,
+    theme: str = "",
+    coin_name: str = "",
+) -> None:
+    """按「国家 + 年份 + 面值 + 主题 + 名称」写一档品相（冲突则覆盖，幂等重存）。"""
     with db.connect() as conn, conn:
         conn.execute(
             """
-            INSERT INTO coin_purchase_grades (country, era, denomination, grade, updated_at)
-            VALUES (?, ?, ?, ?, ?)
-            ON CONFLICT(country, era, denomination) DO UPDATE SET
+            INSERT INTO coin_purchase_grades
+                (country, era, denomination, grade, updated_at, theme, coin_name)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(country, era, denomination, theme, coin_name) DO UPDATE SET
                 grade      = excluded.grade,
                 updated_at = excluded.updated_at
             """,
-            (country, era, denomination, grade, utcnow()),
+            (country, era, denomination, grade, utcnow(), theme, coin_name),
         )
 
 
-def delete_coin_purchase_grade(country: str, era: str, denomination: str) -> bool:
+def delete_coin_purchase_grade(
+    country: str, era: str, denomination: str, theme: str = "", coin_name: str = ""
+) -> bool:
     """清除某组合的品相（下拉选回「未录入」时用）。返回是否真的删了一行。"""
     with db.connect() as conn, conn:
         cursor = conn.execute(
             """
             DELETE FROM coin_purchase_grades
             WHERE country = ? AND era = ? AND denomination = ?
+              AND theme = ? AND coin_name = ?
             """,
-            (country, era, denomination),
+            (country, era, denomination, theme, coin_name),
         )
     return cursor.rowcount > 0
 
@@ -896,6 +909,8 @@ def _row_to_collection_member(row: sqlite3.Row) -> CoinCollectionMember:
         numista_series_id=row["numista_series_id"],
         numista_series_name=row["numista_series_name"],
         created_at=row["created_at"],
+        theme=row["theme"] or "",
+        coin_name=row["coin_name"] or "",
     )
 
 
@@ -912,7 +927,9 @@ def list_coin_collection_members(collection_id: int | None = None) -> list[CoinC
 
 
 def upsert_coin_collection_member(
-    collection_id: int, numista_series_id: int, numista_series_name: str | None
+    collection_id: int,
+    numista_series_id: int,
+    numista_series_name: str | None,
 ) -> None:
     """把一个 Numista 系列映射到收藏系列；已映射到别处则改归属（冲突覆盖）。"""
     with db.connect() as conn, conn:
@@ -925,8 +942,28 @@ def upsert_coin_collection_member(
                 collection_id       = excluded.collection_id,
                 numista_series_name = excluded.numista_series_name
             """,
-            (collection_id, numista_series_id, numista_series_name, utcnow()),
+            (
+                collection_id,
+                numista_series_id,
+                numista_series_name,
+                utcnow(),
+            ),
         )
+
+
+def update_coin_series_issue_fields(
+    numista_id: int, *, issue_series: str, issue_theme: str
+) -> bool:
+    """保存系列详情页人工维护的发行系列 / 发行主题（英文表与中文表一起写）。"""
+    with db.connect() as conn, conn:
+        changed = 0
+        for table in ("coin_series", "coin_series_cn"):
+            cursor = conn.execute(
+                f"UPDATE {table} SET issue_series = ?, issue_theme = ? WHERE numista_id = ?",
+                (issue_series.strip(), issue_theme.strip(), numista_id),
+            )
+            changed += cursor.rowcount
+    return changed > 0
 
 
 def delete_coin_collection_member(member_id: int) -> bool:
@@ -999,7 +1036,7 @@ def list_coin_explore_candidates(*, include_ignored: bool = False) -> list[CoinE
     sql = "SELECT * FROM coin_explore_candidates"
     if not include_ignored:
         sql += " WHERE status <> 'ignored'"
-    sql += " ORDER BY CASE status WHEN 'candidate' THEN 0 ELSE 1 END, size_diff, numista_id"
+    sql += " ORDER BY CASE status WHEN 'candidate' THEN 0 ELSE 1 END, numista_id"
     with db.connect() as conn:
         rows = conn.execute(sql).fetchall()
     return [_row_to_explore_candidate(row) for row in rows]
@@ -2340,7 +2377,7 @@ _SERIES_COLUMNS = (
     "denomination", "size_mm", "weight_g", "thickness_mm", "shape", "composition", "edge",
     "obverse_desc", "obverse_lettering", "obverse_picture",
     "reverse_desc", "reverse_lettering", "reverse_picture", "catalog_no", "comments", "mints",
-    "fetched_at",
+    "series", "commemorated_topic", "fetched_at",
 )
 _ISSUE_COLUMNS = (
     "numista_id", "series_id", "year", "gregorian_year", "mint", "mint_mark", "variety", "comment",
@@ -2397,6 +2434,8 @@ def _series_values(series: CoinSeries) -> tuple:
         series.catalog_no,
         series.comments,
         _dump(series.mints),
+        _dump(series.series),
+        series.commemorated_topic,
         series.fetched_at,
     )
 
@@ -2472,6 +2511,10 @@ def _row_to_coin_series(row: sqlite3.Row) -> CoinSeries:
         comments=row["comments"],
         mints=_json_list(row["mints"]),
         fetched_at=row["fetched_at"],
+        series=_json_list(row["series"]),
+        commemorated_topic=row["commemorated_topic"],
+        issue_series=row["issue_series"] or "",
+        issue_theme=row["issue_theme"] or "",
     )
 
 
@@ -2588,17 +2631,29 @@ def list_coin_series_compositions(*, cn: bool = False) -> list[str]:
     return [row["composition"] for row in rows]
 
 
+def list_coin_series_object_types(*, cn: bool = False) -> list[str]:
+    """已采集系列的货币类型去重清单，供币库查询页的下拉。"""
+    table = "coin_series_cn" if cn else "coin_series"
+    with db.connect() as conn:
+        rows = conn.execute(
+            f"SELECT DISTINCT object_type FROM {table} "
+            "WHERE object_type IS NOT NULL AND object_type <> '' ORDER BY object_type"
+        ).fetchall()
+    return [row["object_type"] for row in rows]
+
+
 def search_coin_series(
     *,
     issuer: str | None = None,
     year: int | None = None,
     denomination: str | None = None,
     composition: str | None = None,
+    object_type: str | None = None,
     cn: bool = False,
 ) -> list[CoinSeries]:
-    """按国家 / 年份 / 面值 / 材质查已采集的系列（年份落在 `[min_year, max_year]` 即命中）。
+    """按国家 / 年份 / 面值 / 材质 / 货币类型查已采集的系列（年份落在 `[min_year, max_year]` 即命中）。
 
-    四个条件均可选：全空时返回全部系列。国家 / 年份走参数化 SQL（`issuer` 精确匹配）；
+    参数均可选：全空时返回全部系列。国家 / 货币类型走参数化 SQL（精确匹配）；
     面值 / 材质在取回后做归一化宽松匹配（要处理库值里的空格与数字边界，见 `_text_hit`）。
     """
     table = "coin_series_cn" if cn else "coin_series"
@@ -2607,6 +2662,9 @@ def search_coin_series(
     if issuer:
         clauses.append("issuer = ?")
         params.append(issuer)
+    if object_type:
+        clauses.append("object_type = ?")
+        params.append(object_type)
     if year is not None:
         clauses.append("(min_year IS NULL OR min_year <= ?) AND (max_year IS NULL OR max_year >= ?)")
         params.extend([year, year])
@@ -2765,4 +2823,15 @@ def set_coin_filter_scan_page(category_code: str, next_page: int) -> None:
             " next_page = excluded.next_page, updated_at = excluded.updated_at",
             (category_code, next_page, utcnow()),
         )
+
+
+def count_uncovered_sold_by_category() -> dict[str, int]:
+    """按 `category_code` 统计未回填出价人数（`bid_num IS NULL`）的成交拍品数（深扫配额权重）。"""
+    with db.connect() as conn:
+        rows = conn.execute(
+            "SELECT category_code, COUNT(*) AS n FROM coin_lots"
+            " WHERE outcome = 'sold' AND bid_num IS NULL AND category_code IS NOT NULL"
+            " GROUP BY category_code"
+        ).fetchall()
+    return {str(row["category_code"]): int(row["n"]) for row in rows}
 

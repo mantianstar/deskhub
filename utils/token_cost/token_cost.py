@@ -35,7 +35,9 @@
 import argparse
 import importlib.util
 import json
+import math
 import re
+from datetime import datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -43,6 +45,8 @@ TOKENIZER_PATH = ROOT / "utils" / "deepseek_v4_tokenizer" / "deepseek_tokenizer.
 DEFAULT_FIXED_TOKENS = 19570  # 2026-10-26 首个真实请求实测（system + 工具/技能定义 + memory），约占 1M 窗口 2%
 DEFAULT_USAGE = ROOT / "data" / "llm_usage.jsonl"
 CURSOR_NAME = ".token_cost_cursor"  # 本轮出表的游标：记录已出过表的请求条数
+BUDGET_LIMIT = 1_200_000  # 单段会话累计输入上限（RULES.md §零.3）
+STATE_NAME = "hook_state.json"  # guard_reset 记的会话起点，用来算「还能发几条」
 _OBJECT_PREVIEW = 30  # 对象列只留短标题；旧日志里的长文本也一并压掉
 _TS_RE = re.compile(r"(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}(?::\d{2})?)")
 _TIME_ONLY_RE = re.compile(r"^\d{2}:\d{2}(?::\d{2})?$")
@@ -154,6 +158,42 @@ def split_round_anchor(fresh: list[dict]) -> tuple[int, dict, dict]:
     return leading, head, fresh[-1]
 
 
+def _epoch(text: str) -> float | None:
+    for fmt in ("%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%d %H:%M:%S"):
+        try:
+            return datetime.strptime(str(text or ""), fmt).timestamp()
+        except ValueError:
+            continue
+    return None
+
+
+def left_requests(usage_path: Path, rows: list[dict], fresh: list[dict], last_ctx: int) -> int | None:
+    """还能发几条，与 guard_budget.estimate_left_requests 同口径；last_ctx=0 时不估（返回 None）。
+
+    会话起点取 hook_state 里最近一次任务的 `created_ts`；读不到就退回本轮增量（宁少不多）。
+    上下文每轮都在涨：d = 会话末 3 条 prompt_tokens 差分均值（负值按 0），
+    n = (√(ctx² + 2·d·left) − ctx) / d；d ≤ 0 才退回 left // ctx。
+    """
+    since = None
+    try:
+        state = json.loads((usage_path.parent / STATE_NAME).read_text(encoding="utf-8"))
+        starts = [int(slot.get("created_ts") or 0) for slot in (state.get("sessions") or {}).values()]
+        since = max([start for start in starts if start > 0], default=None)
+    except (OSError, json.JSONDecodeError, ValueError, AttributeError):
+        since = None
+    scope = [row for row in rows if since is not None and (_epoch(row.get("ts", "")) or 0) >= since]
+    used = sum(row["prompt_tokens"] for row in (scope or fresh))
+    left = max(BUDGET_LIMIT - used, 0)
+    if last_ctx <= 0:
+        return None
+    prompts = [int(row.get("prompt_tokens") or 0) for row in (scope or fresh)[-3:]]
+    deltas = [b - a for a, b in zip(prompts, prompts[1:])]
+    d = sum(max(delta, 0) for delta in deltas) / len(deltas) if deltas else 0
+    if d <= 0:
+        return left // last_ctx
+    return int((math.sqrt(last_ctx**2 + 2 * d * left) - last_ctx) / d)
+
+
 def print_round_table(usage_path: Path) -> None:
     """本轮增量：只出上次出表之后新增的请求；游标与日志同目录，中断、换会话都不丢账。
 
@@ -171,9 +211,11 @@ def print_round_table(usage_path: Path) -> None:
     total_input = sum(row["prompt_tokens"] for row in fresh)
     total_output = sum(row["completion_tokens"] for row in fresh)
     leading, head, tail = split_round_anchor(fresh)
+    left = left_requests(usage_path, rows, fresh, tail["prompt_tokens"])
+    left_text = f" ｜ 还能发 {left} 条" if left is not None else ""
     print(
         f"\n- 请求数：{len(fresh)} ｜ 起始上下文：{head['prompt_tokens']:,}"
-        f" ｜ 结束上下文：{tail['prompt_tokens']:,}"
+        f" ｜ 结束上下文：{tail['prompt_tokens']:,}{left_text}"
     )
     print(f"成本：输入 {total_input:,} + 输出 {total_output:,} = 合计 {total_input + total_output:,}（本轮 {len(fresh)} 次请求）")
     if 0 < leading < len(fresh):

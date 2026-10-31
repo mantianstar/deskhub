@@ -1,11 +1,10 @@
-"""跨系列探索候选池：从收藏画像出发，到 Numista 目录找尺寸相近的外部铜币（spec §14.17.4）。
+"""跨系列探索候选池：按目录筛选条件到 Numista 目录找外部铜币（spec §14.17.4）。
 
 数据流：
-1. 收藏画像提供种子（尺寸）；
-2. 用目录列表页的服务端筛选（类别 / 年份 / 材质 / 直径，参数在 `coins.collection.explore_catalogue`）拉候选；
-3. 列表里先按材质铜 / 青铜、尺寸差 ≤ 容差、本地未采集过过滤；
-4. 合格项再取详情与年份，写入 `coin_explore_candidates`，状态默认「候选」；
-5. 页面采纳时才写 `coin_series[_cn]`，信息页 / 采集管理页随即可见。
+1. 用目录列表页的服务端筛选（发行方 / 类别 / 年份 / 材质 / 直径，参数在 `coins.collection.explore_catalogue`）拉候选；
+2. 列表里只按本地未采集过过滤（不限定材质）；
+3. 合格项再取详情与年份，写入 `coin_explore_candidates`，状态默认「候选」；
+4. 页面采纳时才写 `coin_series[_cn]`，信息页 / 采集管理页随即可见。
 
 职责边界：本模块不依赖 FastAPI；SQL 一律走 `app.repository`。
 """
@@ -20,7 +19,6 @@ from app.coins import collection as coin_collection
 from app.coins import numista, numista_web, translate
 from app.config import Config
 from app.models import (
-    CoinCollectionProfile,
     CoinCollectionSeries,
     CoinExploreCandidate,
     CoinIssue,
@@ -35,74 +33,12 @@ STATUS_IGNORED = "ignored"
 
 
 @dataclass(frozen=True)
-class ExploreSeed:
-    """一个探索种子：收藏系列的 collection_key / 展示名 / 面值关键词 / 尺寸。"""
-
-    key: str
-    name: str
-    query: str
-    size_mm: float
-
-
-@dataclass(frozen=True)
 class ScanResult:
     """一次目录扫描：目录命中条数 / 实际取详情数 / 入池数。"""
 
     listed: int
     details: int
     stored: int
-
-
-def build_seeds(profiles: list[CoinCollectionProfile]) -> list[ExploreSeed]:
-    """从收藏画像提取种子；没有尺寸或面值无法翻译的系列跳过。"""
-    seeds: list[ExploreSeed] = []
-    for profile in profiles:
-        size_mm = profile.size_mm
-        if size_mm is None:
-            continue
-        try:
-            query = numista.translate_denomination(profile.collection.denomination)
-        except numista.NumistaError:
-            continue
-        if not query:
-            continue
-        seeds.append(
-            ExploreSeed(
-                key=profile.collection.collection_key,
-                name=profile.collection.name,
-                query=query,
-                size_mm=size_mm,
-            )
-        )
-    return seeds
-
-
-def _match(
-    size_mm: float | None,
-    composition: str | None,
-    seeds: list[ExploreSeed],
-    tolerance_mm: float,
-) -> tuple[ExploreSeed, float] | None:
-    """尺寸 / 材质是否合格；返回最接近的种子与差值。"""
-    if not coin_collection.is_bronze_or_copper(composition):
-        return None
-    if size_mm is None:
-        return None
-    best: tuple[ExploreSeed, float] | None = None
-    for seed in seeds:
-        diff = abs(size_mm - seed.size_mm)
-        if diff > tolerance_mm:
-            continue
-        if best is None or diff < best[1]:
-            best = (seed, diff)
-    return best
-
-
-def match_seed(
-    info: numista.SeriesInfo, seeds: list[ExploreSeed], tolerance_mm: float
-) -> tuple[ExploreSeed, float] | None:
-    """候选是否合格：铜 / 青铜 + 与某个种子的尺寸差 ≤ 容差。返回最接近的种子与差值。"""
-    return _match(info.size_mm, info.composition, seeds, tolerance_mm)
 
 
 def _series_from_payload(payload: dict[str, object], fetched_at: str) -> CoinSeries:
@@ -133,6 +69,8 @@ def _series_from_payload(payload: dict[str, object], fetched_at: str) -> CoinSer
         comments=payload.get("comments"),
         mints=list(payload.get("mints") or []),
         fetched_at=fetched_at,
+        series=list(payload.get("series") or []),
+        commemorated_topic=payload.get("commemorated_topic"),
     )
 
 
@@ -231,23 +169,18 @@ async def scan_candidates(
 ) -> ScanResult:
     """按配置的目录筛选拉候选，把合格系列写入候选池。
 
-    列表页已经带材质 / 重量 / 直径，先在本地筛掉不合格的，再为剩下的取详情
+    只跳过本地已入库 / 已在池的系列，不限定材质；剩下的取详情与年份
     （详情接口有月度额度，能少调就少调）。
     """
-    profiles = coin_collection.load_profiles()
-    seeds = build_seeds(profiles)
-    if not seeds:
-        return ScanResult(0, 0, 0)
-
     cap = limit if limit is not None else config.coins.collection.explore_max_details
-    tolerance = config.coins.collection.explore_size_tolerance_mm
     filters = config.coins.collection.explore_catalogue
     logger.info(
-        "候选池目录筛选：类别 st=%s · 年份 a=%s · 材质 m=%s · 直径 t=%s mm",
+        "候选池目录筛选：发行方 e=%s · 类别 st=%s · 年份 a=%s · 材质 m=%s · 直径 t=%s mm",
+        filters.issuer,
         filters.collectible_type,
-        filters.year,
-        filters.composition_id,
-        filters.diameter_mm,
+        filters.year or "不限",
+        filters.composition_id if filters.composition_id is not None else "不限",
+        filters.diameter_mm or "不限",
     )
     catalogue = await numista_web.load_catalogue_index(config)
 
@@ -260,16 +193,11 @@ async def scan_candidates(
         for candidate in repository.list_coin_explore_candidates(include_ignored=True)
     }
 
-    picked: list[tuple[int, tuple[ExploreSeed, float]]] = []
+    picked: list[int] = []
     for item in catalogue.items:
         if item.numista_id in known_ids or item.numista_id in existing:
             continue
-        matched = _match(item.size_mm, item.composition, seeds, tolerance)
-        if matched is None:
-            continue
-        picked.append((item.numista_id, matched))
-    # 尺寸最接近的优先，保证达到单轮详情上限时先取最相关的
-    picked.sort(key=lambda pair: pair[1][1])
+        picked.append(item.numista_id)
 
     if not picked:
         return ScanResult(catalogue.total, 0, 0)
@@ -282,15 +210,11 @@ async def scan_candidates(
     stored = 0
     try:
         async with numista._translator(config, None) as translator:
-            for type_id, _ in picked:
+            for type_id in picked:
                 if details >= cap:
                     break
                 info = await api.type_detail(type_id)
                 details += 1
-                matched = match_seed(info, seeds, tolerance)
-                if matched is None:
-                    continue
-                seed, diff = matched
                 issues = await api.issues(type_id, series=info)
                 cn_info = await numista._cn_series_info(info, translator)
                 now = repository.utcnow()
@@ -298,9 +222,9 @@ async def scan_candidates(
                     CoinExploreCandidate(
                         id=None,
                         numista_id=info.numista_id,
-                        seed_key=seed.key,
-                        seed_name=seed.name,
-                        size_diff=round(diff, 2),
+                        seed_key=None,
+                        seed_name=None,
+                        size_diff=None,
                         status=STATUS_CANDIDATE,
                         payload=asdict(info),
                         payload_cn=asdict(cn_info),
@@ -315,8 +239,8 @@ async def scan_candidates(
                 # 图片走本地缓存（Numista 禁止跨站引用）；失败不影响候选入库
                 try:
                     await numista_web.download_series_images(config, numista_id=type_id)
-                except numista_web.NumistaPageError as exc:
-                    logger.warning("候选 %s 图片缓存失败：%s", type_id, exc)
+                except Exception as exc:  # 下载失败（含超时、浏览器断连）只跳过图片，不中断扫描
+                    logger.warning("候选 %s 图片缓存失败，跳过：%s", type_id, exc)
         logger.info(
             "候选池扫描：目录 %d 条，取详情 %d 个，入池 %d 个",
             catalogue.total,

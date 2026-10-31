@@ -1047,6 +1047,47 @@ def test_info_page_filters_by_denomination_and_composition(web):
     assert "/coins/series/13222" not in page.text
 
 
+def test_info_page_filters_by_object_type_and_shows_issue_theme(web):
+    """币库：货币类型下拉筛选纪念币，卡片标题后跟发行主题。"""
+    commemorative = _make_series(9001, "5 元", "黄铜")
+    commemorative.object_type = "纪念币"
+    repository.upsert_coin_series_cn(commemorative)
+    repository.update_coin_series_issue_fields(9001, issue_series="亚运系列", issue_theme="亚运会")
+    repository.upsert_coin_series_cn(_make_series(9002, "1 便士", "青铜"))
+
+    page = web.get("/coins/info", params={"object_type": "纪念币"})
+    assert "/coins/series/9001" in page.text
+    assert "/coins/series/9002" not in page.text
+    assert "· 亚运会" in page.text
+
+
+def test_series_page_saves_issue_series_and_theme(web):
+    """系列详情：展示原所属系列 / 原纪念主题与发行系列 / 发行主题，并可保存。"""
+    series = _make_series(9003, "5 元", "黄铜")
+    series.object_type = "纪念币"
+    repository.upsert_coin_series_cn(series)
+
+    page = web.get("/coins/series/9003")
+    assert "原所属系列" in page.text
+    assert "原纪念主题" in page.text
+    assert "发行系列" in page.text
+    assert "发行主题" in page.text
+
+    web.post(
+        "/coins/series/9003/issue-fields",
+        data={
+            "issue_series": "亚运系列",
+            "issue_theme": "女排",
+            "return_to": "/coins/series/9003",
+        },
+    )
+    saved = repository.get_coin_series(9003, cn=True)
+    assert (saved.issue_series, saved.issue_theme) == ("亚运系列", "女排")
+    page = web.get("/coins/series/9003")
+    assert "亚运系列" in page.text
+    assert "女排" in page.text
+
+
 def test_manage_page_filters_results_by_denomination(web):
     """用户报的问题：查「英国 1904 1便士」，结果区不该把「半便士」也列出来。"""
     _seed_uk_1904()
@@ -1290,12 +1331,12 @@ def test_manage_page_renders_cached_images_only(web, tmp_path, monkeypatch):
     assert "/coins/series/670/image/reverse" not in page
 
 
-def test_download_series_images_writes_files_and_drops_stale(web, tmp_path, monkeypatch):
+def test_download_series_images_skips_existing_side(web, tmp_path, monkeypatch):
     _seed_series()
     image_dir = tmp_path / "coin_images"
     monkeypatch.setattr(coins_numista_web, "IMAGE_DIR", image_dir)
     image_dir.mkdir(parents=True)
-    (image_dir / "670-obverse.jpg").write_bytes(b"stale")  # 旧后缀，应被清掉
+    (image_dir / "670-obverse.jpg").write_bytes(b"stale")  # 已下载过：跳过，不再覆盖
 
     async def fake_fetch(_cdp_url, _type_id, urls, *, timeout_seconds):
         return {side: b"IMG-" + side.encode() for side in urls}
@@ -1304,9 +1345,9 @@ def test_download_series_images_writes_files_and_drops_stale(web, tmp_path, monk
     saved = asyncio.run(coins_numista_web.download_series_images(config.get(), numista_id=670))
 
     assert set(saved) == {"obverse", "reverse"}
-    # 源 URL 是 .png → 新文件按原后缀存，旧 .jpg 被清理
-    assert (image_dir / "670-obverse.png").read_bytes() == b"IMG-obverse"
-    assert not (image_dir / "670-obverse.jpg").exists()
+    assert saved["obverse"] == image_dir / "670-obverse.jpg"
+    assert saved["obverse"].read_bytes() == b"stale"
+    assert not (image_dir / "670-obverse.png").exists()
     assert (image_dir / "670-reverse.png").read_bytes() == b"IMG-reverse"
 
 
@@ -1368,6 +1409,12 @@ def test_normalize_country_to_numista_style():
     assert coins_grades.normalize_country("  英国 ") == "英国"
     assert coins_grades.normalize_country("英属") == "英属"
     assert coins_grades.normalize_country(None) == ""
+
+
+def test_normalize_country_strips_comma_and_parentheses():
+    assert coins_grades.normalize_country("中国, People's Republic of") == "中国"
+    assert coins_grades.normalize_country("多米尼加共和国 (1844-date)") == "多米尼加共和国"
+    assert coins_grades.is_china_country("China, People's Republic of")
 
 
 def test_normalize_year_to_numista_style():
@@ -1594,6 +1641,55 @@ def test_grades_save_upserts_and_clears(web):
     assert [g.grade for g in repository.list_coin_purchase_grades()] == ["好"]
 
 
+def test_grades_save_keeps_theme_and_coin_name_rows(web):
+    """带主题 / 名称的组合按 5 列 upsert；旧的空串行不被覆盖。"""
+    web.post(
+        "/coins/grades/save",
+        data={
+            "country": ["中国", "中国"],
+            "era": ["2015", "2015"],
+            "denomination": ["5 元", "5 元"],
+            "theme": ["亚运会", ""],
+            "coin_name": ["女排", ""],
+            "grade": ["好", "差"],
+        },
+    )
+    web.post(
+        "/coins/grades/save",
+        data={
+            "country": ["中国"],
+            "era": ["2015"],
+            "denomination": ["5 元"],
+            "theme": ["亚运会"],
+            "coin_name": ["女排"],
+            "grade": ["普通"],
+        },
+    )
+
+    stored = {
+        (g.theme, g.coin_name): g.grade for g in repository.list_coin_purchase_grades()
+    }
+    assert stored == {("亚运会", "女排"): "普通", ("", ""): "差"}
+
+
+def test_grades_save_pads_missing_theme_columns(web):
+    """旧表单不带 theme / coin_name 时按空串补齐，不影响保存。"""
+    _seed_orders()
+    resp = web.post(
+        "/coins/grades/save",
+        data={
+            "country": ["英国"],
+            "era": ["1808"],
+            "denomination": ["一分"],
+            "grade": ["好"],
+        },
+        follow_redirects=False,
+    )
+    assert resp.status_code == 302
+    grades = repository.list_coin_purchase_grades()
+    assert [(g.theme, g.coin_name, g.grade) for g in grades] == [("", "", "好")]
+
+
 def test_grades_save_rejects_bad_grade(web):
     _seed_orders()
     resp = web.post(
@@ -1626,6 +1722,26 @@ def test_grades_add_creates_combo_and_normalizes(web):
     assert [
         (c.country, c.era, c.denomination, c.order_count, c.grade) for c in _combos()
     ][-1] == ("英国", "1910", "1 便士", 0, "普通")
+
+
+def test_grades_add_stores_theme_and_coin_name(web):
+    resp = web.post(
+        "/coins/grades/add",
+        data={
+            "country": "中国",
+            "year": "2015",
+            "denomination": "5元",
+            "theme": "亚运会",
+            "coin_name": "女排",
+            "grade": "好",
+        },
+        follow_redirects=False,
+    )
+    assert resp.status_code == 302
+    assert [
+        (g.country, g.era, g.denomination, g.theme, g.coin_name, g.grade)
+        for g in repository.list_coin_purchase_grades()
+    ] == [("中国", "2015", "5 元", "亚运会", "女排", "好")]
 
 
 def test_grades_add_fragment_returns_results_only(web):

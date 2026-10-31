@@ -73,6 +73,12 @@
       <input class="search-input" type="text" name="denomination" required
              list="coin-order-denomination-options" placeholder="如 1 便士" autocomplete="off">
     </label>
+    <label class="field">发行系列
+      <input class="search-input" type="text" name="theme" placeholder="如 亚运会（可空）">
+    </label>
+    <label class="field">发行主题
+      <input class="search-input" type="text" name="coin_name" placeholder="如 女排（可空）">
+    </label>
     <label class="field">品相
       <select name="grade" required>
         <option value="" disabled selected>请选择</option>
@@ -115,7 +121,9 @@
     var fields = {
       country: btn.dataset.country,
       era: btn.dataset.era,
-      denomination: btn.dataset.denomination
+      denomination: btn.dataset.denomination,
+      theme: btn.dataset.theme || '',
+      coin_name: btn.dataset.coinName || ''
     };
     // 带上当前筛选条件，删完回到同一批结果
     ['country', 'year', 'denomination'].forEach(function (name) {

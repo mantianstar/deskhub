@@ -73,22 +73,6 @@ def audit(command: str, decision: str, detail: str = "") -> None:
         pass
 
 
-def deny(reason: str) -> None:
-    print(
-        json.dumps(
-            {
-                "hookSpecificOutput": {
-                    "hookEventName": "PreToolUse",
-                    "permissionDecision": "deny",
-                    "permissionDecisionReason": reason,
-                    "additionalContext": reason,
-                }
-            },
-            ensure_ascii=False,
-        )
-    )
-
-
 def hint(text: str) -> None:
     print(
         json.dumps(
@@ -125,7 +109,8 @@ def canonical(command: str) -> tuple[str, str, str]:
             behavior.append(token)
             skip_next = token in VALUE_FLAGS
         else:
-            targets.append(token.rstrip("/") or "/")
+            target = token[2:] if token.startswith("./") else token
+            targets.append(target.rstrip("/") or "/")
 
     target_key = " ".join(sorted(targets))
     behavior_key = " ".join(behavior)
@@ -137,6 +122,15 @@ def _entry_key(entry: object) -> str:
     if isinstance(entry, dict):
         return str(entry.get("key") or "")
     return entry if isinstance(entry, str) else ""
+
+
+def covers(new: list[str], old: list[str]) -> bool:
+    """new 是否覆盖 old 已跑的范围：无路径参数视为全量，目录按前缀、文件按全等。"""
+    if not old or sorted(new) == sorted(old):
+        return False
+    if not new:
+        return True
+    return all(any(item == one or item.startswith(f"{one}/") for one in new) for item in old)
 
 
 def main() -> None:
@@ -171,11 +165,11 @@ def main() -> None:
         cmds = slot.setdefault("cmds", [])
 
         if any(_entry_key(entry) == key for entry in cmds):
-            audit(norm, "deny", f"repeat canon={canon}")
-            deny(
-                "这条 pytest 的验证范围已在本会话执行过（RULES.md §二.4：同一事实只验证一次）。"
+            audit(norm, "hint", f"repeat canon={canon}")
+            hint(
+                "已放行，仅提示：这条 pytest 的验证范围本会话执行过（RULES.md §二.4：同一事实只验证一次），"
                 f"本次判重口径：{canon or '（同一命令）'}；管道、重定向、输出格式参数的变化不算新的一次。"
-                "换了测试范围直接跑；同一范围确需重跑，请在命令末尾追加 `# rerun`。"
+                "结论没变就别再跑；换了测试范围直接跑，同一范围确需重跑在命令末尾追加 `# rerun`。"
             )
             return
 
@@ -184,6 +178,15 @@ def main() -> None:
                 entry
                 for entry in cmds
                 if isinstance(entry, dict) and entry.get("targets") == targets and entry.get("behavior") != behavior
+            ),
+            None,
+        )
+        covered = next(
+            (
+                entry
+                for entry in cmds
+                if isinstance(entry, dict)
+                and covers(targets.split(), str(entry.get("targets") or "").split())
             ),
             None,
         )
@@ -196,6 +199,14 @@ def main() -> None:
         hint(
             f"同一批测试目标这次换了口径（{same_target.get('behavior') or '无'} → {behavior or '无'}），"
             "不算重跑，已放行；结论与上次不可直接比较。"
+        )
+        return
+    if covered is not None:
+        audit(norm, "hint", f"covers canon={canon}")
+        hint(
+            f"刚跑过更窄的范围（{covered.get('targets') or '无路径参数'}），"
+            "本次范围包含它，已放行。只改了部分用例时用 `-k <表达式>` 或只跑失败文件，"
+            "别全量重跑——一次全量约 100k token。"
         )
         return
     audit(norm, "allow", f"record canon={canon}")

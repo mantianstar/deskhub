@@ -157,9 +157,14 @@ def test_catalogue_url_uses_configured_filters():
     )
     url = numista_web.catalogue_url(filters, page=2)
 
-    assert "st=7" in url and "a=1900-1950" in url
+    assert "e=chine" in url and "st=7" in url and "a=1900-1950" in url
     assert "m=3" in url and "t=25-30" in url
     assert "p=2" in url and "q=100" in url
+
+    # 默认筛选：China · Circulating commemorative coins，其余条件为空串（不参与筛选）
+    default_url = numista_web.catalogue_url(config_module.ExploreCatalogueConfig())
+    assert "e=chine" in default_url and "st=2" in default_url
+    assert "m=None" not in default_url and "a=None" not in default_url
 
 
 # ---------------------------------------------------------------- 落库（桩掉取页）

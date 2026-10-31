@@ -37,7 +37,7 @@ def test_fresh_db_has_category_schema(tmp_path):
     with db.connect() as conn:
         assert "category_code" in _columns(conn, "coin_lots")
         assert "coin_categories" in _tables(conn)
-        assert _version(conn) == "25"
+        assert _version(conn) == "29"
 
 
 def test_v20_db_upgrade_adds_category_code(tmp_path):
@@ -65,7 +65,7 @@ def test_v20_db_upgrade_adds_category_code(tmp_path):
     with db.connect() as conn:
         assert "category_code" in _columns(conn, "coin_lots")
         assert "coin_categories" in _tables(conn)
-        assert _version(conn) == "25"
+        assert _version(conn) == "29"
 
 
 def test_v21_upgrade_is_idempotent(tmp_path):
@@ -93,7 +93,7 @@ def test_v21_upgrade_is_idempotent(tmp_path):
     with db.connect() as conn:
         columns = [row["name"] for row in conn.execute("PRAGMA table_info(coin_lots)")]
         assert columns.count("category_code") == 1
-        assert _version(conn) == "25"
+        assert _version(conn) == "29"
 
 
 # ---------------------------------------------------------------- 分类字典 / 采集映射

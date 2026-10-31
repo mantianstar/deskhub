@@ -10,6 +10,122 @@
 
 ---
 
+## v1.113 — 2026-10-31 预算提示分档重构 + 交接文档落地
+
+**起因**：40k 上下文阈值被 94% 的会话段越过（2026-10-26~31 共 32 段，段起点 p50 21.7k），
+不构成「该停」信号；同时「还能发 N 条」按每轮成本恒定估算偏乐观，last_ctx=0 时会输出 66 万条。
+
+**改动**：上下文阈值改 60k / 80k / 100k，判据换成「当前上下文是重启基线（21.7k）的几倍 +
+还需 2 轮以上才换会话」；三档差异化（一行 / 加写文件 / 五段模板），停线全篇只发一次。
+输入三档同样给交接路径，800k 删掉失真的「可省约 2950k」估算。
+交接落 `data/handoffs/{YYYY-MM-DD}-{slug}.md`（首行 `status: pending`），新会话首条消息由
+`guard_reset` 注入「先问用户是否续跑」，不自动执行。
+「还能发 N 条」改二次解 `n = (√(ctx² + 2·d·left) − ctx) / d`（d = 末 3 条上下文差分均值），
+hook 与 `token_cost.left_requests` 同口径，last_ctx=0 时不输出。
+
+**验证**：`pytest -q` 全绿；新增三档差异、跨档各一次、停线唯一、d>0 收缩、交接注入等用例。
+
+**影响**：`docs/task-routing.md` §二、`RULES.md` §二。
+
+---
+
+## v1.112 — 2026-10-30 收藏系列品相录入面板改用成员面值
+
+**起因**：v1.111 只修了画像回填；`/coins/collections` 的品相录入面板仍把 `collection.denomination`
+写进隐藏字段，收藏系列挂多个面值成员时，保存的品相行面值对不上。
+
+**改动**：`_collection_grade_entries` 给每个年份项带 `denomination`（成员 Numista 系列面值，缺失时退回收藏系列面值）；
+模板隐藏字段取首项面值，年份下拉 `onchange` 同步更新。新增测试 `test_collection_grade_panel_uses_member_denomination`。
+
+**验证**：`pytest tests/test_coins_collection.py -q` 41 通过；`tests/test_coins_pages.py` 120 通过。
+
+**影响**：spec/coins.md §14.1 页面表。
+
+## v1.111 — 2026-10-30 收藏系列品相匹配改用成员面值
+
+**起因**：`_owned_years` 用 `collection.denomination`（收藏系列上的面值）匹配品相行；
+收藏系列可能挂多个不同面值的成员（如 1 元 / 5 元），系列级面值只写一个，其他面值的品相行全部匹配不上。
+
+**改动**：`_owned_years` 新增 `denomination` 入参；`build_profile` 取该成员 Numista 系列的面值传入，
+成员无面值时退回收藏系列的面值。新增测试 `test_build_profile_matches_grade_by_member_denomination`。
+
+**验证**：`pytest tests/test_coins_collection.py -q` 40 通过；全量 499 通过、11 项既有失败（schema 版本、hooks 契约），与本次改动无关。
+
+**影响**：spec/coins.md §14.16。
+
+## v1.110 — 2026-10-30 品相台账列名对齐发行系列 / 发行主题，修复收藏系列品相匹配
+
+**起因**：品相台账把两列写成「主题 / 名称」，与币库详情「发行系列 / 发行主题」不是同一套叫法；
+画像回填已有年份时又拿 `series.issue_theme` 去比 `grade.theme`、完全忽略 `coin_name`，
+`theme=珍稀野生动物 / coin_name=金丝猴` 的品相行全部匹配不上收藏系列。
+
+**改动**：表头与新增表单改为「发行系列 / 发行主题」（字段名 `theme` / `coin_name` 不变）；
+`_owned_years` 改为 `grade.theme ↔ issue_series`、`grade.coin_name ↔ issue_theme`，双方都有值才比较；
+画像新增 `issue_series`，收藏系列品相面板的定位键同步带上发行系列；对应测试按新口径造数。
+
+**验证**：`pytest tests/test_coins_collection.py -q` 39 通过；真实库重算收藏系列 62 已有 6 个年份（修复前 0）。
+全量 497 通过、6 项既有失败（schema 版本、hooks 契约、相似推荐），与本次改动无关。
+
+**影响**：spec/coins.md §14.16。
+
+## v1.109 — 2026-10-30 纪念币主题上移到系列详情（发行系列 / 发行主题）
+
+**起因**：主题 / 名称原先手工挂在收藏系列成员上，换成员或改主题要逐个改，币库详情页也看不到发行信息。
+**改动**：`coin_series[_cn]` 新增人工字段 `issue_series` / `issue_theme`（v29 迁移，采集不覆盖）；系列详情页展示「原所属系列 / 原纪念主题」与「发行系列 / 发行主题」并支持编辑保存；币库筛选最前加货币类型、纪念币卡片标题跟发行主题；收藏系列页纪念币成员 / 候选展示发行系列与发行主题，去掉成员主题 / 名称录入，画像年份标签与品相匹配改用发行主题（国家 + 面值 + 年份 + 发行主题），非纪念币链路不变。
+**验证**：`pytest tests/test_coins_collection.py tests/test_coins_pages.py tests/test_coins_analysis.py -q` 通过（新增 2 条页面用例）。
+**影响**：[spec/coins.md](./spec/coins.md) §14.17.2 / §14.17.3。
+
+## v1.108 — 2026-10-30 画像唯一键改为 (年份, 名称)，收藏系列页年份并排
+
+**起因**：用户指出「中国 · 珍稀动物系列 · 5 元」应为 10 枚，画像摘要与收藏系列页却只显示 6 个年份；收藏系列页还是一个年份一张卡。
+**改动**：`CoinCollectionProfile.year_specs` 改为 `dict[(year, name), CoinYearSpec]`，新增 `CoinYearEntry` 与 `entries / owned_entries / missing_entries / upgrade_entries`；`build_profile` / `build_profiles`（拆出 `merge_profiles`）按 (年份, 名称) 唯一，同一年不同名称各留一枚；`_owned_years` 按新键回填品相；推荐 `_spec` 取同年发行量最大条目。`collection.html` 与 `collections.html` 的年份 chips / 年份规格字典改用 `entry.label`（`1993(大熊猫)`），收藏系列页改为每个收藏系列一张卡、年份并排，品相保存表单仍按成员保留。
+**验证**：`pytest tests/test_coins_collection.py tests/test_coins_pages.py -q` 117 passed；真实库中「中国 · 珍稀动物系列 · 5 元」输出 10 条（1993 大熊猫 … 1999 金斑缘凤蝶）。
+**影响**：[spec/coins.md](./spec/coins.md) §14.17.2 / §14.17.3。
+
+## v1.107 — 2026-10-30 收藏画像恢复收藏系列粒度，年份标签带成员名称
+
+**起因**：上一轮把画像拆成按成员出卡，用户确认口径应为「一个收藏系列一张卡，年份对应到名称」。
+**改动**：`app/coins/collection.py` 原 `build_profiles` 改名 `build_member_profiles`（供 `/coins/collections` 用），新增 `build_profiles` 按收藏系列归并成员年份并输出 `year_names`；`_load_profile_inputs` 抽公共读库，新增 `load_member_profiles`；`CoinCollectionProfile` 增加 `year_names` / `year_label()`（`1995(金丝猴)`）；推荐关键词与去重键改用该年份的成员名称；画像摘要标题与卡片 id 回到收藏系列级。品相匹配仍以成员为单位。
+**验证**：`pytest tests/test_coins_collection.py tests/test_coins_pages.py -q` 全绿。
+**影响**：[spec/coins.md](./spec/coins.md) §14.17.2 / §14.17.3。
+
+## v1.106 — 2026-10-30 收藏系列页展示 coin_series_cn.title
+
+**起因**：映射收藏系列时只能看到编号 / 国家 / 面值，无法参考中文标题来选候选、填主题与名称。
+**改动**：`coins/collections.html` 候选下拉、成员 chips、成员表新增 `coin_series_cn.title`（成员表加「标题」列，空列提示 colspan 同步为 7）。
+**验证**：`pytest tests/test_coins_collection.py -q` 覆盖成员标题、候选标题渲染。
+**影响**：[spec/coins.md](./spec/coins.md) §14.17。
+
+## v1.105 — 2026-10-29 国家去限定语、清理中国记录；系列补「所属系列 / 纪念主题」
+
+**起因**：Numista 国家名带逗号限定语与括号注记；候选池 / 系列里不再保留中国记录（图片缓存保留）；系列详情页需要展示所属系列与纪念主题。
+**改动**：`grades.normalize_country` 先去逗号后段与括号注记，新增 `is_china_country`；`numista.series_from_type` 解析 `series` / `commemorated_topic` 并归一国家，`translate.series_to_zh` / `translate_llm` 同步翻译；建表与迁移 v26 给 `coin_series` / `coin_series_cn` 加两列，并删除系列 / 候选池里的中国记录、清洗存量国家（不动 `data/coin_images/`）；`download_series_images` 按 `序列号-面.*` 判存在，已下载的面跳过；系列详情页在造币厂后展示两字段。
+**验证**：`pytest tests/test_coins_numista.py tests/test_coins_translate.py tests/test_coins_pages.py tests/test_coins_categories.py tests/test_coins_analysis.py -q`；全量 `pytest tests -q` 仅 `test_hooks_contract` 两条与本次无关的历史失败。
+**影响**：[spec/coins.md](./spec/coins.md) §14.13、[PROJECT_MAP.md](./PROJECT_MAP.md)。
+
+## v1.104 — 2026-10-29 候选池扫描去掉种子逻辑，改按 Numista 目录页筛选条件
+
+**起因**：候选池获取数据与收藏种子无关；扫描条件改为用户指定目录页（China · Circulating commemorative coins）。
+**改动**：`explore.scan_candidates` 删除 `ExploreSeed` / `build_seeds` / `match_seed` 与尺寸容差过滤，候选记录 `seed_key` / `seed_name` / `size_diff` 写空；`ExploreCatalogueConfig` 新增 `issuer`（→ URL 参数 `e`），年份 / 材质 / 直径允许留空；`config.yaml` 旧筛选条件注释保留，新增 `issuer: chine`、`collectible_type: 2`；候选列表不再按 `size_diff` 排序。
+**验证**：`pytest tests/test_coins_numista_web.py tests/test_coins_collection.py -q`。
+**影响**：[spec/coins.md](./spec/coins.md) §14.17.4 / §14.17.6、[PROJECT_MAP.md](./PROJECT_MAP.md)、`config/config.yaml`。
+
+## v1.103 — 2026-10-29 深扫配额改按「未覆盖成交数」分配；全量深扫排进 21:00 定时
+
+**起因**：昨日成交数作权重时，有库存但近期没成交的分类（如 11030，1,662 条仅覆盖 16%）每天只推进 1 页，覆盖率长期卡在低位；全量只能手工跑，日配额经常闲置。
+**改动**：`repository.count_sold_lots_by_category` 换成 `count_uncovered_sold_by_category`（成交且 `bid_num IS NULL` 按 `category_code` 计数）；`filter_scan._yesterday_weights` 换成 `_gap_weights`，`MIN_DEEP_PAGES` 1→5；`tasks.run_coins_filter_scan` 增加 `full` 参数；新增 `scheduler.daily_coins_deep`，每天 21:00（`DEEP_HOUR`）用当天剩余配额跑全量深扫，与 07:00 增量共用 `coins_filter_scan` 开关和同一个日配额。
+**验证**：`pytest tests/test_scheduler.py tests/test_coins_filter_scan.py -q`。
+**影响**：[plan/coins.md](./plan/coins.md)、[spec/coins.md](./spec/coins.md) 的配额段落。
+
+## v1.102 — 2026-10-29 `coins-filter-scan --full` 深扫配额按昨日成交分类数分配
+
+**起因**：深扫按分类串行推进，靠前的分类吃光日配额，后面 7 个分类的深页长期轮不到；实测近 10 天成交热度覆盖率仅 5.5%–34.5%（昨日成交 2753 条、`bid_source=home_filter` 仅 635 条）。
+**改动**：新增 `repository.count_sold_lots_by_category`（昨日成交按 `category_code` 计数）、`filter_scan.allocate_pages`（最大余数法按权重分页、每类保底 1 页）与 `_yesterday_weights`；`_scan` 深扫阶段按 `deep_pages[cate]` 截断页范围，可用页数 = `DAILY_QUOTA - 今日已用 - 顶部页`。
+**验证结论**：`pytest tests/test_coins_filter_scan.py -q` 全绿；新增两条 `allocate_pages` 用例（比例 + 全零均分/零预算）。
+**受影响**：`app/repository.py`、`app/coins/filter_scan.py`、`tests/test_coins_filter_scan.py`
+
+---
+
 ## v1.101 — 2026-10-28 成本计量改为「请求数 + 累计输入」，预算与上下文封顶改为注入提示
 
 **起因**：复盘「规则里写了却没执行」——轮数一直由模型自报、预算只有标称上限没有可回读的计量；并行被当成省钱手段，长会话到 80 万 / 120 万也没有任何提示。

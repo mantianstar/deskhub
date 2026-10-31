@@ -137,14 +137,17 @@ class ExploreCatalogueConfig:
     """探索候选池的目录筛选（Numista catalogue/index.php 的查询参数）。
 
     这些值就是实际拼进 URL 的参数，后续换筛选条件只改 `config.yaml` 里的对应项：
-    `collectible_type` → `st`（1 = Standard circulation coins）、`year` → `a`、
-    `composition_id` → `m`（5 = Bronze）、`diameter_mm` → `t`、`per_page` → `q`。
+    `issuer` → `e`（发行方，如 chine = China）、`collectible_type` → `st`
+    （2 = Circulating commemorative coins）、`year` → `a`、`composition_id` → `m`
+    （5 = Bronze）、`diameter_mm` → `t`、`per_page` → `q`；
+    空串 / None 表示该条件不参与筛选。
     """
 
-    collectible_type: int = 1
-    year: str = "1800-2026"
-    composition_id: int = 5
-    diameter_mm: str = "28-33"
+    issuer: str = "chine"
+    collectible_type: int = 2
+    year: str = ""
+    composition_id: int | None = None
+    diameter_mm: str = ""
     per_page: int = 200
 
 
@@ -283,6 +286,28 @@ def _opt_str(section: dict[str, Any], key: str, default: str, where: str) -> str
     if not isinstance(value, str) or not value.strip():
         raise ConfigError(f"{where}.{key}：必须是非空字符串")
     return value.strip()
+
+
+def _opt_text(section: dict[str, Any], key: str, where: str) -> str:
+    """允许空串的字符串项；空串表示该筛选条件不生效。"""
+    value = section.get(key, "")
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        raise ConfigError(f"{where}.{key}：必须是字符串")
+    return value.strip()
+
+
+def _opt_int_or_none(section: dict[str, Any], key: str, where: str, *, minimum: int = 1) -> int | None:
+    """允许空值（None / ""）的整数项；空值表示该筛选条件不生效。"""
+    value = section.get(key)
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ConfigError(f"{where}.{key}：必须是整数")
+    if value < minimum:
+        raise ConfigError(f"{where}.{key}：必须 >= {minimum}，当前 {value}")
+    return value
 
 
 def _req_int(section: dict[str, Any], key: str, where: str, *, minimum: int = 1) -> int:
@@ -504,25 +529,27 @@ def _parse_coins(raw: dict[str, Any]) -> CoinsConfig:
                 collection, "explore_max_details", 10, f"{where}.collection", minimum=1
             ),
             explore_catalogue=ExploreCatalogueConfig(
+                issuer=_opt_str(
+                    catalogue, "issuer", "chine", f"{where}.collection.explore_catalogue"
+                ),
                 collectible_type=_opt_int(
                     catalogue,
                     "collectible_type",
-                    1,
+                    2,
                     f"{where}.collection.explore_catalogue",
                     minimum=1,
                 ),
-                year=_opt_str(
-                    catalogue, "year", "1800-2026", f"{where}.collection.explore_catalogue"
+                year=_opt_text(
+                    catalogue, "year", f"{where}.collection.explore_catalogue"
                 ),
-                composition_id=_opt_int(
+                composition_id=_opt_int_or_none(
                     catalogue,
                     "composition_id",
-                    5,
                     f"{where}.collection.explore_catalogue",
                     minimum=1,
                 ),
-                diameter_mm=_opt_str(
-                    catalogue, "diameter_mm", "28-33", f"{where}.collection.explore_catalogue"
+                diameter_mm=_opt_text(
+                    catalogue, "diameter_mm", f"{where}.collection.explore_catalogue"
                 ),
                 per_page=_opt_int(
                     catalogue,

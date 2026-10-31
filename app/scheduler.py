@@ -5,6 +5,8 @@
 - `daily_pipeline`：每天 `07:00`（`config.app.timezone`）出报；抓取与打分各自看开关。
 - `daily_coins`：铜币的每日任务，采集与查价各自看开关；与知识聚合**互不传播失败**
   （spec §14.8/§14.9）：任一条挂掉不影响另一条。
+- `daily_coins_deep`：每天 `21:00` 用当天剩余配额跑一轮全量 `home.filter` 深扫，
+  与 `daily_coins` 共用 `coins_filter_scan` 开关和同一个日配额。
 
 **启动补拉已取消**（2026-10-15）：以前 lifespan 会用 `create_task` 跑一轮抓取与铜币采集，
 重启一次就真去抓一遍、顺手把待打分条目烧一遍 token。现在重启不做任何事 ——
@@ -28,7 +30,9 @@ logger = logging.getLogger(__name__)
 
 DAILY_JOB_ID = "daily_pipeline"
 DAILY_COINS_JOB_ID = "daily_coins"
+DAILY_COINS_DEEP_JOB_ID = "daily_coins_deep"
 DAILY_HOUR = 7
+DEEP_HOUR = 21
 # 本机早上醒得晚，这一轮仍要执行而不是被丢弃（plan §11.2）
 MISFIRE_GRACE_SECONDS = 3600
 
@@ -96,11 +100,31 @@ async def daily_coins(config: Config) -> CoinsRunResult | None:
         return None
 
 
-def _cron_job(scheduler: AsyncIOScheduler, func, config: Config, job_id: str) -> None:
+async def daily_coins_deep(config: Config) -> None:
+    """每天 21:00：用当天剩余配额跑一轮全量 `home.filter` 深扫（按分类断点续扫）。
+
+    与 07:00 的增量共用 `coins_filter_scan` 开关和同一个日配额：早上只扫顶部页，
+    晚上把剩余页数按各分类「未回填出价人数的成交数」分掉，继续往深处走。
+    失败只记日志，等下一次触发重试。
+    """
+    if not config.coins.enabled or not switches.is_enabled(switches.COINS_FILTER_SCAN):
+        return
+    logger.info("定时任务触发：%s", DAILY_COINS_DEEP_JOB_ID)
+    try:
+        logger.info(
+            "铜币·热度回填（全量）：%s", await tasks.run_coins_filter_scan(config, full=True)
+        )
+    except Exception as exc:  # noqa: BLE001 - 与 daily_coins 同口径：只记日志
+        logger.warning("铜币全量深扫失败，等下一次触发重试：%s", exc)
+
+
+def _cron_job(
+    scheduler: AsyncIOScheduler, func, config: Config, job_id: str, *, hour: int = DAILY_HOUR
+) -> None:
     scheduler.add_job(
         func,
         trigger="cron",
-        hour=DAILY_HOUR,
+        hour=hour,
         minute=0,
         args=[config],
         id=job_id,
@@ -121,12 +145,22 @@ def start(config: Config) -> AsyncIOScheduler:
     _cron_job(scheduler, daily_pipeline, config, DAILY_JOB_ID)
     if config.coins.enabled:
         _cron_job(scheduler, daily_coins, config, DAILY_COINS_JOB_ID)
+        _cron_job(
+            scheduler, daily_coins_deep, config, DAILY_COINS_DEEP_JOB_ID, hour=DEEP_HOUR
+        )
     scheduler.start()
     logger.info(
-        "调度器已启动：%s%s 每天 %02d:00（%s），是否执行以 /control 的开关为准",
+        "调度器已启动：%s 每天 %02d:00（%s），是否执行以 /control 的开关为准",
         DAILY_JOB_ID,
-        f" + {DAILY_COINS_JOB_ID}" if config.coins.enabled else "",
         DAILY_HOUR,
         config.app.timezone,
     )
+    if config.coins.enabled:
+        logger.info(
+            "铜币定时任务：%s 每天 %02d:00、%s 每天 %02d:00",
+            DAILY_COINS_JOB_ID,
+            DAILY_HOUR,
+            DAILY_COINS_DEEP_JOB_ID,
+            DEEP_HOUR,
+        )
     return scheduler

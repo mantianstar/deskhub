@@ -121,13 +121,15 @@ def big_file(tmp_path: Path) -> Path:
     return path
 
 
-def test_read_hook_denies_whole_large_file(big_file: Path, tmp_path: Path):
-    """>200 行且不带 limit 的整份读必须拒绝，并落一条 deny 审计。"""
+def test_read_hook_clamps_whole_large_file(big_file: Path, tmp_path: Path):
+    """300 行且不带 limit 的整份读：截到 120 行放行，并落一条 clamp 审计。"""
     audit_path = tmp_path / "audit.log"
     result = _run_hook("guard_read.py", {"tool_input": {"file_path": str(big_file)}}, audit_path)
     payload = json.loads(result.stdout)
-    assert payload["hookSpecificOutput"]["permissionDecision"] == "deny"
-    assert [row["decision"] for row in _audit_rows(audit_path)] == ["deny"]
+    head = payload["hookSpecificOutput"]
+    assert head["permissionDecision"] == "allow"
+    assert head["updatedInput"]["limit"] == 120
+    assert [row["decision"] for row in _audit_rows(audit_path)] == ["clamp"]
 
 
 def test_read_hook_allows_segmented_read(big_file: Path, tmp_path: Path):
@@ -160,21 +162,29 @@ def test_read_hook_hints_partial_repeat(big_file: Path, tmp_path: Path):
     _read_hook(big_file, tmp_path, limit=50)
     payload = json.loads(_read_hook(big_file, tmp_path, limit=75).stdout)
     assert "permissionDecision" not in payload["hookSpecificOutput"]
-    assert "重读" in payload["hookSpecificOutput"]["additionalContext"]
+    assert "已在上下文" in payload["hookSpecificOutput"]["additionalContext"]
 
 
-def test_read_hook_denies_shifted_window(big_file: Path, tmp_path: Path):
-    """整段平移只多几行时拒绝，并给出可直接照抄的 offset。"""
+def test_read_hook_hints_shifted_window(big_file: Path, tmp_path: Path):
+    """整段平移只多几行时提示放行，并给出可直接照抄的 offset。"""
     _read_hook(big_file, tmp_path, limit=120)
     payload = json.loads(_read_hook(big_file, tmp_path, offset=11, limit=120).stdout)
     head = payload["hookSpecificOutput"]
-    assert head["permissionDecision"] == "deny"
-    assert "offset=121" in head["permissionDecisionReason"]
+    assert "permissionDecision" not in head
+    assert "offset=121" in head["additionalContext"]
 
 
-def test_read_hook_denies_limit_over_cap(big_file: Path, tmp_path: Path):
-    """单段上限和常驻规则里的数字必须一致，超了直接拒绝。"""
+def test_read_hook_clamps_limit_over_cap(big_file: Path, tmp_path: Path):
+    """单段上限和常驻规则里的数字必须一致，超了截断放行，不拒绝。"""
     payload = json.loads(_read_hook(big_file, tmp_path, limit=121).stdout)
+    head = payload["hookSpecificOutput"]
+    assert head["permissionDecision"] == "allow"
+    assert head["updatedInput"]["limit"] == 120
+
+
+def test_read_hook_denies_huge_read(big_file: Path, tmp_path: Path):
+    """≥1,500 行一次性放行代价超过一次完整重发，这一档才拒绝。"""
+    payload = json.loads(_read_hook(big_file, tmp_path, limit=1500).stdout)
     assert payload["hookSpecificOutput"]["permissionDecision"] == "deny"
 
 
@@ -197,7 +207,7 @@ def test_read_hook_serializes_concurrent_duplicates(big_file: Path, tmp_path: Pa
 
     decisions = [row["decision"] for row in _audit_rows(tmp_path / "audit.log")]
     assert decisions.count("allow") == 1
-    assert decisions.count("deny") == 5
+    assert decisions.count("hint") == 5
 
 
 def _pytest_hook(command: str, tmp_path: Path) -> subprocess.CompletedProcess:
@@ -205,11 +215,13 @@ def _pytest_hook(command: str, tmp_path: Path) -> subprocess.CompletedProcess:
     return _run_hook("guard_pytest.py", payload, tmp_path / "audit.log", tmp_path / "state.json")
 
 
-def test_pytest_hook_denies_same_target_with_pipe(tmp_path: Path):
-    """管道、重定向、tail 只改输出形态，不构成新的一次验证。"""
+def test_pytest_hook_hints_same_target_with_pipe(tmp_path: Path):
+    """管道、重定向、tail 只改输出形态，不构成新的一次验证：提示但不拦。"""
     assert _pytest_hook("pytest tests -q", tmp_path).stdout.strip() == ""
     payload = json.loads(_pytest_hook("pytest tests -q 2>&1 | tail -20", tmp_path).stdout)
-    assert payload["hookSpecificOutput"]["permissionDecision"] == "deny"
+    head = payload["hookSpecificOutput"]
+    assert "permissionDecision" not in head
+    assert "已放行" in head["additionalContext"]
 
 
 def test_pytest_hook_allows_different_target(tmp_path: Path):
@@ -230,28 +242,30 @@ def _search_hook(tool: str, tool_input: dict, tmp_path: Path) -> subprocess.Comp
     return _run_hook("guard_search.py", payload, tmp_path / "audit.log", tmp_path / "state.json")
 
 
-def test_search_hook_denies_repeated_grep(tmp_path: Path):
-    """同一 pattern 同一范围搜两次，第二次拒绝，且两次都落审计。"""
+def test_search_hook_hints_repeated_grep(tmp_path: Path):
+    """同一 pattern 同一范围搜两次，第二次提示放行，且两次都落审计。"""
     assert _search_hook("Grep", {"pattern": "foo", "path": "tests"}, tmp_path).stdout.strip() == ""
     payload = json.loads(
         _search_hook("Grep", {"pattern": "foo", "path": "tests"}, tmp_path).stdout
     )
-    assert payload["hookSpecificOutput"]["permissionDecision"] == "deny"
-    assert [row["decision"] for row in _audit_rows(tmp_path / "audit.log")] == ["allow", "deny"]
+    head = payload["hookSpecificOutput"]
+    assert "permissionDecision" not in head
+    assert "已放行" in head["additionalContext"]
+    assert [row["decision"] for row in _audit_rows(tmp_path / "audit.log")] == ["allow", "hint"]
 
 
-def test_search_hook_denies_narrower_path(tmp_path: Path):
-    """父目录搜过再缩到子目录，结果已被覆盖，拿不到新信息。"""
+def test_search_hook_hints_narrower_path(tmp_path: Path):
+    """父目录搜过再缩到子目录，结果已被覆盖，拿不到新信息：提示但不拦。"""
     _search_hook("Grep", {"pattern": "foo", "path": "."}, tmp_path)
     payload = json.loads(_search_hook("Grep", {"pattern": "foo", "path": "tests"}, tmp_path).stdout)
-    assert payload["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert "permissionDecision" not in payload["hookSpecificOutput"]
 
 
-def test_search_hook_denies_repeated_ls(tmp_path: Path):
-    """同目录 LS 两次也是重复事实。"""
+def test_search_hook_hints_repeated_ls(tmp_path: Path):
+    """同目录 LS 两次也是重复事实：提示但不拦。"""
     _search_hook("LS", {"path": "tests"}, tmp_path)
     payload = json.loads(_search_hook("LS", {"path": "tests"}, tmp_path).stdout)
-    assert payload["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert "permissionDecision" not in payload["hookSpecificOutput"]
 
 
 def test_stop_hook_blocks_missing_receipt(tmp_path: Path):
@@ -269,7 +283,7 @@ def test_stop_hook_allows_complete_receipt(tmp_path: Path):
     audit_path = tmp_path / "audit.log"
     message = (
         "回执：\n"
-        "- 轮数：2 / 10 ｜ 请求：4 ｜ 上下文：20,447→44,057\n"
+        "- 轮数：2 / 10 ｜ 请求：4 ｜ 上下文：20,447→44,057 ｜ 还能发 5 条\n"
         "- 搜索/读取：Grep×3 · 读 120 行 ｜ 输出峰：3KB ｜ 越界：无\n"
         "- 成本：输入 1,200 + 输出 34 = 合计 1,234"
     )
@@ -293,7 +307,7 @@ def test_stop_hook_blocks_cost_without_number(tmp_path: Path):
     audit_path = tmp_path / "audit.log"
     message = (
         "回执：\n"
-        "- 轮数：2 / 10 ｜ 请求：4 ｜ 上下文：1,000→2,000\n"
+        "- 轮数：2 / 10 ｜ 请求：4 ｜ 上下文：1,000→2,000 ｜ 还能发 5 条\n"
         "- 搜索/读取：无 ｜ 输出峰：1KB ｜ 越界：无\n"
         "- token 成本见上一轮"
     )
@@ -308,7 +322,7 @@ def test_stop_hook_allows_no_new_requests(tmp_path: Path):
     audit_path = tmp_path / "audit.log"
     message = (
         "回执：\n"
-        "- 轮数：2 / 10 ｜ 请求：- ｜ 上下文：-→-\n"
+        "- 轮数：2 / 10 ｜ 请求：- ｜ 上下文：-→- ｜ 还能发 5 条\n"
         "- 搜索/读取：各 1 次 ｜ 输出峰：1KB ｜ 越界：无\n\n"
         "- 成本：未计量（以平台账单为准）"
     )
@@ -321,7 +335,7 @@ def test_stop_hook_allows_pasted_cost_table(tmp_path: Path):
     audit_path = tmp_path / "audit.log"
     message = (
         "回执：\n"
-        "- 轮数：2 / 10 ｜ 请求：4 ｜ 上下文：20,447→44,057\n"
+        "- 轮数：2 / 10 ｜ 请求：4 ｜ 上下文：20,447→44,057 ｜ 还能发 5 条\n"
         "- 搜索/读取：各 1 次 ｜ 输出峰：3KB ｜ 越界：无\n"
         "- 成本：输入 117,398 + 输出 2,445 = 合计 119,843\n"
         "| 请求 | 动作 | 对象 | 输入 | 输出 | 成本 |\n|---|---|---|---|---|---|\n"
@@ -336,7 +350,7 @@ def test_stop_hook_allows_fullwidth_slash_round(tmp_path: Path):
     audit_path = tmp_path / "audit.log"
     message = (
         "回执：\n"
-        "- 轮数：2／15 ｜ 请求：3 ｜ 上下文：1,000→2,000（首轮提问）\n"
+        "- 轮数：2／15 ｜ 请求：3 ｜ 上下文：1,000→2,000（首轮提问） ｜ 还能发 5 条\n"
         "- 搜索/读取：搜索 1 次；读取 0 个文件 ｜ 越界：无\n\n"
         "- 成本：未计量（以平台账单为准）"
     )
@@ -364,7 +378,7 @@ def test_stop_hook_allows_cost_followed_by_token_cost_mention(tmp_path: Path):
     audit_path = tmp_path / "audit.log"
     message = (
         "回执：\n"
-        "- 轮数：2 / 10 ｜ 请求：4 ｜ 上下文：20,447→44,057\n"
+        "- 轮数：2 / 10 ｜ 请求：4 ｜ 上下文：20,447→44,057 ｜ 还能发 5 条\n"
         "- 搜索/读取：各 1 次 ｜ 输出峰：3KB ｜ 越界：无\n\n"
         "- 成本：输入 117,398 + 输出 2,445 = 合计 119,843"
         "（明细已由 `token_cost.py --round` 出表）"

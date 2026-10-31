@@ -217,10 +217,11 @@ def _plain_text(fragment: str) -> str:
 def catalogue_url(filters: ExploreCatalogueConfig, *, page: int = 1) -> str:
     """按筛选配置拼目录列表页 URL。
 
-    参数名就是站点筛选表单里的 `name`：`st` 类别、`a` 年份、`m` 材质、`t` 直径、
-    `p` 页码、`q` 每页条数；其余保持空串，与站点生成的 URL 一致。
+    参数名就是站点筛选表单里的 `name`：`e` 发行方、`st` 类别、`a` 年份、`m` 材质、
+    `t` 直径、`p` 页码、`q` 每页条数；其余保持空串，与站点生成的 URL 一致。
     """
     params = {
+        "e": filters.issuer,
         "r": "",
         "st": filters.collectible_type,
         "cat": "y",
@@ -235,7 +236,7 @@ def catalogue_url(filters: ExploreCatalogueConfig, *, page: int = 1) -> str:
         "dg": "",
         "i": "",
         "b": "",
-        "m": filters.composition_id,
+        "m": filters.composition_id if filters.composition_id is not None else "",
         "f": "",
         "t": filters.diameter_mm,
         "t2": "",
@@ -536,6 +537,7 @@ async def _fetch_bytes_via_cdp(
     会吃 403 —— 它带不过浏览器的校验态；只有真实导航才行。
     """
     try:
+        from playwright.async_api import TimeoutError as PlaywrightTimeoutError
         from playwright.async_api import async_playwright
     except ImportError as exc:  # pragma: no cover - 只在没装依赖时走到
         raise NumistaPageError(
@@ -553,14 +555,26 @@ async def _fetch_bytes_via_cdp(
         context = contexts[0] if contexts else await browser.new_context()
         page = await context.new_page()
         try:
-            await page.goto(
-                TYPE_PAGE_URL.format(type_id=type_id),
-                wait_until="domcontentloaded",
-                timeout=timeout_seconds * 1000,
-            )
+            try:
+                await page.goto(
+                    TYPE_PAGE_URL.format(type_id=type_id),
+                    wait_until="domcontentloaded",
+                    timeout=timeout_seconds * 1000,
+                )
+            except PlaywrightTimeoutError as exc:
+                raise NumistaPageError(f"{type_id} 类型页打开超时 {timeout_seconds}s") from exc
             await _wait_for_table(page, timeout_seconds)
             for side, url in urls.items():
-                response = await page.goto(url, wait_until="load", timeout=timeout_seconds * 1000)
+                try:
+                    response = await page.goto(
+                        url, wait_until="load", timeout=timeout_seconds * 1000
+                    )
+                except PlaywrightTimeoutError:
+                    # 单张图超时只丢这一面，别把整轮采集打断
+                    logger.warning(
+                        "Numista %s 图加载超时 %ss，跳过（%s）", side, timeout_seconds, url
+                    )
+                    continue
                 if response is None or not response.ok:
                     raise NumistaPageError(
                         f"{side} 图下载失败：HTTP {response.status if response else '无响应'}（{url}）"
@@ -569,6 +583,8 @@ async def _fetch_bytes_via_cdp(
                 if not body:
                     raise NumistaPageError(f"{side} 图拿到空内容（{url}）")
                 payloads[side] = body
+            if not payloads:
+                raise NumistaPageError(f"{type_id} 图片全部加载超时 {timeout_seconds}s，跳过缓存")
         finally:
             await page.close()
     return payloads
@@ -604,15 +620,27 @@ async def download_series_images(
     if not wanted:
         raise NumistaPageError(f"{numista_id} 没有图片地址，无法下载")
 
+    IMAGE_DIR.mkdir(parents=True, exist_ok=True)
+    # 已经下载过的面直接复用（按 `序列号-面.*` 判存在），只补缺的那一面
+    saved: dict[str, Path] = {}
+    missing: dict[str, str] = {}
+    for side, url in wanted.items():
+        existing = sorted(IMAGE_DIR.glob(f"{numista_id}-{side}.*"))
+        if existing:
+            saved[side] = existing[0]
+        else:
+            missing[side] = url
+    if not missing:
+        logger.info("Numista 图片：系列/候选 %s 已存在，跳过下载", numista_id)
+        return saved
+
     payloads = await _fetch_bytes_via_cdp(
         cdp_url or config.coins.numista.cdp_url,
         numista_id,
-        wanted,
+        missing,
         timeout_seconds=config.coins.numista.timeout_seconds,
     )
 
-    IMAGE_DIR.mkdir(parents=True, exist_ok=True)
-    saved: dict[str, Path] = {}
     for side, body in payloads.items():
         path = image_path(numista_id, side, wanted[side])
         # 后缀可能与旧缓存不同，先清掉同一 side 的旧文件，避免留两份

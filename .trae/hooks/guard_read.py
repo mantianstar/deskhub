@@ -1,10 +1,12 @@
 """PreToolUse(Read) 门禁：大文件必须分段读（RULES.md §四），重复部分必须换 offset。
 
-三条判据：
-1. 单段超过 120 行（project-rules.md「单段 ≤120 行」）→ 拒绝；
-2. 请求区间已整段读过 → 拒绝；
-3. 重复率 > 80% 且新增 < 20 行 → 拒绝，并把「该从第几行接着读」算给模型。
+四条判据：
+1. 单段超过 120 行（project-rules.md「单段 ≤120 行」）→ 截到 120 行放行并提示；≥1,500 行才拒绝；
+2. 请求区间已整段读过 → 提示后放行；
+3. 重复率 > 80% 且新增 < 20 行 → 提示后放行，并把「该从第几行接着读」算给模型；
+4. 同一文件第 3 次起，提示点名「再读一次 ≈ 72k」——提示本身也会被后续每条请求重发。
 
+只提示不拒绝：一次 deny 约等于一次完整重发（约 5 万 token），截断 / 提示只有几百到几千 token。
 部分重读（例如 limit 从 50 加到 75）放行，但把「重读了几行」回注进上下文。
 审计固定记 offset / limit / new / repeat，事后能区分「同起点扩读」和「换位置正常读」。
 """
@@ -20,8 +22,11 @@ from pathlib import Path
 import _state
 
 MAX_LINES = 120
+HARD_LINES = 1500  # 超过这个行数，放行代价大于一次完整重发，才值得拒绝
 MAX_REPEAT_RATIO = 0.8
 MIN_NEW_LINES = 20
+NOISY_READ_COUNT = 3  # 同一文件读到第 3 次起，提示里点名单次成本
+REREAD_COST = "72k"  # 一次重读 ≈ 72k token（全量上下文重发 + 新增内容）
 
 REPO = Path(__file__).resolve().parents[2]
 AUDIT = Path(os.environ.get("DESKHUB_HOOK_AUDIT") or REPO / "data" / "hook_audit.log")
@@ -70,6 +75,23 @@ def hint(text: str) -> None:
     print(
         json.dumps(
             {"hookSpecificOutput": {"hookEventName": "PreToolUse", "additionalContext": text}},
+            ensure_ascii=False,
+        )
+    )
+
+
+def clamp(tool_input: dict, text: str) -> None:
+    """把超限的 limit 截到上限后放行：不重发、不丢这次调用。"""
+    print(
+        json.dumps(
+            {
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "permissionDecision": "allow",
+                    "updatedInput": tool_input,
+                    "additionalContext": text,
+                }
+            },
             ensure_ascii=False,
         )
     )
@@ -134,6 +156,13 @@ def fingerprint(path: str):
         return None
 
 
+def cost_note(nth: int) -> str:
+    """第 3 次起点名单次成本：同一句提示会随历史一起重发，说清代价比反复提醒有效。"""
+    if nth < NOISY_READ_COUNT:
+        return ""
+    return f"该文件本轮已读 {nth} 次，再读一次 ≈ {REREAD_COST} token。"
+
+
 def check(payload: dict, path: str, begin: int, end: int) -> tuple[str, str, str]:
     """返回 (decision, detail, text)：decision 取 allow / hint / deny，begin 为 0 基、end 为开区间。"""
     session_id = payload.get("session_id")
@@ -145,28 +174,35 @@ def check(payload: dict, path: str, begin: int, end: int) -> tuple[str, str, str
         slot = _state.bucket(state, session_id)
         reads = slot.setdefault("reads", {})
         prints = slot.setdefault("prints", {})
+        counts = slot.setdefault("read_counts", {})
         stamp = fingerprint(path)
         spans = reads.get(path) or []
         if stamp is not None and prints.get(path) != stamp:
             spans = []
+            reads[path] = []
             prints[path] = stamp
+            counts[path] = 0
+        nth = int(counts.get(path) or 0) + 1
+        counts[path] = nth
 
         holes = gaps(spans, begin, end)
         new = sum(stop - left for left, stop in holes)
         total = end - begin
         repeat = total - new
-        detail = f"new={new} repeat={repeat}"
+        detail = f"new={new} repeat={repeat} nth={nth}"
 
         if new <= 0:
-            return "deny", detail, (
-                f"{path} 的 {begin + 1}–{end} 行本会话已整段读过"
-                "（RULES.md §二.4：同一事实只验证一次）。没读到的部分换 offset 取。"
+            _state.save(state)
+            return "hint", detail, (
+                f"{path} 本轮第 {nth} 次读，第 {begin + 1}–{end} 行已在上下文；"
+                f"往后从第 {end + 1} 行接着读，这些行不必再取。{cost_note(nth)}"
             )
         if repeat and repeat / total > MAX_REPEAT_RATIO and new < MIN_NEW_LINES:
             first = holes[0][0] + 1
-            return "deny", detail, (
-                f"{path} 的 {begin + 1}–{end} 行里 {repeat} 行已读过，真正新增只有 {new} 行。"
-                f"不要整段重读：改 offset={first} limit={new} 只取没读过的部分。"
+            _state.save(state)
+            return "hint", detail, (
+                f"{path} 本轮第 {nth} 次读，第 {begin + 1}–{end} 行里 {repeat} 行已在上下文，"
+                f"只有 {new} 行是新的；从第 {first} 行接着读（offset={first} limit={new}）。{cost_note(nth)}"
             )
 
         reads[path] = merge_spans(spans + [[begin, end]])
@@ -176,8 +212,8 @@ def check(payload: dict, path: str, begin: int, end: int) -> tuple[str, str, str
         return "allow", detail, ""
     first = holes[0][0] + 1
     return "hint", detail, (
-        f"{path} 本次 {total} 行里 {repeat} 行是重读；新增从第 {first} 行开始，"
-        f"下次直接 offset={first} limit={new}。"
+        f"{path} 本轮第 {nth} 次读，{repeat} 行已在上下文；新增从第 {first} 行起共 {new} 行，"
+        f"下次从第 {first} 行接着读。{cost_note(nth)}"
     )
 
 
@@ -199,17 +235,28 @@ def main() -> None:
     except (TypeError, ValueError):
         limit = None
 
-    if limit is not None and limit > MAX_LINES:
-        audit(path, "deny", f"limit={limit}>{MAX_LINES}")
-        deny(f"Read 的 limit={limit} 超过单段 {MAX_LINES} 行上限（RULES.md §四），请改成分段读。")
-        return
-
     raw_offset = tool_input.get("offset")
     try:
         offset = int(raw_offset) if raw_offset is not None else 1
     except (TypeError, ValueError):
         offset = 1
     begin = max(offset - 1, 0)
+
+    if limit is not None and limit > MAX_LINES:
+        if limit >= HARD_LINES:
+            audit(path, "deny", f"limit={limit}>={HARD_LINES}")
+            deny(
+                f"Read 的 limit={limit} 一次带进 ≥{HARD_LINES} 行，放行代价超过一次完整重发（RULES.md §四）。"
+                f"请按 ≤{MAX_LINES} 行分段读。"
+            )
+            return
+        audit(path, "clamp", f"limit={limit}>{MAX_LINES}")
+        clamp(
+            {**tool_input, "offset": offset, "limit": MAX_LINES},
+            f"Read 的 limit={limit} 超过单段 {MAX_LINES} 行，本次已截到 {MAX_LINES} 行放行；"
+            f"接着读用 offset={offset + MAX_LINES}。",
+        )
+        return
 
     if limit is not None:
         decision, detail, text = check(payload, path, begin, begin + limit)
@@ -230,10 +277,18 @@ def main() -> None:
         audit(path, "allow", f"offset={offset} beyond total={total}")
         return
     if remaining > MAX_LINES:
-        audit(path, "deny", f"total={total} offset={offset}")
-        deny(
-            f"{path} 共 {total} 行，整份读会刷屏（RULES.md §四：单轮 ≤200 行）。"
-            f"请带 offset/limit 分段读，单段 ≤{MAX_LINES} 行；不要原样重试。"
+        if remaining >= HARD_LINES:
+            audit(path, "deny", f"total={total} offset={offset}")
+            deny(
+                f"{path} 共 {total} 行，一次读 ≥{HARD_LINES} 行的代价超过一次完整重发（RULES.md §四）。"
+                f"请带 offset/limit 分段读，单段 ≤{MAX_LINES} 行。"
+            )
+            return
+        audit(path, "clamp", f"total={total} offset={offset}")
+        clamp(
+            {**tool_input, "offset": offset, "limit": MAX_LINES},
+            f"{path} 共 {total} 行，本次只给第 {offset}–{offset + MAX_LINES - 1} 行；"
+            f"接着读用 offset={offset + MAX_LINES}。",
         )
         return
 

@@ -12,6 +12,8 @@
           <th class="nowrap">年份</th>
           <th class="nowrap">年号</th>
           <th>面值</th>
+          <th>发行系列</th>
+          <th>发行主题</th>
           <th>所属收藏系列</th>
           <th class="nowrap">品相</th>
           <th class="nowrap">操作</th>
@@ -24,11 +26,15 @@
           <td class="nowrap">{{ combo.era }}</td>
           <td class="nowrap">{{ combo.era_label }}</td>
           <td>{{ combo.denomination }}</td>
+          <td class="nowrap">{{ combo.theme or '—' }}</td>
+          <td class="nowrap">{{ combo.coin_name or '—' }}</td>
           <td class="coin-grade-collection">{{ combo.collection_name or '—' }}</td>
           <td class="nowrap">
             <input type="hidden" name="country" value="{{ combo.country }}">
             <input type="hidden" name="era" value="{{ combo.era }}">
             <input type="hidden" name="denomination" value="{{ combo.denomination }}">
+            <input type="hidden" name="theme" value="{{ combo.theme }}">
+            <input type="hidden" name="coin_name" value="{{ combo.coin_name }}">
             <select name="grade" aria-label="品相">
               <option value=""{{ ' selected' if not combo.grade else '' }}>未录入</option>
               {% for grade in grades %}
@@ -41,6 +47,8 @@
                     data-country="{{ combo.country }}"
                     data-era="{{ combo.era }}"
                     data-denomination="{{ combo.denomination }}"
+                    data-theme="{{ combo.theme }}"
+                    data-coin-name="{{ combo.coin_name }}"
                     title="删除整行：清掉该组合的全部历史订单与品相记录">删除</button>
           </td>
         </tr>

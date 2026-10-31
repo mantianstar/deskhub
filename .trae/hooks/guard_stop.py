@@ -23,12 +23,16 @@ ROUND_LINE_RE = re.compile(
     r"^[ \t]*(?:[-*][ \t]*)?轮数[：:][ \t]*\d+(?:[ \t]*[/／][ \t]*\d+)?[ \t]*[｜|]",
     re.M,
 )
+# 余额：轮数行末尾的「还能发 N 条」，由 `--round` 锚点行产出，模型只照抄（生成比感知强）。
+LEFT_LINE_RE = re.compile(r"还能发[ \t]*\d+[ \t]*条")
 # 「成本清单」只认固定行（docs/token-cost.md §3），不再猜「成本 + 数字」：
 #   - 成本：输入 3,789,650 + 输出 54,385 = 合计 3,844,035
 #   - 成本：未计量（以平台账单为准）
+# 数字允许 k / M / 万 后缀（如 342k、1.2M、34万），与 --round 输出的缩写口径一致。
+_NUM = r"[\d,]+(?:\.\d+)?[kKmM万]?"
 COST_LINE_RE = re.compile(
     r"^[ \t]*(?:[-*][ \t]*)?成本[：:][ \t]*"
-    r"(?:输入[ \t]*[\d,]+[ \t]*\+[ \t]*输出[ \t]*[\d,]+[ \t]*[=＝][ \t]*合计[ \t]*[\d,]+|未计量)"
+    r"(?:输入[ \t]*" + _NUM + r"[ \t]*\+[ \t]*输出[ \t]*" + _NUM + r"[ \t]*[=＝][ \t]*合计[ \t]*" + _NUM + r"|未计量)"
     r"[^\n]*$",
     re.M,
 )
@@ -64,9 +68,11 @@ def missing_parts(message: str) -> list[str]:
     tail = message[match.end() :]
     missing: list[str] = []
     if not ROUND_LINE_RE.search(tail):
-        missing.append("轮数行（`- 轮数：X ｜ 请求：X ｜ 上下文：X→X`）")
+        missing.append("轮数行（`- 轮数：3 ｜ 请求：4 ｜ 上下文：20,447→44,057`，数字换成实际值）")
+    if not LEFT_LINE_RE.search(tail):
+        missing.append("余额（轮数行末尾缺 `｜ 还能发 N 条`，照抄 `--round` 锚点行）")
     if not COST_LINE_RE.search(tail):
-        missing.append("token 成本清单（固定一行：`- 成本：输入 X + 输出 Y = 合计 Z`，无新增写 `- 成本：未计量`）")
+        missing.append("token 成本清单（固定一行，照抄 `--round` 末行，如 `- 成本：输入 213,171 + 输出 7,225 = 合计 220,396`；无新增写 `- 成本：未计量`）")
     return missing
 
 
@@ -91,10 +97,10 @@ def main() -> None:
                 "reason": (
                     "按 RULES.md §零.3，本条回复缺 "
                     + "、".join(missing)
-                    + "。请照抄四行骨架补齐：回执：\\n"
-                    + "- 轮数：X ｜ 请求：X ｜ 上下文：X→X\\n"
-                    + "- 搜索/读取：… ｜ 输出峰：XKB ｜ 越界：无\\n"
-                    + "- 成本：输入 X + 输出 Y = 合计 Z"
+                    + "。补齐四行（尖括号换实际数字，别照抄占位符）：回执：\\n"
+                    + "- 轮数：<轮数> ｜ 请求：<请求数> ｜ 上下文：<起始>→<结束> ｜ 还能发 <N> 条\\n"
+                    + "- 搜索/读取：<明细> ｜ 输出峰：<KB> ｜ 越界：无\\n"
+                    + "- 成本：输入 <输入> + 输出 <输出> = 合计 <合计>"
                 ),
             },
             ensure_ascii=False,

@@ -467,18 +467,20 @@ def _render_manage(
 @router.get("/coins/info")
 def info_page(
     request: Request,
+    object_type: str = "",
     country: str = "",
     year: str = "",
     denomination: str = "",
     composition: str = "",
 ) -> Response:
-    """信息查询页：按国家 + 年份 + 面值 + 材质查**本地已采集**的系列（不调接口）。"""
+    """信息查询页：按货币类型 + 国家 + 年份 + 面值 + 材质查**本地已采集**的系列（不调接口）。"""
     parsed_year, year_error = _parse_year(year)
     series_list = repository.search_coin_series(
         issuer=country or None,
         year=parsed_year,
         denomination=denomination or None,
         composition=composition or None,
+        object_type=object_type or None,
         cn=True,
     )
     return templates.TemplateResponse(
@@ -487,6 +489,8 @@ def info_page(
         {
             "request": request,
             "page_title": "币库",
+            "object_types": repository.list_coin_series_object_types(cn=True),
+            "object_type": object_type,
             "countries": repository.list_coin_series_countries(cn=True),
             "country": country,
             "year": year,
@@ -496,6 +500,11 @@ def info_page(
             "compositions": repository.list_coin_series_compositions(cn=True),
             "year_error": year_error,
             "series_list": series_list,
+            "commemorative_ids": {
+                item.numista_id
+                for item in series_list
+                if coins_collection.is_commemorative_object(item.object_type)
+            },
             # 图片与详情页同规矩（spec §14.15）：Numista 图不允许跨站引用，
             # 列表卡里只渲染**已缓存到本地**的那一侧，其余给占位（卡片本身是 <a>，不能再嵌链接）。
             "series_images": {
@@ -565,6 +574,21 @@ def series_page(request: Request, numista_id: int) -> Response:
             "has_reverse_image": coins_numista_web.cached_image(numista_id, "reverse") is not None,
         },
     )
+
+
+@router.post("/coins/series/{numista_id}/issue-fields")
+def save_series_issue_fields(
+    numista_id: int,
+    issue_series: str = Form(""),
+    issue_theme: str = Form(""),
+    return_to: str = Form(""),
+) -> Response:
+    """保存系列详情页人工维护的发行系列 / 发行主题。"""
+    if not repository.update_coin_series_issue_fields(
+        numista_id, issue_series=issue_series, issue_theme=issue_theme
+    ):
+        return Response(status_code=404)
+    return _redirect(return_to or f"/coins/series/{numista_id}")
 
 
 @router.get("/coins/series/{numista_id}/image/{side}")
@@ -726,13 +750,11 @@ def _grades_url(country: str, year: str, denomination: str) -> str:
     return f"/coins/grades?{query}"
 
 
-def _normalize_grade(country: str, year: str, denomination: str) -> tuple[str, str, str]:
-    """把「国家 / 年份 / 面值」统一成落库口径（与页面展示、去重键同一份实现）。"""
-    return (
-        coins_grades.normalize_country(country),
-        coins_grades.normalize_year(year),
-        coins_grades.normalize_denomination(denomination),
-    )
+def _normalize_grade(
+    country: str, year: str, denomination: str, theme: str = "", coin_name: str = ""
+) -> tuple[str, str, str, str, str]:
+    """把「国家 / 年份 / 面值 / 主题 / 名称」统一成落库口径（与页面展示、去重键同一份实现）。"""
+    return coins_grades.normalize_key(country, year, denomination, theme, coin_name)
 
 
 def _attach_collection_names(combos) -> None:
@@ -808,9 +830,12 @@ def grades_page(
 def add_grade(
     request: Request,
     country: str = Form(...),
-    year: str = Form(...),
+    year: str = Form(""),
     era_name: str = Form(""),
     denomination: str = Form(...),
+    theme: str = Form(""),
+    coin_name: str = Form(""),
+    entry: str = Form(""),
     grade: str = Form(""),
     next: str = Form(""),
     fragment: str = Form(""),
@@ -825,14 +850,24 @@ def add_grade(
     年份本身是 4 位公历年时忽略年号。
     带 `fragment=1` 时（页面局部刷新）只返回结果片段，按当前筛选条件重查，不跳转。
     """
+    if entry:
+        # 收藏系列页：一个面板跨成员，年份下拉用「年份|主题|名称」定位唯一一条
+        parts = entry.split("|")
+        if len(parts) != 3:
+            return Response(status_code=400)
+        year, theme, coin_name = parts
     raw_year = year.strip()
     era = raw_year if not era_name.strip() or (len(raw_year) == 4 and raw_year.isdigit()) else f"{era_name.strip()}{raw_year}"
-    key_country, key_era, key_denomination = _normalize_grade(country, era, denomination)
+    key_country, key_era, key_denomination, key_theme, key_coin_name = _normalize_grade(
+        country, era, denomination, theme, coin_name
+    )
     if not (key_country and key_era and key_denomination):
         return Response(status_code=400)
     if grade not in COIN_PURCHASE_GRADES:
         return Response(status_code=400)
-    repository.upsert_coin_purchase_grade(key_country, key_era, key_denomination, grade)
+    repository.upsert_coin_purchase_grade(
+        key_country, key_era, key_denomination, grade, key_theme, key_coin_name
+    )
     if fragment:
         return templates.TemplateResponse(
             request,
@@ -852,6 +887,8 @@ def delete_combo(
     country: str = Form(...),
     era: str = Form(...),
     denomination: str = Form(...),
+    theme: str = Form(""),
+    coin_name: str = Form(""),
     filter_country: str = Form(""),
     filter_year: str = Form(""),
     filter_denomination: str = Form(""),
@@ -859,16 +896,25 @@ def delete_combo(
     """删除整行（历史错误数据）：清掉该组合的全部历史订单 + 该组合的品相记录。
 
     库里存的是**原始**写法，故先按同一口径统一、再逐个比对订单（见 `grades.order_ids_for_combo`）。
+    订单本身没有主题 / 名称，具名行的删除只清品相记录，不动订单。
     注意：重跑 `coins-parse-orders` 会把 `orders.xlsx` 里的订单重新导回来；画像标签也不会自动重算。
     """
-    key_country, key_era, key_denomination = _normalize_grade(country, era, denomination)
+    key_country, key_era, key_denomination, key_theme, key_coin_name = _normalize_grade(
+        country, era, denomination, theme, coin_name
+    )
     if not (key_country and key_era and key_denomination):
         return Response(status_code=400)
-    order_ids = coins_grades.order_ids_for_combo(
-        repository.list_coin_order_keys(), key_country, key_era, key_denomination
+    order_ids = (
+        []
+        if (key_theme or key_coin_name)
+        else coins_grades.order_ids_for_combo(
+            repository.list_coin_order_keys(), key_country, key_era, key_denomination
+        )
     )
     deleted = repository.delete_coin_orders(order_ids)
-    repository.delete_coin_purchase_grade(key_country, key_era, key_denomination)
+    repository.delete_coin_purchase_grade(
+        key_country, key_era, key_denomination, key_theme, key_coin_name
+    )
     logger.info(
         "删除品相录入整行：%s / %s / %s（连带历史订单 %d 条）",
         key_country,
@@ -884,35 +930,49 @@ def save_grades(
     country: list[str] = Form(default=[]),
     era: list[str] = Form(default=[]),
     denomination: list[str] = Form(default=[]),
+    theme: list[str] = Form(default=[]),
+    coin_name: list[str] = Form(default=[]),
     grade: list[str] = Form(default=[]),
     filter_country: str = Form(""),
     filter_year: str = Form(""),
     filter_denomination: str = Form(""),
 ) -> Response:
-    """保存录入的品相：一行一个组合（四个字段按行对齐）。
+    """保存录入的品相：一行一个组合（国家 / 年份 / 面值 / 品相对齐）。
 
-    下拉选「未录入」（空串）→ 清除该组合的记录；其余按 `(country, era, denomination)` upsert。
+    主题 / 名称是后加的列，旧表单不带这两个字段，缺失时按空串补齐。
+    下拉选「未录入」（空串）→ 清除该组合的记录；其余按
+    `(country, era, denomination, theme, coin_name)` upsert。
     任一行的键不完整或品相非法 → 400（整批不落库，避免半截写入）。
     """
     if not (len(country) == len(era) == len(denomination) == len(grade)):
         return Response(status_code=400)
+    theme = theme + [""] * (len(grade) - len(theme))
+    coin_name = coin_name + [""] * (len(grade) - len(coin_name))
 
-    pending: list[tuple[str, str, str, str]] = []
-    for raw_country, raw_era, raw_denomination, value in zip(country, era, denomination, grade):
-        key_country, key_era, key_denomination = _normalize_grade(
-            raw_country, raw_era, raw_denomination
+    pending: list[tuple[str, str, str, str, str, str]] = []
+    for raw_country, raw_era, raw_denomination, raw_theme, raw_coin_name, value in zip(
+        country, era, denomination, theme, coin_name, grade
+    ):
+        key_country, key_era, key_denomination, key_theme, key_coin_name = _normalize_grade(
+            raw_country, raw_era, raw_denomination, raw_theme, raw_coin_name
         )
         if not (key_country and key_era and key_denomination):
             return Response(status_code=400)
         if value and value not in COIN_PURCHASE_GRADES:
             return Response(status_code=400)
-        pending.append((key_country, key_era, key_denomination, value))
+        pending.append(
+            (key_country, key_era, key_denomination, key_theme, key_coin_name, value)
+        )
 
-    for key_country, key_era, key_denomination, value in pending:
+    for key_country, key_era, key_denomination, key_theme, key_coin_name, value in pending:
         if value:
-            repository.upsert_coin_purchase_grade(key_country, key_era, key_denomination, value)
+            repository.upsert_coin_purchase_grade(
+                key_country, key_era, key_denomination, value, key_theme, key_coin_name
+            )
         else:
-            repository.delete_coin_purchase_grade(key_country, key_era, key_denomination)
+            repository.delete_coin_purchase_grade(
+                key_country, key_era, key_denomination, key_theme, key_coin_name
+            )
     return _redirect(_grades_url(filter_country, filter_year, filter_denomination))
 
 
@@ -1453,10 +1513,15 @@ def collection_page(
             "filtered_total": filtered_total,
             "reason_labels": COIN_REASON_LABELS,
             "reason_filter_labels": COIN_REASON_FILTER_LABELS,
-            "collection_options": [
-                {"key": profile.collection.collection_key, "name": profile.collection.name}
-                for profile in profiles
-            ],
+            "collection_options": list(
+                {
+                    profile.collection.collection_key: {
+                        "key": profile.collection.collection_key,
+                        "name": profile.collection.name,
+                    }
+                    for profile in profiles
+                }.values()
+            ),
             "filter_series": series,
             "filter_reason": reason,
             "filter_hit": hit,
@@ -1481,6 +1546,44 @@ def _collections_redirect() -> Response:
     return _redirect("/coins/collections")
 
 
+def _collection_grade_entries(profiles: list, series_by_id: dict[int, object]) -> list[dict]:
+    """收藏系列品相面板的下拉：跨成员列出「年份(名称)」，value 携带定位键。
+
+    一条收藏系列只保留一个「保存品相」面板；年份 + 发行系列 + 发行主题只用于定位唯一一条记录，
+    真正落库的只有品相字段。
+    面值取**成员**（Numista 系列）的面值 —— 同一收藏系列可能挂多个面值的成员；
+    成员无面值时退回收藏系列的面值。
+    """
+    rows: list[dict] = []
+    for profile in profiles:
+        theme = (profile.issue_series or "").strip()
+        coin_name = (profile.issue_theme or "").strip()
+        member_denominations = [
+            (series_by_id[series_id].denomination or "").strip()
+            for series_id in profile.member_series_ids
+            if series_id in series_by_id
+        ]
+        denomination = next(
+            (value for value in member_denominations if value),
+            profile.collection.denomination,
+        )
+        for entry in profile.entries:
+            rows.append(
+                {
+                    "year": entry.year,
+                    "label": entry.label,
+                    "value": f"{entry.year}|{theme}|{coin_name}",
+                    "status": entry.status,
+                    "denomination": denomination,
+                }
+            )
+    order = {"upgrade": 0, "missing": 1, "owned": 2}
+    rows.sort(key=lambda row: (order.get(str(row["status"]), 3), int(row["year"])))
+    for index, row in enumerate(rows):
+        row["selected"] = index == 0
+    return rows
+
+
 @router.get("/coins/collections")
 def collections_page(
     request: Request,
@@ -1501,11 +1604,34 @@ def collections_page(
     for member in members:
         members_by_collection.setdefault(member.collection_id, []).append(member)
 
-    profiles = coins_collection.load_profiles()
-    profile_by_id = {profile.collection.id: profile for profile in profiles}
-    # 映射候选只列青铜/铜系列，避免银、镍币误入
+    profiles = coins_collection.load_member_profiles()
+    # 编辑区按成员展示品相录入；年份并排与统计用收藏系列级画像（按 (年份, 名称) 唯一）
+    profiles_by_collection: dict[int, list[object]] = {}
+    for profile in profiles:
+        if profile.collection.id is not None:
+            profiles_by_collection.setdefault(profile.collection.id, []).append(profile)
+    grade_entries_by_collection = {
+        collection_id: _collection_grade_entries(rows, series_by_id)
+        for collection_id, rows in profiles_by_collection.items()
+    }
+    collection_profiles: dict[int, object] = {}
+    collection_stats: dict[int, dict[str, object]] = {}
+    for profile in coins_collection.merge_profiles(profiles, series_by_id):
+        if profile.collection.id is None:
+            continue
+        collection_profiles[profile.collection.id] = profile
+        collection_stats[profile.collection.id] = {
+            "years": len(profile.entries),
+            "owned": len(profile.owned_entries),
+            "missing": len(profile.missing_entries),
+            "upgrade": len(profile.upgrade_entries),
+            "min_year": profile.min_year,
+            "max_year": profile.max_year,
+            "size_band": profile.size_band,
+        }
+    # 映射候选列青铜/铜系列 + 纪念币（材质不限），避免银、镍币误入
     series_candidates = [
-        item for item in series if coins_collection.is_bronze_or_copper(item.composition)
+        item for item in series if coins_collection.is_eligible_series(item)
     ]
 
     try:
@@ -1585,8 +1711,17 @@ def collections_page(
             "expanded_id": expanded_id,
             "members_by_collection": members_by_collection,
             "series_by_id": series_by_id,
-            "profile_by_id": profile_by_id,
+            "profile_by_id": profiles_by_collection,
+            "profiles_by_collection": profiles_by_collection,
+            "grade_entries_by_collection": grade_entries_by_collection,
+            "collection_profiles": collection_profiles,
+            "collection_stats": collection_stats,
             "series_candidates": series_candidates,
+            "commemorative_ids": {
+                item.numista_id
+                for item in series
+                if coins_collection.is_commemorative_object(item.object_type)
+            },
             "member_filters": member_filters,
             "owner_by_series": owner_by_series,
             "coverage_pct": coverage_pct,
@@ -1617,7 +1752,10 @@ def add_collection(
             size_value = float(size_mm)
         except ValueError:
             return Response(status_code=400)
-    key = collection_key.strip() or f"{country}-{ruler_value or '-'}-{denomination}"
+    if collection_key.strip():
+        key = collection_key.strip()
+    else:
+        key = f"{country}-{ruler_value or '-'}-{denomination}"
     display_name = name.strip() or " · ".join(
         part for part in (country, ruler_value or "-", denomination) if part
     )
@@ -1644,18 +1782,32 @@ def delete_collection(collection_id: int) -> Response:
 def add_collection_member(
     collection_id: int = Form(...),
     numista_series_id: int = Form(...),
+    mcountry: str = Form(""),
+    mruler: str = Form(""),
+    mdenomination: str = Form(""),
 ) -> Response:
     series = repository.get_coin_series(numista_series_id, cn=True)
     if series is None:
         return Response(status_code=400)
-    if not coins_collection.is_bronze_or_copper(series.composition):
+    if not coins_collection.is_eligible_series(series):
         return Response(status_code=400)
     name = " · ".join(
         part for part in (series.issuer, series.ruler, series.denomination) if part
     ) or series.title
     repository.upsert_coin_collection_member(collection_id, numista_series_id, name)
-    # 加入后保持该收藏系列展开，避免用户重新找卡片
-    return _redirect(f"/coins/collections?expand={collection_id}#collection-{collection_id}")
+    # 加入后保持该收藏系列展开，并带上已选国家 / 执政者 / 面值，避免条件被重置
+    return _redirect(
+        _query_url(
+            "/coins/collections",
+            {
+                "expand": collection_id,
+                "mcountry": mcountry,
+                "mruler": mruler,
+                "mdenomination": mdenomination,
+            },
+            anchor=f"collection-{collection_id}",
+        )
+    )
 
 
 @router.post("/coins/collections/members/{member_id}/delete")

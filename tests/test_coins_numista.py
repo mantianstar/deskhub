@@ -552,3 +552,17 @@ async def test_delete_coin_series_removes_series_issues_and_values(temp_db):
     assert repository.list_coin_issue_values(670) == []
 
     assert repository.delete_coin_series(670) is False  # 再删不命中
+
+
+def test_series_from_type_keeps_series_and_commemorated_topic():
+    info = numista.series_from_type(
+        {
+            "id": 1,
+            "issuer": {"name": "China, People's Republic of"},
+            "series": [{"name": "Panda"}],
+            "commemorated_topic": "Beijing Olympics",
+        }
+    )
+    assert info.series == ["Panda"]
+    assert info.commemorated_topic == "Beijing Olympics"
+    assert info.issuer == "China"

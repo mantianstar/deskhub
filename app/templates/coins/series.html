@@ -77,6 +77,22 @@
   <span class="coin-fact">厚度 <b>{{ (series.thickness_mm ~ ' mm') if series.thickness_mm else '—' }}</b></span>
   <span class="coin-fact">币边 <b>{{ series.edge or '—' }}</b></span>
   <span class="coin-fact">造币厂 <b>{{ (series.mints | join('、')) if series.mints else '—' }}</b></span>
+  <span class="coin-fact">原所属系列 <b>{{ (series.series | join('、')) if series.series else '—' }}</b></span>
+  <span class="coin-fact">原纪念主题 <b>{{ series.commemorated_topic or '—' }}</b></span>
+  <span class="coin-fact">发行系列 <b>{{ series.issue_series or '—' }}</b></span>
+  <span class="coin-fact">发行主题 <b>{{ series.issue_theme or '—' }}</b>
+    {% if not is_candidate %}
+    <details class="coin-issue-edit">
+      <summary title="编辑发行系列 / 发行主题">✎</summary>
+      <form class="coin-member-meta" method="post" action="/coins/series/{{ series.numista_id }}/issue-fields">
+        <input type="hidden" name="return_to" value="{{ return_to }}">
+        <input class="search-input" type="text" name="issue_series" value="{{ series.issue_series }}" placeholder="发行系列">
+        <input class="search-input" type="text" name="issue_theme" value="{{ series.issue_theme }}" placeholder="发行主题">
+        <button class="btn btn-ghost" type="submit">保存</button>
+      </form>
+    </details>
+    {% endif %}
+  </span>
 </div>
 
 {% if series.obverse_desc or series.obverse_lettering or series.reverse_desc or series.reverse_lettering or series.comments %}

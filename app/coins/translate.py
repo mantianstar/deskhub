@@ -405,6 +405,7 @@ SERIES_ZH_FIELDS = (
     "obverse_desc",
     "reverse_desc",
     "comments",
+    "commemorated_topic",
 )
 ISSUE_ZH_FIELDS = ("mint", "comment", "edge")
 
@@ -413,6 +414,7 @@ def series_to_zh(series: CoinSeries) -> CoinSeries:
     """系列 → 中文版系列（只翻指定字段，其余原样）。"""
     changes = {field: to_zh(getattr(series, field)) for field in SERIES_ZH_FIELDS}
     changes["mints"] = mints_to_zh(series.mints)
+    changes["series"] = mints_to_zh(series.series)
     return replace(series, **changes)
 
 

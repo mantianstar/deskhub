@@ -12,6 +12,14 @@
 
 <form class="search-form" method="get" action="/coins/info">
   <div class="search-row search-row-labeled">
+    <label class="field">货币类型
+      <select class="search-input" name="object_type">
+        <option value=""{% if not object_type %} selected{% endif %}>全部</option>
+        {% for name in object_types %}
+        <option value="{{ name }}"{% if name == object_type %} selected{% endif %}>{{ name }}</option>
+        {% endfor %}
+      </select>
+    </label>
     <label class="field">国家
       <input class="search-input" type="text" name="country" value="{{ country }}"
              list="coin-country-options" placeholder="可输入，如 英国" autocomplete="off">
@@ -62,6 +70,7 @@
         <h2 class="coin-series-title">
           {{ item.issuer or '—' }} · {{ item.denomination or '—' }}
           · {{ item.min_year or '?' }}–{{ item.max_year or '?' }}
+          {%- if item.numista_id in commemorative_ids and item.issue_theme %} · {{ item.issue_theme }}{% endif %}
         </h2>
         <p class="coin-series-line">执政者：{{ item.ruler or '—' }} · 目录号：{{ item.catalog_no or '—' }}</p>
         <p class="coin-series-line">
