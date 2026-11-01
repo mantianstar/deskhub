@@ -149,6 +149,7 @@ def test_parse_catalogue_index_empty_result():
 
 def test_catalogue_url_uses_configured_filters():
     filters = config_module.ExploreCatalogueConfig(
+        issuer="chine",
         collectible_type=7,
         year="1900-1950",
         composition_id=3,
@@ -161,9 +162,9 @@ def test_catalogue_url_uses_configured_filters():
     assert "m=3" in url and "t=25-30" in url
     assert "p=2" in url and "q=100" in url
 
-    # 默认筛选：China · Circulating commemorative coins，其余条件为空串（不参与筛选）
+    # 默认筛选：Circulating commemorative coins，发行方与其余条件为空串（不参与筛选）
     default_url = numista_web.catalogue_url(config_module.ExploreCatalogueConfig())
-    assert "e=chine" in default_url and "st=2" in default_url
+    assert "e=&" in default_url and "st=2" in default_url
     assert "m=None" not in default_url and "a=None" not in default_url
 
 

@@ -546,7 +546,7 @@ Numista 单版接口只给 `year / mintage / comment / mint_letter / references 
 配置（`config.yaml` → `coins.collection`）：`min_results`（默认 5）、`rarity_floor`（0.005）、
 `top_upgrades_per_series`（3）、`denomination_tiers`（面值层级）、
 `explore_max_details`（20）、
-`explore_catalogue`（目录筛选：`issuer`=chine、`collectible_type`=2（circulating
+`explore_catalogue`（目录筛选：`issuer` 默认空串 = 不限发行方、`collectible_type`=2（circulating
 commemorative coins）、`year` / `composition_id` / `diameter_mm` 留空表示不限、`per_page`=200）。
 
 ### 14.17.7 验收

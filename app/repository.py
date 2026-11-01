@@ -2814,7 +2814,7 @@ def coin_filter_scan_pages() -> dict[str, int]:
 
 
 def set_coin_filter_scan_page(category_code: str, next_page: int) -> None:
-    """写断点：1 表示该分类已扫完、下一轮从头开始。"""
+    """写断点：1 表示从未深扫过；`filter_scan.DEEP_DONE_PAGE` 表示深处已扫到底。"""
     with db.connect() as conn, conn:
         conn.execute(
             "INSERT INTO coin_filter_scan_progress (category_code, next_page, updated_at)"

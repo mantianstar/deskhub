@@ -10,6 +10,45 @@
 
 ---
 
+## v1.116 — 2026-11-01 增量扫加 3 天下限、关闭晚间深扫、日配额降到 600
+
+**起因**：增量扫会一路翻到空页，回补收益低；夜间 21:00 深扫与 07:00 增量共用 600 次日配额，实测日耗偏高。
+
+**改动**：`filter_scan.DAILY_QUOTA` 900→600；新增 `INCREMENTAL_LOOKBACK_DAYS = 3`，增量扫整页 `update_time` 早于 3 天即停（只停当前二级分类，其他分类继续）；`scheduler` 移除 `daily_coins_deep`、`DAILY_COINS_DEEP_JOB_ID`、`DEEP_HOUR` 及 21:00 注册，深扫改为手工跑 `coins-filter-scan --full`。
+
+**验证**：`tests/test_coins_filter_scan.py` 新增 `test_incremental_scan_stops_when_pages_older_than_lookback`；首轮全量 526 passed / 1 failed（`test_deep_scan_job_fires_at_9pm_local` 仍引用已删的 `DAILY_COINS_DEEP_JOB_ID`，随用例一并移除），删除后全量 526 passed, 1 skipped。
+
+**影响**：`app/coins/filter_scan.py`、`app/scheduler.py`、`tests/test_coins_filter_scan.py`、`tests/test_scheduler.py`（移除 21:00 深扫用例）。
+
+---
+
+## v1.115 — 2026-11-01 深扫空页不再重置断点、加 7 天回补下限、热点分类抬高顶部页数
+
+**起因**：`home.filter` 排序实测正常（`update_time desc`），「每天都缺一块」来自扫描深度与配额：外币一天 1000+ 条≈50 页，顶部 20 页只覆盖 1 天；深扫命中空页把断点重置为 1，每轮重扫近期页；站点 `totalSize` 封顶 10000，更早成交不可能再出现在列表里。
+
+**改动**：`filter_scan.DEEP_DONE_PAGE`（`FULL_MAX_PAGES + 1`）——深扫空页写该标记表示「已扫到底」，不再重置为 1；新增 `DEEP_LOOKBACK_DAYS = 7`，深处整页 `update_time` 早于下限即停且断点不前移（更深的页只会更旧）；新增 `HOT_CATE_PAGES = {"11070": 60}` 与 `_top_pages()`，顶部页从固定的 20 页改为按分类抬高；深扫配额池扣减各类实际顶部页数。
+
+**验证**：`tests/test_coins_filter_scan.py` 11 passed；全量 526 passed, 1 skipped。
+
+**影响**：`app/coins/filter_scan.py`、`app/repository.py`（断点注释）、`tests/test_coins_filter_scan.py`。
+
+---
+
+## v1.114 — 2026-10-31 S 类小改加 9 请求硬顶
+
+**起因**：2026-10-31「加一个筛选条件」实测 16 条请求 / 53.7 万 token（`data/llm_usage.jsonl` 2752–2767）。
+拆解后 65.6% 是固定底座 × 请求数，无一次性大注入，纯靠请求数堆出来：定位轮拆 6 条（`ls` + 根目录查找 + 2 条目录级宽搜）、
+收集轮拆 5 条（含同文件读完再搜）、编辑轮拆 3 条（3 文件串行提交）。旧模板只说「五轮」，没规定每轮内能拆几条串行。
+
+**改动**：`PROJECT_MAP.md` 速查表加「请求」列，定 **硬顶 9 = 提问 1 + 五轮 5 + 记账 1 + 返修 2**，
+并加实测反例表（四处浪费与各自代价）；轮 1 禁目录级宽搜（`path` 不许指向 `app` / `tests` / 仓库根）、
+轮 2 禁读完再搜同文件、轮 3 要求多文件并行 `Edit`。`RULES.md` §二 同步目标 9 请求与四条禁止项，
+`.trae/rules/project-rules.md` 常驻摘要同步判据。
+
+**验证**：纯文档改动，未跑 pytest；三份文件对「9 请求 / 目录级宽搜 / 并行 `Edit`」表述一致。
+
+**影响**：[RULES.md](./RULES.md) §二 ｜ [PROJECT_MAP.md](./PROJECT_MAP.md) 速查：S ｜ [.trae/rules/project-rules.md](./.trae/rules/project-rules.md)
+
 ## v1.113 — 2026-10-31 预算提示分档重构 + 交接文档落地
 
 **起因**：40k 上下文阈值被 94% 的会话段越过（2026-10-26~31 共 32 段，段起点 p50 21.7k），

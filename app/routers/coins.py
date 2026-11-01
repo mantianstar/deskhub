@@ -1056,8 +1056,12 @@ def _member_filters(
     country_param: str,
     ruler_param: str,
     denomination_param: str,
+    title_param: str = "",
 ) -> dict[str, object]:
-    """某一收藏系列的成员候选：国家 / 执政者 / 面值默认取收藏系列自身的值。"""
+    """某一收藏系列的成员候选：国家 / 执政者 / 面值默认取收藏系列自身的值。
+
+    已加入任一收藏系列的 series 不进入候选。
+    """
     countries = sorted(series_by_country)
     default_country = country_by_norm.get(textmatch.normalize(collection.country))
     selected_country = country_param or default_country or collection.country
@@ -1116,6 +1120,11 @@ def _member_filters(
         and item.numista_id not in member_ids
     ]
     candidates.sort(key=lambda item: (item.min_year or 9999, item.numista_id))
+    if title_param:
+        keyword = textmatch.normalize(title_param)
+        candidates = [
+            item for item in candidates if keyword in textmatch.normalize(item.title or "")
+        ]
     return {
         "countries": countries,
         "country": selected_country,
@@ -1123,6 +1132,7 @@ def _member_filters(
         "ruler": selected_ruler,
         "denominations": denominations,
         "denomination": selected_denomination,
+        "title": title_param,
         "candidates": candidates[:COIN_MEMBER_CANDIDATE_LIMIT],
         "candidate_total": len(candidates),
         "truncated": len(candidates) > COIN_MEMBER_CANDIDATE_LIMIT,
@@ -1143,8 +1153,9 @@ def explore_page(
     country: str = "",
     ruler: str = "",
     denomination: str = "",
+    status: str = "candidate",
 ) -> Response:
-    """探索候选池：目录扫描得到的外部铜币系列（忽略的不再显示），可按国家 / 执政者 / 面值筛选。"""
+    """探索候选池：目录扫描得到的外部铜币系列（忽略的不再显示），可按状态 / 国家 / 执政者 / 面值筛选。"""
     rows = []
     for candidate in repository.list_coin_explore_candidates():
         info = candidate.payload_cn
@@ -1186,12 +1197,18 @@ def explore_page(
     in_scope = [row for row in in_country if not selected_ruler or row["ruler"] == selected_ruler]
     denominations = _explore_options(in_scope, "denomination")
     selected_denomination = denomination if denomination in denominations else ""
+    # 状态默认只看「候选」，选「全部」（空值）才回显采纳项；忽略项本就不入池
+    status_options = [item for item in COIN_EXPLORE_STATUSES if item != "ignored"]
+    selected_status = status if status in ("", *status_options) else "candidate"
     candidates = [
         row
         for row in in_scope
-        if not selected_denomination or row["denomination"] == selected_denomination
+        if (not selected_status or row["status"] == selected_status)
+        and (not selected_denomination or row["denomination"] == selected_denomination)
     ]
-    filters_active = bool(selected_country or selected_ruler or selected_denomination)
+    filters_active = bool(
+        selected_country or selected_ruler or selected_denomination
+    ) or selected_status != "candidate"
     return templates.TemplateResponse(
         request,
         "coins/explore.html",
@@ -1206,6 +1223,7 @@ def explore_page(
             "ruler": selected_ruler,
             "denominations": denominations,
             "denomination": selected_denomination,
+            "status": selected_status,
             "filters_active": filters_active,
             "statuses": COIN_EXPLORE_STATUSES,
             "status_labels": COIN_EXPLORE_STATUS_LABELS,
@@ -1592,6 +1610,7 @@ def collections_page(
     mcountry: str = "",
     mruler: str = "",
     mdenomination: str = "",
+    mtitle: str = "",
 ) -> Response:
     """收藏系列映射维护：新建收藏系列 + 把 Numista series 手工合并进来。"""
     collections = repository.list_coin_collection_series()
@@ -1650,12 +1669,6 @@ def collections_page(
     )
     expanded_id = expand_id if any(item.id == expand_id for item in paged_collections) else 0
 
-    collection_name_by_id = {collection.id: collection.name for collection in collections}
-    owner_by_series = {
-        member.numista_series_id: collection_name_by_id.get(member.collection_id)
-        for member in members
-    }
-
     series_by_country: dict[str, list[CoinSeries]] = {}
     for item in series_candidates:
         if item.issuer:
@@ -1664,6 +1677,7 @@ def collections_page(
         textmatch.normalize(country): country for country in series_by_country
     }
 
+    all_member_ids = {member.numista_series_id for member in members}
     member_filters: dict[int, dict[str, object]] = {}
     for collection in paged_collections:
         is_expanded = collection.id == expanded_id
@@ -1671,13 +1685,11 @@ def collections_page(
             collection,
             series_by_country,
             country_by_norm,
-            {
-                member.numista_series_id
-                for member in members_by_collection.get(collection.id or 0, [])
-            },
+            all_member_ids,
             mcountry if is_expanded else "",
             mruler if is_expanded else "",
             mdenomination if is_expanded else "",
+            mtitle if is_expanded else "",
         )
 
     prev_url = (
@@ -1723,7 +1735,6 @@ def collections_page(
                 if coins_collection.is_commemorative_object(item.object_type)
             },
             "member_filters": member_filters,
-            "owner_by_series": owner_by_series,
             "coverage_pct": coverage_pct,
             "missing_year_total": missing_year_total,
             "upgrade_year_total": upgrade_year_total,
@@ -1785,6 +1796,7 @@ def add_collection_member(
     mcountry: str = Form(""),
     mruler: str = Form(""),
     mdenomination: str = Form(""),
+    mtitle: str = Form(""),
 ) -> Response:
     series = repository.get_coin_series(numista_series_id, cn=True)
     if series is None:
@@ -1804,6 +1816,7 @@ def add_collection_member(
                 "mcountry": mcountry,
                 "mruler": mruler,
                 "mdenomination": mdenomination,
+                "mtitle": mtitle,
             },
             anchor=f"collection-{collection_id}",
         )

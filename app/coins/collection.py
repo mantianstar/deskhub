@@ -150,12 +150,20 @@ def build_year_specs(
     by_issue = _values_by_issue(values)
     grouped: dict[int, list[CoinYearSpec]] = defaultdict(list)
     for issue in issues:
-        if issue.year is None or is_proof_issue(issue, series):
+        year = issue.year
+        if (
+            year is None
+            and series is not None
+            and series.min_year is not None
+            and series.min_year == series.max_year
+        ):
+            year = series.min_year
+        if year is None or is_proof_issue(issue, series):
             continue
         value = by_issue.get(issue.numista_id)
-        grouped[int(issue.year)].append(
+        grouped[int(year)].append(
             CoinYearSpec(
-                year=int(issue.year),
+                year=int(year),
                 gregorian_year=issue.gregorian_year,
                 numista_issue_id=issue.numista_id,
                 mintage=issue.mintage,

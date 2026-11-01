@@ -263,6 +263,25 @@ def test_year_specs_pick_max_mintage_and_exclude_proof():
     assert specs[1901][0].mintage is None
 
 
+def test_year_specs_fallback_to_series_year_when_single_year():
+    series = _series(1, min_year=1984, max_year=1984)
+    issues = [_issue(11, 1, year=None, mintage=100)]
+    specs = collection.build_year_specs(issues, [], series=series)
+
+    assert list(specs) == [1984]
+    assert specs[1984][0].year == 1984
+    assert specs[1984][0].numista_issue_id == 11
+    assert specs[1984][0].gregorian_year is None
+
+
+def test_year_specs_no_fallback_when_series_spans_years():
+    series = _series(1, min_year=1980, max_year=1984)
+    issues = [_issue(11, 1, year=None, mintage=100)]
+    specs = collection.build_year_specs(issues, [], series=series)
+
+    assert specs == {}
+
+
 # ---------------------------------------------------------------- 画像
 
 
@@ -1736,6 +1755,26 @@ def test_explore_page_filters_by_country_ruler_denomination(web):
 
     page = web.get("/coins/explore", params={"country": "法国"})
     assert "990005" in page.text and "990006" not in page.text
+
+
+def test_explore_page_filters_by_status_defaults_to_candidate(web):
+    repository.upsert_coin_explore_candidate(_explore_candidate(990007))
+    repository.upsert_coin_explore_candidate(
+        _explore_candidate(990008, title="法国 · 20 分")
+    )
+    repository.set_coin_explore_candidate_status(990008, "adopted")
+
+    # 默认只看「候选」
+    page = web.get("/coins/explore")
+    assert "990007" in page.text and "990008" not in page.text
+    assert '<option value="candidate" selected>' in page.text
+
+    page = web.get("/coins/explore", params={"status": "adopted"})
+    assert "990008" in page.text and "990007" not in page.text
+    assert '<option value="adopted" selected>' in page.text
+
+    page = web.get("/coins/explore", params={"status": ""})
+    assert "990007" in page.text and "990008" in page.text
 
 
 def test_collection_member_add_keeps_selected_filters(web):

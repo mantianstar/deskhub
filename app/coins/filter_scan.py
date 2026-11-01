@@ -9,9 +9,10 @@
 - 不回写 `outcome` / `final_price` / `closed_at`：终态口径归 `pipeline._finalize`。
 
 风控：串行 + 页间隔抖动、日配额、429/403 冷却 6 小时、单实例。
-全量模式每轮先扫**所有**分类的顶部页（最新拍品在此），剩余配额再按二级分类
-断点（`coin_filter_scan_progress`）续扫深处；站点 `totalSize` 封顶 10,000，
-单类最多 476 页。
+全量模式每轮先扫**所有**分类的顶部页（最新拍品在此，热点分类页数更高），剩余配额
+再按二级分类断点（`coin_filter_scan_progress`）续扫深处；站点 `totalSize` 封顶
+10,000，单类最多 476 页。深扫只回填 `DEEP_LOOKBACK_DAYS` 内的成交，整页更旧即停；
+空页记 `DEEP_DONE_PAGE` 表示已到底，不再每轮从近期页重扫。
 """
 
 from __future__ import annotations
@@ -35,8 +36,11 @@ RUN_KIND = "home_filter"
 PROVIDER = "mxiqi_filter"
 PARENT_CODE = "11000"
 PAGES_PER_CATE = 20
+HOT_CATE_PAGES = {"11070": 60}  # 外币成交最多，20 页只覆盖 1 天，顶部页单独抬高
 MIN_DEEP_PAGES = 5  # 深扫按未覆盖成交比例分配时，每个分类保底页数
 FULL_MAX_PAGES = 500  # 站点 totalSize 封顶 10000 / 21 条每页 = 476 页，500 只是兜底
+DEEP_DONE_PAGE = FULL_MAX_PAGES + 1  # 深扫已到底的断点标记：再往后没有可回填的成交
+DEEP_LOOKBACK_DAYS = 7  # 深扫只回填这么多天内的成交，整页更旧就停（更深的页只会更旧）
 PAGE_INTERVAL_SECONDS = 0.5
 PAGE_JITTER_SECONDS = 0.2
 REQUEST_RETRIES = 2
@@ -44,6 +48,7 @@ DAILY_QUOTA = 600
 COOLDOWN_HOURS = 6
 COOLDOWN_STATUSES = (403, 429)
 INCREMENTAL_SLACK_HOURS = 1
+INCREMENTAL_LOOKBACK_DAYS = 3  # 增量扫最多回补到 3 天前，整页更旧即停（避免空扫）
 STALE_PAGES_TO_STOP = 2
 
 _UTC_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
@@ -139,6 +144,11 @@ def update_row(item: dict) -> dict[str, object] | None:
 
 def _hours_ago_iso(hours: float) -> str:
     return (datetime.now(timezone.utc) - timedelta(hours=hours)).strftime(_UTC_FORMAT)
+
+
+def _top_pages(cate: str, pages_per_cate: int) -> int:
+    """每轮必扫的顶部页数：热点分类按 `HOT_CATE_PAGES` 抬高上限。"""
+    return max(pages_per_cate, HOT_CATE_PAGES.get(cate, 0))
 
 
 def _parse_utc(value: str | None) -> datetime | None:
@@ -297,10 +307,12 @@ async def scan(
 ) -> ScanResult:
     """扫硬币二级分类的 `home.filter`，回填已入库拍品的热度。
 
-    `full=True` 先扫各分类前 `pages_per_cate` 页，剩余配额按**未回填出价人数的成交数**
-    分配后再按二级分类断点续扫深处（约 3000+ 页），配额用尽后下一轮从断点继续。默认每个
-    二级分类只扫前 `pages_per_cate` 页。增量模式用「上次成功扫描开始时间 - 1h」
-    做停止条件。
+    `full=True` 先扫各分类前 `pages_per_cate` 页（热点分类按 `HOT_CATE_PAGES` 抬高），
+    剩余配额按**未回填出价人数的成交数**分配后再按二级分类断点续扫深处（约 3000+ 页），
+    配额用尽后下一轮从断点继续；深处整页早于 `DEEP_LOOKBACK_DAYS` 天即停，空页写
+    `DEEP_DONE_PAGE` 标记已到底。默认每个二级分类只扫前 `pages_per_cate` 页。增量模式用
+    「上次成功扫描开始时间 - 1h」做停止条件；整页早于 `INCREMENTAL_LOOKBACK_DAYS` 天
+    即停（避免空扫）。
     """
     global _running
     if _running:
@@ -327,14 +339,17 @@ async def _scan(
         return ScanResult(status="skipped", stopped="no_categories")
 
     cutoff = None if full else _incremental_cutoff()
+    incr_floor = None if full else _hours_ago_iso(INCREMENTAL_LOOKBACK_DAYS * 24)
     used = repository.count_api_calls_since(PROVIDER, _day_start(config))
+    top_pages = {cate: _top_pages(cate, pages_per_cate) for cate in cates}
+    deep_floor = _hours_ago_iso(DEEP_LOOKBACK_DAYS * 24) if full else None
 
     # 全量模式的深扫配额按「未回填出价人数的成交数」分配给各二级分类：缺口越大的分类
     # 分到越多页，避免有库存但近期没成交的分类长期停在顶部页
     deep_pages: dict[str, int] = {}
     if full:
         weights = _gap_weights()
-        pool = max(DAILY_QUOTA - used - pages_per_cate * len(cates), 0)
+        pool = max(DAILY_QUOTA - used - sum(top_pages.values()), 0)
         deep_pages = allocate_pages(
             {cate: weights.get(cate, 0) for cate in cates}, pool, minimum=MIN_DEEP_PAGES
         )
@@ -365,9 +380,9 @@ async def _scan(
                 }
                 stale_pages = 0
                 if phase == "top":  # 每轮必扫：最新拍品在最前面
-                    page_nums = range(1, pages_per_cate + 1)
+                    page_nums = range(1, top_pages[cate] + 1)
                 else:  # 深处续扫：从断点接着往下，顶部页不推进断点；只扫本类分到的页数
-                    start = max(resume_at.get(cate, 1), pages_per_cate + 1)
+                    start = max(resume_at.get(cate, 1), top_pages[cate] + 1)
                     stop = min(FULL_MAX_PAGES, start + deep_pages.get(cate, 0) - 1)
                     page_nums = range(start, stop + 1)
                 for page in page_nums:
@@ -402,8 +417,8 @@ async def _scan(
                         continue
 
                     if not raw_items:
-                        if phase == "deep":  # 该分类已扫完：清断点，下一轮从头开始
-                            repository.set_coin_filter_scan_page(cate, 1)
+                        if phase == "deep":  # 站点封顶已到底：记「已扫到底」，不再每轮从近期页重扫
+                            repository.set_coin_filter_scan_page(cate, DEEP_DONE_PAGE)
                         break
 
                     pages += 1
@@ -422,8 +437,22 @@ async def _scan(
                         done, absent = repository.update_coin_lot_filter_heat(rows)
                         updated += done
                         missing += absent
-                    if phase == "deep":  # 断点推进：配额用尽时下一轮从这里继续
+                    if phase == "deep":
+                        if deep_floor is not None and _page_all_stale(
+                            raw_items, deep_floor, config.app.tz
+                        ):
+                            # 整页早于回补下限，更深的页只会更旧：本类到此为止，断点不前移
+                            stopped = "deep_floor"
+                            break
+                        # 断点推进：配额用尽时下一轮从这里继续
                         repository.set_coin_filter_scan_page(cate, page + 1)
+
+                    if incr_floor is not None and _page_all_stale(
+                        raw_items, incr_floor, config.app.tz
+                    ):
+                        # 增量扫回补下限：整页早于 3 天前，本类停下（其他分类不受影响）
+                        stopped = "incremental_floor"
+                        break
 
                     if cutoff is not None:
                         stale_pages = stale_pages + 1 if _page_all_stale(raw_items, cutoff, config.app.tz) else 0

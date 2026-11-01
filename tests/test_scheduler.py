@@ -82,25 +82,6 @@ async def test_daily_job_fires_at_7am_local_with_plan_settings(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_deep_scan_job_fires_at_9pm_local(tmp_path):
-    """全量深扫：21:00 业务时区，单实例不重叠。"""
-    cfg = _config(tmp_path)
-    cfg = replace(cfg, coins=replace(cfg.coins, enabled=True))
-    active = scheduler.start(cfg)
-    try:
-        job = active.get_job(scheduler.DAILY_COINS_DEEP_JOB_ID)
-        assert job is not None
-        assert job.max_instances == 1
-
-        fields = {field.name: str(field) for field in job.trigger.fields}
-        assert fields["hour"] == "21"
-        assert fields["minute"] == "0"
-        assert str(job.trigger.timezone) == "Asia/Shanghai"
-    finally:
-        active.shutdown(wait=False)
-
-
-@pytest.mark.asyncio
 async def test_missed_run_within_grace_still_fires(tmp_path):
     """07:00 那一刻本机没醒：只要还在 grace 内，进程起来后照样补跑，而不是被丢掉。"""
     active = scheduler.start(_config(tmp_path))

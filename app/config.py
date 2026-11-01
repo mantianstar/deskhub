@@ -143,7 +143,7 @@ class ExploreCatalogueConfig:
     空串 / None 表示该条件不参与筛选。
     """
 
-    issuer: str = "chine"
+    issuer: str = ""
     collectible_type: int = 2
     year: str = ""
     composition_id: int | None = None
@@ -529,9 +529,7 @@ def _parse_coins(raw: dict[str, Any]) -> CoinsConfig:
                 collection, "explore_max_details", 10, f"{where}.collection", minimum=1
             ),
             explore_catalogue=ExploreCatalogueConfig(
-                issuer=_opt_str(
-                    catalogue, "issuer", "chine", f"{where}.collection.explore_catalogue"
-                ),
+                issuer=_opt_text(catalogue, "issuer", f"{where}.collection.explore_catalogue"),
                 collectible_type=_opt_int(
                     catalogue,
                     "collectible_type",

@@ -237,15 +237,17 @@
               {% endfor %}
             </select>
           </label>
+          <label class="field">标题
+            <input class="search-input" type="text" name="mtitle" value="{{ filters['title'] }}" placeholder="模糊查找候选标题">
+          </label>
           <label class="field coin-member-candidate">候选 series
             <select name="numista_series_id"{% if not filters["candidates"] %} disabled{% endif %}>
               {% for series in filters["candidates"] %}
-              {% set owner = owner_by_series.get(series.numista_id) %}
               <option value="{{ series.numista_id }}">
                 {% if series.numista_id in commemorative_ids %}
-                {{ series.numista_id }} · {{ series.title or '—' }} · {{ series.issuer or '—' }} · {{ series.issue_series or '—' }} · {{ series.issue_theme or '—' }} · {{ series.min_year or '?' }}–{{ series.max_year or '?' }} · {{ series.denomination or '—' }} · {{ series.composition or '—' }}{% if series.size_mm %} · {{ series.size_mm }} mm{% endif %}{% if owner %}（现属 {{ owner }}）{% endif %}
+                {{ series.numista_id }} · {{ series.title or '—' }} · {{ series.issuer or '—' }} · {{ series.issue_series or '—' }} · {{ series.issue_theme or '—' }} · {{ series.min_year or '?' }}–{{ series.max_year or '?' }} · {{ series.denomination or '—' }} · {{ series.composition or '—' }}{% if series.size_mm %} · {{ series.size_mm }} mm{% endif %}
                 {% else %}
-                {{ series.numista_id }} · {{ series.title or '—' }} · {{ series.issuer or '—' }} · {{ series.ruler or '—' }} · {{ series.denomination or '—' }} · {{ series.min_year or '?' }}–{{ series.max_year or '?' }}{% if series.composition %} · {{ series.composition }}{% endif %}{% if owner %}（现属 {{ owner }}）{% endif %}
+                {{ series.numista_id }} · {{ series.title or '—' }} · {{ series.issuer or '—' }} · {{ series.ruler or '—' }} · {{ series.denomination or '—' }} · {{ series.min_year or '?' }}–{{ series.max_year or '?' }}{% if series.composition %} · {{ series.composition }}{% endif %}
                 {% endif %}
               </option>
               {% endfor %}
@@ -257,11 +259,11 @@
                   {% if not filters["candidates"] %}disabled{% endif %}>加入</button>
         </form>
         {% if not filters["candidates"] %}
-        <p class="form-hint">当前国家 / 执政者 / 面值下没有可加入的青铜 / 铜 series。</p>
+        <p class="form-hint">当前国家 / 执政者 / 面值 / 标题下没有可加入的青铜 / 铜 series。</p>
         {% elif filters["truncated"] %}
-        <p class="form-hint">匹配 {{ filters["candidate_total"] }} 条，仅显示前 50 条，请缩小国家 / 执政者 / 面值范围。</p>
+        <p class="form-hint">匹配 {{ filters["candidate_total"] }} 条，仅显示前 50 条，请缩小国家 / 执政者 / 面值 / 标题范围。</p>
         {% else %}
-        <p class="form-hint">已属于其他收藏系列的候选会标注「现属 X」，加入后会移入本系列。</p>
+        <p class="form-hint">已加入收藏系列的 series 不会出现在候选中。</p>
         {% endif %}
       </details>
 

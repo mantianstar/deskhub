@@ -10,6 +10,14 @@
 
 <form class="search-form" method="get" action="/coins/explore">
   <div class="search-row search-row-labeled">
+    <label class="field">状态
+      <select class="search-input" name="status" onchange="this.form.requestSubmit();">
+        <option value="">全部</option>
+        {% for option in statuses if option != "ignored" %}
+        <option value="{{ option }}"{% if option == status %} selected{% endif %}>{{ status_labels[option] }}</option>
+        {% endfor %}
+      </select>
+    </label>
     <label class="field">国家
       <select class="search-input" name="country" onchange="this.form.ruler.value=''; this.form.denomination.value=''; this.form.requestSubmit();">
         <option value="">全部</option>
