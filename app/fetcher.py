@@ -146,7 +146,7 @@ def _published_at_from_url(link: str | None) -> str | None:
     `https://tech.meituan.com/2026/07/24/LongCat-MineExplorer.html` 对应文章页上的
     `2026-07-24`（plan §12 第 14 条）。
 
-    站点只给到「日」粒度，故取该日 00:00Z；页面按东八区显示成同日 08:00，日期不会漂。
+    站点只给到「日」粒度，故取该日 00:00 北京时间；页面直接显示同日 00:00，日期不会漂。
     路径里的数字凑不出合法日期时返回 None —— 宁可不填，也不要编一个时间。
     """
     if not link:
@@ -156,10 +156,10 @@ def _published_at_from_url(link: str | None) -> str | None:
         return None
     year, month, day = (int(part) for part in match.groups())
     try:
-        stamp = datetime(year, month, day, tzinfo=timezone.utc)
+        stamp = datetime(year, month, day)
     except ValueError:
         return None
-    return repository.to_utc_str(stamp)
+    return repository.to_local_str(stamp)
 
 
 def _entry_published_at(entry: dict, published_tz: ZoneInfo | None) -> str | None:
@@ -181,7 +181,7 @@ def _entry_published_at(entry: dict, published_tz: ZoneInfo | None) -> str | Non
         except (TypeError, ValueError):
             continue
         stamp = stamp.replace(tzinfo=published_tz or timezone.utc)
-        return repository.to_utc_str(stamp)
+        return repository.to_local_str(stamp)
     return _published_at_from_url(entry.get("link"))
 
 
@@ -245,7 +245,7 @@ async def _fetch_one(
     *,
     dry_run: bool,
 ) -> FetchOutcome:
-    started_at = repository.utcnow()
+    started_at = repository.now_local()
     http_status: int | None = None
     status = FetchStatus.OK
     error: str | None = None
@@ -293,7 +293,7 @@ async def _fetch_one(
         id=None,
         source_id=source.id,
         started_at=started_at,
-        finished_at=repository.utcnow(),
+        finished_at=repository.now_local(),
         status=status,
         http_status=http_status,
         items_new=0,

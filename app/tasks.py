@@ -154,10 +154,10 @@ async def _run(config: Config, key: str) -> None:
     """后台跑一个功能：异常就地兜住（没人 await 它），结局记进 `_last_state`。"""
     try:
         message = await RUNNERS[key](config)
-        _last_state[key] = RunState("ok", message, repository.utcnow())
+        _last_state[key] = RunState("ok", message, repository.now_local())
         logger.info("手动运行完成 %s：%s", key, message)
     except Exception as exc:  # noqa: BLE001 - 后台任务，异常只能在这里收掉
-        _last_state[key] = RunState("error", str(exc), repository.utcnow())
+        _last_state[key] = RunState("error", str(exc), repository.now_local())
         logger.warning("手动运行失败 %s：%s", key, exc)
     finally:
         _running.pop(key, None)

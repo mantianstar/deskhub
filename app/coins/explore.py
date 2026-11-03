@@ -106,7 +106,7 @@ def load_candidate_profiles() -> list[CoinCollectionProfile]:
     if not candidates:
         return []
     grades = repository.list_coin_purchase_grades()
-    now = repository.utcnow()
+    now = repository.now_local()
     profiles: list[CoinCollectionProfile] = []
     for candidate in candidates:
         series = _series_from_payload(candidate.payload_cn, now)
@@ -144,7 +144,7 @@ def adopt_candidate(numista_id: int) -> bool:
     candidate = repository.get_coin_explore_candidate(numista_id)
     if candidate is None:
         return False
-    now = repository.utcnow()
+    now = repository.now_local()
     series_en = _series_from_payload(candidate.payload, now)
     series_cn = _series_from_payload(candidate.payload_cn, now)
     en_id = repository.upsert_coin_series(series_en)
@@ -217,7 +217,7 @@ async def scan_candidates(
                 details += 1
                 issues = await api.issues(type_id, series=info)
                 cn_info = await numista._cn_series_info(info, translator)
-                now = repository.utcnow()
+                now = repository.now_local()
                 repository.upsert_coin_explore_candidate(
                     CoinExploreCandidate(
                         id=None,

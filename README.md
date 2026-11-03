@@ -173,11 +173,11 @@ curl -s 127.0.0.1:8765/healthz | python3 -m json.tool
   "db": "ok",
   "sources_total": 7,
   "sources_failing": 0,
-  "last_fetch_at": "2026-09-22T08:18:48Z"
+  "last_fetch_at": "2026-09-22T16:18:48"
 }
 ```
 
-（`sources_total` 含已被配置停用的源；`last_fetch_at` 为最近一次抓取的 UTC 时间，这里只是示例值。）
+（`sources_total` 含已被配置停用的源；`last_fetch_at` 为最近一次抓取的北京时间，这里只是示例值。）
 
 ## 配置
 

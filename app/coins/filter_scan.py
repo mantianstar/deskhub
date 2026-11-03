@@ -9,10 +9,11 @@
 - 不回写 `outcome` / `final_price` / `closed_at`：终态口径归 `pipeline._finalize`。
 
 风控：串行 + 页间隔抖动、日配额、429/403 冷却 6 小时、单实例。
-全量模式每轮先扫**所有**分类的顶部页（最新拍品在此，热点分类页数更高），剩余配额
-再按二级分类断点（`coin_filter_scan_progress`）续扫深处；站点 `totalSize` 封顶
-10,000，单类最多 476 页。深扫只回填 `DEEP_LOOKBACK_DAYS` 内的成交，整页更旧即停；
-空页记 `DEEP_DONE_PAGE` 表示已到底，不再每轮从近期页重扫。
+全量模式把当日剩余配额拆三段：顶部（页数按近 `TOP_LOOKBACK_DAYS` 日成交估算；距上次
+成功扫描不足 `TOP_REFRESH_HOURS` 时只留保活页）、昨日回补（从顶部窗口往后扫到本地
+昨天 0 点，每天只跑一次，不动深扫断点）、深扫（按二级分类断点续扫，缺口大者多分页，
+分到但无可用区间的页再二次回收）。站点 `totalSize` 封顶 10,000，单类最多 476 页。
+深扫按未覆盖成交数分页续扫，直到空页或 `FULL_MAX_PAGES` 底；空页记 `DEEP_DONE_PAGE`。
 """
 
 from __future__ import annotations
@@ -26,7 +27,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from app import repository
-from app.coins.gapi import SOLD_STATUS, GapiError, MxiqiGapi, to_utc_iso
+from app.coins.gapi import SOLD_STATUS, GapiError, MxiqiGapi, to_local_iso
 from app.config import Config
 from app.models import CoinFetchRun, CoinFetchStatus
 
@@ -35,23 +36,23 @@ logger = logging.getLogger(__name__)
 RUN_KIND = "home_filter"
 PROVIDER = "mxiqi_filter"
 PARENT_CODE = "11000"
-PAGES_PER_CATE = 20
-HOT_CATE_PAGES = {"11070": 60}  # 外币成交最多，20 页只覆盖 1 天，顶部页单独抬高
+PAGES_PER_CATE = 20  # 顶部窗口固定页数（home.filter 按 update_time 降序）
+TOP_REFRESH_HOURS = 6  # 距上次成功扫描不足该时长时，顶部只留保活页
+TOP_KEEPALIVE_PAGES = 1  # 顶部保活页数（避免整段重扫，又不至于完全不看最新拍品）
 MIN_DEEP_PAGES = 5  # 深扫按未覆盖成交比例分配时，每个分类保底页数
 FULL_MAX_PAGES = 500  # 站点 totalSize 封顶 10000 / 21 条每页 = 476 页，500 只是兜底
 DEEP_DONE_PAGE = FULL_MAX_PAGES + 1  # 深扫已到底的断点标记：再往后没有可回填的成交
-DEEP_LOOKBACK_DAYS = 7  # 深扫只回填这么多天内的成交，整页更旧就停（更深的页只会更旧）
 PAGE_INTERVAL_SECONDS = 0.5
 PAGE_JITTER_SECONDS = 0.2
 REQUEST_RETRIES = 2
-DAILY_QUOTA = 600
+DAILY_QUOTA = 900
 COOLDOWN_HOURS = 6
 COOLDOWN_STATUSES = (403, 429)
 INCREMENTAL_SLACK_HOURS = 1
 INCREMENTAL_LOOKBACK_DAYS = 3  # 增量扫最多回补到 3 天前，整页更旧即停（避免空扫）
 STALE_PAGES_TO_STOP = 2
 
-_UTC_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
+_UTC_FORMAT = "%Y-%m-%dT%H:%M:%S"
 _running = False
 
 
@@ -143,28 +144,20 @@ def update_row(item: dict) -> dict[str, object] | None:
 
 
 def _hours_ago_iso(hours: float) -> str:
-    return (datetime.now(timezone.utc) - timedelta(hours=hours)).strftime(_UTC_FORMAT)
-
-
-def _top_pages(cate: str, pages_per_cate: int) -> int:
-    """每轮必扫的顶部页数：热点分类按 `HOT_CATE_PAGES` 抬高上限。"""
-    return max(pages_per_cate, HOT_CATE_PAGES.get(cate, 0))
+    return repository.to_local_str(datetime.now(timezone.utc) - timedelta(hours=hours))
 
 
 def _parse_utc(value: str | None) -> datetime | None:
-    if not value:
-        return None
-    try:
-        return datetime.strptime(value, _UTC_FORMAT).replace(tzinfo=timezone.utc)
-    except ValueError:
-        return None
+    """存储串 → 带北京时区的 datetime（旧 `Z` 串也认）。"""
+    parsed = repository.parse_dt(value)
+    return parsed.replace(tzinfo=repository.BEIJING) if parsed is not None else None
 
 
 def _day_start(config: Config) -> str:
-    """业务时区当天 00:00（UTC ISO）：日配额按本地日期切。"""
+    """业务时区当天 00:00（北京时间存储格式）：日配额按本地日期切。"""
     now = datetime.now(config.app.tz)
-    return repository.to_utc_str(
-        now.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
+    return repository.to_local_str(
+        now.replace(hour=0, minute=0, second=0, microsecond=0)
     )
 
 
@@ -196,6 +189,59 @@ def _gap_weights() -> dict[str, int]:
     return repository.count_uncovered_sold_by_category()
 
 
+def _reclaim_pages(pages: dict[str, int], room: dict[str, int]) -> dict[str, int]:
+    """把超出各类可用区间（`room`）的页收回，再按余量比例转给还有空间的分类。"""
+    capped = {cate: min(n, max(room.get(cate, 0), 0)) for cate, n in pages.items()}
+    for _ in range(len(capped) + 1):
+        surplus = sum(pages.values()) - sum(capped.values())
+        spare = {
+            cate: room.get(cate, 0) - capped[cate]
+            for cate in capped
+            if room.get(cate, 0) > capped[cate]
+        }
+        if surplus <= 0 or not spare:
+            break
+        extra = allocate_pages(spare, min(surplus, sum(spare.values())), minimum=0)
+        capped = {cate: capped[cate] + extra.get(cate, 0) for cate in capped}
+    return capped
+
+
+def _top_refresh_due() -> bool:
+    """距上次成功扫描是否已超过 `TOP_REFRESH_HOURS`（不足则顶部不必整段重扫）。"""
+    for run in _home_filter_runs():
+        if run.status != CoinFetchStatus.OK:
+            continue
+        started = _parse_utc(run.started_at)
+        if started is None:
+            return True
+        return datetime.now(repository.BEIJING) - started >= timedelta(hours=TOP_REFRESH_HOURS)
+    return True
+
+
+def _log_allocation(
+    cates: list[str],
+    available: int,
+    top_pages: dict[str, int],
+    deep_pages: dict[str, int],
+    resume_at: dict[str, int],
+) -> None:
+    """把本轮两段配额按二级分类列出来，便于核对分配是否合理。"""
+    logger.info(
+        "home.filter 分段配额（可用 %d 页）：顶部 %d ｜ 深扫 %d",
+        available,
+        sum(top_pages.values()),
+        sum(deep_pages.values()),
+    )
+    for cate in cates:
+        logger.info(
+            "  分类配额 %s：顶部 %d ｜ 深扫 %d（断点 %s）",
+            cate,
+            top_pages[cate],
+            deep_pages.get(cate, 0),
+            resume_at.get(cate, 1),
+        )
+
+
 def _home_filter_runs(limit: int = 50) -> list[CoinFetchRun]:
     return [run for run in repository.latest_coin_fetch_runs(limit) if run.kind == RUN_KIND]
 
@@ -212,7 +258,7 @@ def _cooldown_until() -> str | None:
     if finished is None:
         return None
     until = finished + timedelta(hours=COOLDOWN_HOURS)
-    if until <= datetime.now(timezone.utc):
+    if until <= datetime.now(repository.BEIJING):
         return None
     return until.strftime(_UTC_FORMAT)
 
@@ -244,7 +290,7 @@ def _record_run(
             kind=RUN_KIND,
             target=target,
             started_at=started_at,
-            finished_at=repository.utcnow(),
+            finished_at=repository.now_local(),
             status=status,
             http_status=http_status,
             items_new=items_new,
@@ -293,7 +339,7 @@ def _page_all_stale(raw_items: list[dict], cutoff: str, tz) -> bool:
     if not raw_items:
         return False
     for item in raw_items:
-        stamp = to_utc_iso(item.get("update_time"), tz)
+        stamp = to_local_iso(item.get("update_time"), tz)
         if stamp is None or stamp >= cutoff:
             return False
     return True
@@ -307,10 +353,10 @@ async def scan(
 ) -> ScanResult:
     """扫硬币二级分类的 `home.filter`，回填已入库拍品的热度。
 
-    `full=True` 先扫各分类前 `pages_per_cate` 页（热点分类按 `HOT_CATE_PAGES` 抬高），
-    剩余配额按**未回填出价人数的成交数**分配后再按二级分类断点续扫深处（约 3000+ 页），
-    配额用尽后下一轮从断点继续；深处整页早于 `DEEP_LOOKBACK_DAYS` 天即停，空页写
-    `DEEP_DONE_PAGE` 标记已到底。默认每个二级分类只扫前 `pages_per_cate` 页。增量模式用
+    `full=True` 把当日剩余配额拆三段：顶部（页数按近 `TOP_LOOKBACK_DAYS` 日成交估算，
+    距上次成功扫描不足 `TOP_REFRESH_HOURS` 时只留保活页）、昨日回补（扫到本地昨天 0 点，
+    每天一次，不动深扫断点）、深扫（按未回填成交数分页续扫，余量二次回收）；配额用尽后
+    下一轮从断点继续，扫到空页或 `FULL_MAX_PAGES` 底。增量模式用
     「上次成功扫描开始时间 - 1h」做停止条件；整页早于 `INCREMENTAL_LOOKBACK_DAYS` 天
     即停（避免空扫）。
     """
@@ -318,7 +364,7 @@ async def scan(
     if _running:
         return ScanResult(status="skipped", stopped="running")
     _running = True
-    started = repository.utcnow()
+    started = repository.now_local()
     try:
         return await _scan(config, started, pages_per_cate=pages_per_cate, full=full)
     finally:
@@ -341,19 +387,33 @@ async def _scan(
     cutoff = None if full else _incremental_cutoff()
     incr_floor = None if full else _hours_ago_iso(INCREMENTAL_LOOKBACK_DAYS * 24)
     used = repository.count_api_calls_since(PROVIDER, _day_start(config))
-    top_pages = {cate: _top_pages(cate, pages_per_cate) for cate in cates}
-    deep_floor = _hours_ago_iso(DEEP_LOOKBACK_DAYS * 24) if full else None
+    top_pages = {cate: pages_per_cate for cate in cates}
+    if full and not _top_refresh_due():
+        # 刚扫过：顶部只留保活页，把配额让给深扫
+        top_pages = {cate: min(pages_per_cate, TOP_KEEPALIVE_PAGES) for cate in cates}
 
-    # 全量模式的深扫配额按「未回填出价人数的成交数」分配给各二级分类：缺口越大的分类
-    # 分到越多页，避免有库存但近期没成交的分类长期停在顶部页
+    progress = repository.coin_filter_scan_progress()
+    resume_at = {code: next_page for code, (next_page, _) in progress.items()}
+    available = max(DAILY_QUOTA - used, 0)
     deep_pages: dict[str, int] = {}
     if full:
-        weights = _gap_weights()
-        pool = max(DAILY_QUOTA - used - sum(top_pages.values()), 0)
-        deep_pages = allocate_pages(
-            {cate: weights.get(cate, 0) for cate in cates}, pool, minimum=MIN_DEEP_PAGES
+        if sum(top_pages.values()) > available:
+            top_pages = allocate_pages(top_pages, available, minimum=1)
+        # 只深扫还有未回填成交的分类：缺口为 0 的类不再占配额
+        gap = _gap_weights()
+        weights = {cate: gap[cate] for cate in cates if gap.get(cate, 0) > 0}
+        # 每类可用深扫区间：断点越靠后能分的页越少，分出去的会二次回收
+        room = {
+            cate: max(
+                FULL_MAX_PAGES - max(resume_at.get(cate, 1), top_pages[cate] + 1) + 1, 0
+            )
+            for cate in weights
+        }
+        pool = max(available - sum(top_pages.values()), 0)
+        deep_pages = _reclaim_pages(
+            allocate_pages(weights, pool, minimum=MIN_DEEP_PAGES), room
         )
-        logger.info("深扫配额按未覆盖成交数分配（可用 %d 页）：%s", pool, deep_pages)
+        _log_allocation(cates, available, top_pages, deep_pages, resume_at)
 
     def budget() -> None:
         nonlocal used
@@ -365,7 +425,6 @@ async def _scan(
     pages = items = updated = missing = 0
     stopped: str | None = None
     seen_items: set[object] = set()
-    resume_at = repository.coin_filter_scan_pages() if full else {}
 
     api = MxiqiGapi(config)
     await api.__aenter__()
@@ -379,9 +438,9 @@ async def _scan(
                     "status": SOLD_STATUS,
                 }
                 stale_pages = 0
-                if phase == "top":  # 每轮必扫：最新拍品在最前面
+                if phase == "top":  # 顶部窗口：最新拍品在最前面
                     page_nums = range(1, top_pages[cate] + 1)
-                else:  # 深处续扫：从断点接着往下，顶部页不推进断点；只扫本类分到的页数
+                else:  # 深扫：从断点续扫，只扫本类分到的页数
                     start = max(resume_at.get(cate, 1), top_pages[cate] + 1)
                     stop = min(FULL_MAX_PAGES, start + deep_pages.get(cate, 0) - 1)
                     page_nums = range(start, stop + 1)
@@ -438,12 +497,6 @@ async def _scan(
                         updated += done
                         missing += absent
                     if phase == "deep":
-                        if deep_floor is not None and _page_all_stale(
-                            raw_items, deep_floor, config.app.tz
-                        ):
-                            # 整页早于回补下限，更深的页只会更旧：本类到此为止，断点不前移
-                            stopped = "deep_floor"
-                            break
                         # 断点推进：配额用尽时下一轮从这里继续
                         repository.set_coin_filter_scan_page(cate, page + 1)
 

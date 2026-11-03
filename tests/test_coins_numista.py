@@ -329,7 +329,7 @@ async def test_risk_control_records_usage_and_blocks_at_monthly_limit(temp_db):
     await api.search_type_ids(issuer="royaume-uni", year=1900, denomination="1 penny")
 
     assert api.calls_this_run == 1
-    since = repository.local_month_start_utc(cfg.app.tz)
+    since = repository.local_month_start(cfg.app.tz)
     assert repository.count_api_calls_since(numista.PROVIDER, since) == 1
 
     with pytest.raises(numista.NumistaError, match="本月"):
@@ -351,9 +351,9 @@ def test_local_month_start_is_first_day_of_business_month(temp_db):
     from datetime import datetime, timezone
 
     moment = datetime(2026, 10, 14, 7, 8, tzinfo=timezone.utc)
-    assert repository.local_month_start_utc(
+    assert repository.local_month_start(
         config_module.load().app.tz, now=moment
-    ) == "2026-09-30T16:00:00Z"  # 上海 10-01 00:00
+    ) == "2026-10-01T00:00:00"  # 上海 10-01 00:00
 
 
 # ---------------------------------------------------------------- 落库（桩客户端 + 真库）
@@ -538,7 +538,7 @@ async def test_delete_coin_series_removes_series_issues_and_values(temp_db):
             value_au=None,
             value_unc=None,
             frequency=None,
-            fetched_at=repository.utcnow(),
+            fetched_at=repository.now_local(),
         )
     )
     assert repository.count_coin_series() == 1 and repository.count_coin_issues() == 3

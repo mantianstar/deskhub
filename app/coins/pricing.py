@@ -107,7 +107,7 @@ def _within_window(sample: SoldSample, window_days: int) -> bool:
     parsed = repository.parse_dt(sample.sold_at)
     if parsed is None:
         return True
-    cutoff = datetime.now(timezone.utc) - timedelta(days=window_days)
+    cutoff = datetime.now(repository.BEIJING).replace(tzinfo=None) - timedelta(days=window_days)
     return parsed >= cutoff
 
 
@@ -154,7 +154,7 @@ async def price_lot(
         median=summary.point,
         p75=summary.p75,
         raw=raw,
-        queried_at=repository.utcnow(),
+        queried_at=repository.now_local(),
     )
 
 
@@ -199,7 +199,7 @@ def sales_from_ref(ref: CoinPriceRef) -> list[CoinSale]:
     if not isinstance(rows, list):
         return []
 
-    now = repository.utcnow()
+    now = repository.now_local()
     sales: list[CoinSale] = []
     for row in rows:
         if not isinstance(row, dict):

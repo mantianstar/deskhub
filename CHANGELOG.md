@@ -10,6 +10,18 @@
 
 ---
 
+## v1.117 — 2026-11-03 时间口径统一为北京时间（存储 / 代码 / 页面）
+
+**起因**：时间列此前统一存 UTC 串（`2026-09-21T03:12:00Z`），页面、日报窗口、铜币截拍时间与 URL 兜底日期各自再算一次时区，跨日边界容易出现「差 8 小时」的错位。
+
+**改动**：`app/repository.py` 改为北京时间——`utcnow` → `now_local()`（`YYYY-MM-DDTHH:MM:SS` 无后缀）、`to_utc_str` → `to_local_str()`、`parse_dt()` 返回朴素本地时间（兼容旧 `Z` 串）；`day_bounds_utc` → `day_bounds_local`、`local_month_start_utc` → `local_month_start`，`local_day_bounds` / `lookback_bounds` 直接返回本地串。`gapi.to_utc_iso` → `to_local_iso`，`fetcher._published_at_from_url`、`routers.format_local_time`、`filter_scan`、`pricing`、`pipeline` 同步去掉 UTC 换算。新增 `app/migrations/v30.py`：25 张表的时间列把旧 `...Z` 串整体 +8 并去后缀（`GLOB` 只命中旧格式、缺列跳过、重复执行无副作用、非法值保留并计数），`SCHEMA_VERSION = "30"`。测试断言与 README / plan 口径同步。
+
+**验证**：`pytest -q` 526 passed, 1 skipped（含新增的缺列兼容路径：老库升级不再因 `coin_lots.closed_at` 缺列失败）。
+
+**影响**：`app/repository.py`、`app/migrations/v30.py`、`app/migrations/__init__.py`、`app/models.py`、`app/coins/gapi.py`、`app/fetcher.py`、`app/routers/*`、`app/coins/filter_scan.py`、`app/coins/pricing.py`、`app/pipeline.py`、对应测试、`README.md`、`plan/core.md`、`plan/coins.md`。
+
+---
+
 ## v1.116 — 2026-11-01 增量扫加 3 天下限、关闭晚间深扫、日配额降到 600
 
 **起因**：增量扫会一路翻到空页，回补收益低；夜间 21:00 深扫与 07:00 增量共用 600 次日配额，实测日耗偏高。

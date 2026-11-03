@@ -330,12 +330,12 @@ def parse_site_time(raw: str | None) -> datetime | None:
         return None
 
 
-def to_utc_iso(raw: str | None, tz) -> str | None:
-    """站点时间（业务时区）→ UTC ISO8601。"""
+def to_local_iso(raw: str | None, tz) -> str | None:
+    """站点时间（业务时区）→ 北京时间存储串。"""
     parsed = parse_site_time(raw)
     if parsed is None:
         return None
-    return parsed.replace(tzinfo=tz).astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    return parsed.replace(tzinfo=tz).strftime("%Y-%m-%dT%H:%M:%S")
 
 
 def shop_from(org: dict | None) -> ShopInfo | None:
@@ -400,9 +400,9 @@ def card_from_auction(
         view_count=(item.get("stat") or {}).get("pv"),
         cover_urls=_images(oss_base, item.get("thumbs"), 4),
         shop=shop_from(item.get("org_info")),
-        end_at=to_utc_iso(item.get("end_time"), tz) if tz is not None else None,
+        end_at=to_local_iso(item.get("end_time"), tz) if tz is not None else None,
         kind=kind,
-        start_at=to_utc_iso(item.get("start_time"), tz) if tz is not None else None,
+        start_at=to_local_iso(item.get("start_time"), tz) if tz is not None else None,
         preview_lots=preview_lots,
     )
 
@@ -447,7 +447,7 @@ def lot_from_item(
         # 未成交条目站点不给 price，成交价只对成交条目有意义
         final_price=_money(item.get("price")) if outcome == OUTCOME_SOLD else None,
         winner_uid=str(winner_uid) if winner_uid is not None else None,
-        closed_at=to_utc_iso(item.get("end_time"), tz) if outcome and tz else None,
+        closed_at=to_local_iso(item.get("end_time"), tz) if outcome and tz else None,
         bid_num=bid_num,
         bid_user_num=bid_user_num,
         # 两个键都没有时不算任何来源给过值，保持 NULL
@@ -540,7 +540,7 @@ def sold_from_payload(data: dict, tz) -> list[SoldSample]:
             SoldSample(
                 title=title,
                 price=price,
-                sold_at=to_utc_iso(item.get("end_time"), tz),
+                sold_at=to_local_iso(item.get("end_time"), tz),
                 item_id=str(item_id) if item_id is not None else None,
                 bid_num=_whole(item.get("bid_num")),
                 bid_user_num=_whole(item.get("bid_user_num")),
@@ -641,7 +641,7 @@ class MxiqiGapi:
         # 实时专场取开拍时间（start_time），限时专场取截拍时间（end_time）；
         # UTC ISO 在这里补（纯函数拿不到业务时区）
         at_raw = auction.get("start_time") if kind == KIND_LIVE else auction.get("end_time")
-        end_at = to_utc_iso(at_raw, self._cfg.app.tz)
+        end_at = to_local_iso(at_raw, self._cfg.app.tz)
         return replace(detail, end_at=end_at)
 
     async def search_sold(

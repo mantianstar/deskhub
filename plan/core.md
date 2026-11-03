@@ -211,7 +211,7 @@ sources:
 
 `url` 唯一：重复的 url 在启动校验时直接报错退出（防止同一源配两遍导致重复抓取）。
 
-`published_tz`（可选）：仅当「该源的 pubDate 写的是**本地时间**却标成 GMT/UTC」时才填，抓取时按这个时区把时间重新解释成 UTC。目前只有 InfoQ 中文需要（实测依据见 §12 第 12 条）。不填的源维持原行为：feed 标什么时区就按什么时区解析。
+`published_tz`（可选）：仅当「该源的 pubDate 写的是**本地时间**却标成 GMT/UTC」时才填，抓取时按这个时区把时间重新解释成北京时间（墙上时间）。目前只有 InfoQ 中文需要（实测依据见 §12 第 12 条）。不填的源维持原行为：feed 标什么时区就按什么时区解析。
 
 **源清单是唯一真源**：`sync_sources_from_config()` 启动时按 url upsert，配置里已不存在的源自动置 `enabled = 0`（**不删行**，保留 `items` / `fetch_runs` 历史）。故「淘汰一个源」= 从 `sources.yaml` 里删掉它，不要手工改库。
 
@@ -227,9 +227,9 @@ sources:
 
 ### 6.1 时序与类型约定
 
-- 所有时间列存 **UTC ISO8601 字符串**（`2026-09-21T03:12:00Z`），SQLite 无原生时间类型，字符串可排序、可比较。
-- 「今天」的业务边界按 `config.app.timezone` 计算，换算成 UTC 后参与查询（避免跨时区导致的日报错日）。
-- 时间读写统一走 `repository._utcnow()` / `parse_dt()`，禁止各模块自己 `datetime.now()`。
+- 所有时间列存 **北京时间 ISO8601 字符串**（`2026-09-21T11:12:00`，无时区后缀），SQLite 无原生时间类型，字符串可排序、可比较。
+- 「今天」的业务边界按 `config.app.timezone` 计算，直接以本地墙上时间参与查询（避免跨时区导致的日报错日）。
+- 时间读写统一走 `repository.now_local()` / `parse_dt()`，禁止各模块自己 `datetime.now()`。
 
 ### 6.2 DDL（`app/models.py`）
 
@@ -371,11 +371,11 @@ CREATE TABLE IF NOT EXISTS schema_meta (key TEXT PRIMARY KEY, value TEXT NOT NUL
 | 9 | 新增 `/healthz`、`/sources/{id}/fetch` | 本地长期运行的自检最小集；`POST /fetch` 让挂掉的源可以单独重试 |
 | 10 | 首批源只接国内可直连的中文源（spec §2.3 原本也允许「英文源（HN 等）」这一类） | 实测国外源在本机网络不可达；接不通的源会让日报全是空的，直接命中 spec §1 的首要风险。清单见 §15 |
 | 11 | `sync_sources_from_config()` 会把配置里已不存在的源自动置 `enabled = 0` | spec §2.3 说「首批源写死在配置中」，但没规定配置删源后库里那行怎么办。默认 upsert 会让被删的源永远留在表里且继续被抓（M0 收尾时实际发生过：HN 占位已从 `sources.yaml` 删掉，库里仍 `enabled=1`） |
-| 12 | 源配置新增可选字段 `published_tz`，抓取时按它把 feed 时间重新解释成 UTC | spec §2.3 只要求「只接入有 RSS 的源」，没规定「feed 的时间标注本身就错」时怎么办。实测 **InfoQ 中文的 feed 把北京时间当 GMT 标**（2026-09-23：它的 channel `pubDate` 自称 `10:25:06 GMT`，而那一刻真实 UTC 是 `02:25:20`，超前整整 8 小时；09-22 那批里它标称的最新一条比抓取时刻还晚 7 小时，物理上不可能）。照字面存会让该源 24 条 `published_at` 全部偏 8 小时：卡片显示成未来时间、prompt 的「时效性 20 分」虚高、并列排序跟着偏。备选方案「published_at 晚于 fetched_at 就存 NULL」只救得了其中 1 条（其余 23 条只是偏、没到未来），故选择源级声明；这是数据修正，不是 plan §16 禁止的「插件式数据源抽象」 |
+| 12 | 源配置新增可选字段 `published_tz`，抓取时按它把 feed 时间重新解释成北京时间 | spec §2.3 只要求「只接入有 RSS 的源」，没规定「feed 的时间标注本身就错」时怎么办。实测 **InfoQ 中文的 feed 把北京时间当 GMT 标**（2026-09-23：它的 channel `pubDate` 自称 `10:25:06 GMT`，而那一刻真实 UTC 是 `02:25:20`，超前整整 8 小时；09-22 那批里它标称的最新一条比抓取时刻还晚 7 小时，物理上不可能）。照字面存会让该源 24 条 `published_at` 全部偏 8 小时：卡片显示成未来时间、prompt 的「时效性 20 分」虚高、并列排序跟着偏。备选方案「published_at 晚于 fetched_at 就存 NULL」只救得了其中 1 条（其余 23 条只是偏、没到未来），故选择源级声明；这是数据修正，不是 plan §16 禁止的「插件式数据源抽象」 |
 | 13 | 历史搜索的时间范围过滤与结果排序都用 `items.published_at`（日报候选池仍用 `fetched_at`，两者口径**故意不同**） | spec §8 只说「关键词 + 时间范围 + 入口筛选」，没规定筛哪一列。M4 首版筛的是 `fetched_at`（与日报同口径），实测踩坑：筛「今天」会把 26 条**昨天发布、今天早上才抓到**的文章也列出来，而卡片上显示的是发布时间，看着就像筛错了（2026-09-23 用户提出）。凡页面显示哪个时间，筛选就该是哪个时间。**代价**：`published_at` 为 NULL 的条目在设了时间范围时搜不到（不设时间范围仍可搜到）—— 原本指美团那 10 条，已由第 14 条从 URL 反解补上，当前全库 0 条。日报继续用 `fetched_at`，因为它回答的是「今天新到的东西里哪些值得看」（第 7 条） |
-| 14 | feed 完全不给时间时，从条目 URL 路径里的 `YYYY/MM/DD` 反解发布日期 | 美团技术团队的 feed 实测如此：`<item>` 里只有 `title`/`link`/`description`/`content:encoded`，没有 `pubDate`/`dc:date`（channel 级那个是 feed 生成时间，不是文章时间）。M1 记下了「该源 10 条 `published_at` 为 NULL」，M4 做搜索时暴露后果：这些条目在时间筛选下永远搜不到，卡片也从没显示过发布时间；用户核对文章页后发现**页面上有发布日期**（`2026-07-24`），而 URL 路径恰好是 `/2026/07/24/`，逐条对得上。故按 URL 反解，不抓详情页（plan §16 禁止浏览器渲染抓取，这不违反）。站点只给到「日」粒度，取当日 00:00Z，页面按东八区显示成同日 08:00，日期不漂。兜底只在 feed 无任何时间字段时触发，有真时间优先；数字凑不出合法日期仍为 NULL。这是解析兜底，不是 plan §16 禁止的「插件式数据源抽象」 |
+| 14 | feed 完全不给时间时，从条目 URL 路径里的 `YYYY/MM/DD` 反解发布日期 | 美团技术团队的 feed 实测如此：`<item>` 里只有 `title`/`link`/`description`/`content:encoded`，没有 `pubDate`/`dc:date`（channel 级那个是 feed 生成时间，不是文章时间）。M1 记下了「该源 10 条 `published_at` 为 NULL」，M4 做搜索时暴露后果：这些条目在时间筛选下永远搜不到，卡片也从没显示过发布时间；用户核对文章页后发现**页面上有发布日期**（`2026-07-24`），而 URL 路径恰好是 `/2026/07/24/`，逐条对得上。故按 URL 反解，不抓详情页（plan §16 禁止浏览器渲染抓取，这不违反）。站点只给到「日」粒度，取当日 00:00（北京时间），日期不漂。兜底只在 feed 无任何时间字段时触发，有真时间优先；数字凑不出合法日期仍为 NULL。这是解析兜底，不是 plan §16 禁止的「插件式数据源抽象」 |
 | 15 | `startup_fetch` 在 `app/scheduler.py` 里定义，但由 lifespan 用 `asyncio.create_task` 直接调起，**不注册成 APScheduler 的 job** | §11.1 第 6 步写的是 `asyncio.create_task(pipeline.run())`（不 await），§11.2 的任务清单又把它列成一条 job（「启动后立即（一次性）」），两处措辞不一致。按 §11.1 实现：首轮抓取要尽早开始，走调度器反而多一层「等 `start()` 完成」的时序。**代价**：它的失败不会进 APScheduler 的 job 统计，所以它自己就地兜住异常并打堆栈 —— 否则 `create_task` 抛出的异常只会变成 `Task exception was never retrieved`，服务还在跑但没人知道这轮抓挂了。`daily_pipeline` 仍在调度器里，失败由 APScheduler 记录 |
-| 16 | `cli purge` 的两点补充：① 不带 `--yes` 只预览（打印将删除条数）不删；② 切日按 `config.app.timezone`（复用 `day_bounds_utc`） | §11.3 只给了命令形式 `purge --before YYYY-MM-DD [--yes]`，没说 `--yes` 缺省时是交互确认还是直接删，也没说日期按哪个时区切。选预览而非交互确认，是为了在脚本里也安全；时区取业务时区，与日报/搜索同一口径，否则会出现「页面按东八区算 09-23、purge 却按 UTC 切日」的错位。实测（库副本）：`--before 2026-09-23` 预览 112 条且 `items` 保持 149，`--yes` 后 `items` 149 → 37、`item_scores` 147 → 35（外键级联）、`sources` 7 与 `fetch_runs` 25 不变；非法日期 `2026-13-99` 打印明确错误并返回退出码 1 |
+| 16 | `cli purge` 的两点补充：① 不带 `--yes` 只预览（打印将删除条数）不删；② 切日按 `config.app.timezone`（复用 `day_bounds_local`） | §11.3 只给了命令形式 `purge --before YYYY-MM-DD [--yes]`，没说 `--yes` 缺省时是交互确认还是直接删，也没说日期按哪个时区切。选预览而非交互确认，是为了在脚本里也安全；时区取业务时区，与日报/搜索同一口径，否则会出现「页面按东八区算 09-23、purge 却按 UTC 切日」的错位。实测（库副本）：`--before 2026-09-23` 预览 112 条且 `items` 保持 149，`--yes` 后 `items` 149 → 37、`item_scores` 147 → 35（外键级联）、`sources` 7 与 `fetch_runs` 25 不变；非法日期 `2026-13-99` 打印明确错误并返回退出码 1 |
 | 17 | 新增 `tests/conftest.py`（`no_scheduler` 夹具）与 `tests/test_scheduler.py` | §4 的目录树只列了 4 个测试文件。`lifespan` 接上调度器后，`TestClient` 走 lifespan 的用例会真的去抓 6 个源，破坏 §13.1「测试不发真实网络请求」这条前提；故在 conftest 里把 `scheduler.start` 换成空壳（2026-10-15 起启动补拉已取消，`startup_fetch` 不再需要挡），由 `web` 这类夹具显式请求。`test_scheduler.py` 单独放调度器用例：它是 §13.1 之外的新增覆盖（触发点 07:00 Asia/Shanghai、`coalesce` / `misfire_grace_time=3600` / `max_instances=1`、错过 grace 就不补跑、启动补拉就地兜异常） |
 | 18 | **放宽「不做浏览器渲染抓取 / 不做反爬对抗」——仅对铜币拍卖模块生效**（spec §14.3） | §16 的不做清单原写死这两条，前提是知识聚合只走 RSS。铜币拍卖的目标站（麦稀奇）实测是 JS 单页应用 + 阿里云滑块验证，直连只返回约 1.3KB 验证页（2026-10-09 实测），httpx 路径不可用。用户明确「修改需求，需要反爬」。故新增 §18 一章，仅该模块允许 Playwright 渲染与会话复用；**知识聚合一行未改**，验证码自动破解仍不做 |
 | 19 | 新增依赖 `openpyxl` | spec §14.2 要读 `orders.xlsx`。`openpyxl` 只读一个工作表，不引 `pandas`（§2 的技术选型一贯「单用户无收益就不引重依赖」）。~~`playwright`~~ 已在 2026-10-12 改走 gapi 后移除 |
@@ -480,7 +480,7 @@ CREATE TABLE IF NOT EXISTS schema_meta (key TEXT PRIMARY KEY, value TEXT NOT NUL
 CREATE TABLE IF NOT EXISTS feature_switches (
   key        TEXT PRIMARY KEY,   -- knowledge_fetch / knowledge_score / coins_collect / coins_finalize / coins_price
   enabled    INTEGER NOT NULL,
-  updated_at TEXT    NOT NULL    -- UTC ISO8601
+  updated_at TEXT    NOT NULL    -- 北京时间 ISO8601
 );
 ```
 

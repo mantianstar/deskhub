@@ -49,7 +49,7 @@ def _add_item(source_id: int, title: str, *, url: str, module: str) -> int:
             url_hash=fetcher.url_hash(url),
             published_at=None,
             summary="摘要",
-            fetched_at=repository.utcnow(),
+            fetched_at=repository.now_local(),
         )
     )
     assert item_id is not None
@@ -58,7 +58,7 @@ def _add_item(source_id: int, title: str, *, url: str, module: str) -> int:
 
 def _record(source_id: int, status: str, *, error: str | None = None, http_status: int | None = None):
     """直接落一条抓取结果，用来构造「源挂了 / 源正常」的状态，不碰真实网络。"""
-    now = repository.utcnow()
+    now = repository.now_local()
     run = FetchRun(
         id=None,
         source_id=source_id,

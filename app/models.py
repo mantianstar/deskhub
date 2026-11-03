@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-SCHEMA_VERSION = "29"
+SCHEMA_VERSION = "30"
 
-# 所有时间列存 UTC ISO8601 字符串（SQLite 无原生时间类型）
+# 所有时间列存北京时间 ISO8601 字符串（`YYYY-MM-DDTHH:MM:SS`，无时区后缀；SQLite 无原生时间类型）
 DDL = """
 PRAGMA journal_mode = WAL;
 

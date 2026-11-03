@@ -4,7 +4,7 @@
 坏值一律降级成「不生效」而不是 500（M4-2 的验收要求）。
 
 时间范围按**发布时间**折算（业务时区 → UTC，左闭右开），与卡片上显示的「xx 发布」同一个口径；
-折算规则落在 repository 的 `day_bounds_utc`。
+折算规则落在 repository 的 `day_bounds_local`。
 """
 
 from __future__ import annotations
@@ -73,8 +73,8 @@ def search_page(
 
     start_day = _parse_day(start)
     end_day = _parse_day(end)
-    start_utc = repository.day_bounds_utc(cfg.app.tz, start_day)[0] if start_day else None
-    end_utc = repository.day_bounds_utc(cfg.app.tz, end_day)[1] if end_day else None
+    start_utc = repository.day_bounds_local(cfg.app.tz, start_day)[0] if start_day else None
+    end_utc = repository.day_bounds_local(cfg.app.tz, end_day)[1] if end_day else None
 
     size = min(
         max(1, _parse_int(page_size, repository.SEARCH_PAGE_SIZE)),

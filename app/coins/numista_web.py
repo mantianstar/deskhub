@@ -489,7 +489,7 @@ async def collect_issue_values(
         timeout_seconds=config.coins.numista.timeout_seconds,
     )
     info = parse_type_page(html)
-    fetched_at = repository.utcnow()
+    fetched_at = repository.now_local()
     for row in info.rows:
         repository.upsert_coin_issue_values(_values_row(row, series_id, info.currency, fetched_at))
     logger.info(

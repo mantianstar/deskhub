@@ -17,7 +17,7 @@ from app.main import app as fastapi_app
 from app.models import Item
 
 SHANGHAI = ZoneInfo("Asia/Shanghai")
-DAY1 = ("2026-09-22T00:00:00Z", "2026-09-23T00:00:00Z")
+DAY1 = ("2026-09-22T00:00:00", "2026-09-23T00:00:00")
 
 
 @pytest.fixture()
@@ -175,11 +175,11 @@ def test_digest_filters_by_module_and_limit(temp_db):
 
 
 def test_day_window_matches_shanghai_midnight(temp_db):
-    """上海 09-22 的当天窗口 = UTC 09-21T16:00 ~ 09-22T16:00。"""
+    """上海 09-22 的当天窗口 = 本地 09-22T00:00 ~ 09-23T00:00。"""
     start, end = repository.local_day_bounds(
         SHANGHAI, now=datetime(2026, 9, 22, 6, 0, tzinfo=timezone.utc)
     )
-    assert (start, end) == ("2026-09-21T16:00:00Z", "2026-09-22T16:00:00Z")
+    assert (start, end) == ("2026-09-22T00:00:00", "2026-09-23T00:00:00")
 
 
 def test_items_at_day_boundaries_split_into_two_digests(temp_db):
@@ -189,19 +189,19 @@ def test_items_at_day_boundaries_split_into_two_digests(temp_db):
         source_id,
         "当天第一秒",
         url="https://example.com/midnight",
-        fetched_at="2026-09-21T16:00:00Z",
+        fetched_at="2026-09-22T00:00:00",
     )
     last_moment = _add_item(
         source_id,
         "当天最后一秒",
         url="https://example.com/last",
-        fetched_at="2026-09-22T15:59:59Z",
+        fetched_at="2026-09-22T23:59:59",
     )
     next_midnight = _add_item(
         source_id,
         "次日第一秒",
         url="https://example.com/next",
-        fetched_at="2026-09-22T16:00:00Z",
+        fetched_at="2026-09-23T00:00:00",
     )
 
     day1 = repository.local_day_bounds(
@@ -221,7 +221,7 @@ def test_items_at_day_boundaries_split_into_two_digests(temp_db):
 def test_lookback_bounds_covers_recent_window(temp_db):
     now = datetime(2026, 9, 22, 12, 0, tzinfo=timezone.utc)
     start, end = repository.lookback_bounds(48, now=now)
-    assert (start, end) == ("2026-09-20T12:00:00Z", "2026-09-22T12:00:00Z")
+    assert (start, end) == ("2026-09-20T20:00:00", "2026-09-22T20:00:00")
 
 
 # ---------------------------------------------------------------- 点击
@@ -231,7 +231,7 @@ def test_mark_clicked_keeps_first_click(temp_db):
     """点两次同一链接，`clicked_at` 保持首次（plan §13.1 用例 10）。"""
     source_id = _seed_source()
     item_id = _add_item(
-        source_id, "会被点的条目", url="https://example.com/click", fetched_at=repository.utcnow()
+        source_id, "会被点的条目", url="https://example.com/click", fetched_at=repository.now_local()
     )
 
     assert repository.mark_clicked(item_id) is True
@@ -259,7 +259,7 @@ def test_home_page_renders_cards_and_records_click(web):
     """首页能渲染出条目，外链走 /go/{id} 且被记录（spec §10 第 3 条）。"""
     source_id = repository.list_sources(only_enabled=True)[0].id
     item_id = _add_item(
-        source_id, "今天的条目", url="https://example.com/today", fetched_at=repository.utcnow()
+        source_id, "今天的条目", url="https://example.com/today", fetched_at=repository.now_local()
     )
 
     page = web.get("/")
@@ -308,7 +308,7 @@ def test_home_page_falls_back_to_lookback_window_with_notice(web):
         source_id,
         "昨天抓到的条目",
         url="https://example.com/yesterday",
-        fetched_at=repository.to_utc_str(datetime.now(timezone.utc) - timedelta(hours=24)),
+        fetched_at=repository.to_local_str(datetime.now(timezone.utc) - timedelta(hours=24)),
     )
 
     page = web.get("/")

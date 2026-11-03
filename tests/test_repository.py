@@ -233,9 +233,9 @@ def test_purge_deletes_older_items_and_cascades_scores(temp_db):
     repository.upsert_score(new_id, 70, "新条目的理由，十个字以上", "test-model", "v1")
     repository.record_fetch_run(_run(source_id, FetchStatus.OK))
 
-    # 业务时区的「09-22 00:00」= UTC 09-21 16:00，删的是它之前抓到的
-    cutoff = repository.day_bounds_utc(SHANGHAI, date(2026, 9, 22))[0]
-    assert cutoff == "2026-09-21T16:00:00Z"
+    # 业务时区的「09-22 00:00」= 本地 09-22T00:00，删的是它之前抓到的
+    cutoff = repository.day_bounds_local(SHANGHAI, date(2026, 9, 22))[0]
+    assert cutoff == "2026-09-22T00:00:00"
     assert repository.count_items_before(cutoff) == 1
 
     assert repository.purge_items_before(cutoff) == 1
@@ -255,7 +255,7 @@ def test_purge_preview_counts_without_deleting(temp_db):
         _item(source_id, "https://a.com/old", fetched_at="2026-09-20T00:00:00Z")
     )
 
-    cutoff = repository.day_bounds_utc(SHANGHAI, date(2026, 9, 22))[0]
+    cutoff = repository.day_bounds_local(SHANGHAI, date(2026, 9, 22))[0]
 
     assert repository.count_items_before(cutoff) == 1
     assert _count("items") == 1

@@ -68,23 +68,29 @@ def _write_conn(conn: sqlite3.Connection | None = None) -> Iterator[sqlite3.Conn
 # ---------------------------------------------------------------- 时间工具
 
 
-def utcnow() -> str:
-    """当前 UTC 时间的存储格式：`2026-09-21T03:12:00Z`。
+BEIJING = ZoneInfo("Asia/Shanghai")
+
+
+def now_local() -> str:
+    """当前北京时间的存储格式：`2026-09-21T11:12:00`（纯墙上时间，无时区后缀）。
 
     禁止各模块自己调 `datetime.now()`，否则时间口径会漂。
     """
-    return to_utc_str(datetime.now(timezone.utc))
+    return to_local_str(datetime.now(BEIJING))
 
 
-def to_utc_str(value: datetime) -> str:
-    """datetime → UTC ISO8601 字符串（秒精度）。"""
-    if value.tzinfo is None:
-        value = value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+def to_local_str(value: datetime) -> str:
+    """datetime → 北京时间 ISO8601 字符串（秒精度、无后缀）。"""
+    if value.tzinfo is not None:
+        value = value.astimezone(BEIJING)
+    return value.strftime("%Y-%m-%dT%H:%M:%S")
 
 
 def parse_dt(value: str | None) -> datetime | None:
-    """存储字符串 → 带 UTC 时区的 datetime；无法解析返回 None。"""
+    """存储字符串 → naive 的北京时间；无法解析返回 None。
+
+    兼容旧版带 `Z` 的 UTC 串：读到就换算成北京时间再摘掉时区。
+    """
     if not value:
         return None
     text = value.strip()
@@ -94,7 +100,9 @@ def parse_dt(value: str | None) -> datetime | None:
         parsed = datetime.fromisoformat(text)
     except ValueError:
         return None
-    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+    if parsed.tzinfo is None:
+        return parsed
+    return parsed.astimezone(BEIJING).replace(tzinfo=None)
 
 
 # ---------------------------------------------------------------- 源
@@ -125,7 +133,7 @@ def sync_sources_from_config(sources: tuple[SourceConfig, ...]) -> None:
     配置里已不存在的源**只置 `enabled = 0`，不删行**：删行会级联带走 `items` 与 `fetch_runs`
     的历史，而「这个源曾经抓到过什么」本身就是产品信息（plan §16）。
     """
-    now = utcnow()
+    now = now_local()
     urls = [s.url for s in sources]
     placeholders = ", ".join("?" * len(urls))
     with db.connect() as conn, conn:
@@ -192,7 +200,7 @@ def set_feature_switch(key: str, enabled: bool) -> None:
             ON CONFLICT(key) DO UPDATE SET enabled = excluded.enabled,
                                            updated_at = excluded.updated_at
             """,
-            (key, int(enabled), utcnow()),
+            (key, int(enabled), now_local()),
         )
 
 
@@ -361,7 +369,7 @@ def list_pending_score_items(
     `LEFT JOIN ... WHERE item_id IS NULL` 即「没打过分」；打分失败的条目不会被写库，
     所以下一轮自然又落回这个池子里重试（plan §8.3）。
     """
-    cutoff = to_utc_str(datetime.now(timezone.utc) - timedelta(days=lookback_days))
+    cutoff = to_local_str(datetime.now(timezone.utc) - timedelta(days=lookback_days))
     with db.connect() as conn:
         rows = conn.execute(
             """
@@ -412,7 +420,7 @@ def upsert_score(
                 prompt_version = excluded.prompt_version,
                 scored_at      = excluded.scored_at
             """,
-            (item_id, score, reason, model, prompt_version, utcnow()),
+            (item_id, score, reason, model, prompt_version, now_local()),
         )
 
 
@@ -436,37 +444,41 @@ def count_scored_items() -> int:
 # ---------------------------------------------------------------- 日报
 
 
-def day_bounds_utc(tz: ZoneInfo, day: date) -> tuple[str, str]:
-    """业务时区「某一天」的 `[start, end)`，折算成 UTC 存储格式。
+def day_bounds_local(tz: ZoneInfo, day: date) -> tuple[str, str]:
+    """业务时区「某一天」的 `[start, end)`，直接是北京时间存储格式。
 
     返回左闭右开区间，故上海 00:00:00 与 23:59:59 抓到的条目必然分属不同区间。
     """
     day_start = datetime(day.year, day.month, day.day, tzinfo=tz)
-    return to_utc_str(day_start), to_utc_str(day_start + timedelta(days=1))
+    return to_local_str(day_start), to_local_str(day_start + timedelta(days=1))
 
 
 def local_day_bounds(tz: ZoneInfo, *, now: datetime | None = None) -> tuple[str, str]:
-    """算出业务时区「今天」的 `[start, end)`，折算成 UTC 存储格式（plan §9.1）。
+    """算出业务时区「今天」的 `[start, end)`，直接是北京时间存储格式（plan §9.1）。
 
     候选池用 `fetched_at` 而不是 `published_at`：日报要回答的是「**今天**新到的东西里
     哪些值得看」，用发布时间会漏掉「今天抓到的旧发布内容」（plan §12 第 7 条）。
 
     `now` 仅测试注入用。
     """
-    moment = (now or datetime.now(timezone.utc)).astimezone(tz)
-    return day_bounds_utc(tz, moment.date())
+    moment = now or datetime.now(tz)
+    if moment.tzinfo is not None:
+        moment = moment.astimezone(tz)
+    return day_bounds_local(tz, moment.date())
 
 
 def lookback_bounds(hours: int, *, now: datetime | None = None) -> tuple[str, str]:
     """当日无候选时的回退窗口：最近 `hours` 小时（页面需标注「非今日数据」）。"""
-    moment = now or datetime.now(timezone.utc)
-    return to_utc_str(moment - timedelta(hours=hours)), to_utc_str(moment)
+    moment = now or datetime.now(BEIJING)
+    return to_local_str(moment - timedelta(hours=hours)), to_local_str(moment)
 
 
-def local_month_start_utc(tz: ZoneInfo, *, now: datetime | None = None) -> str:
-    """业务时区「本月 1 日 00:00」折算成 UTC 存储格式（Numista 月度额度按此切月）。"""
-    moment = (now or datetime.now(timezone.utc)).astimezone(tz)
-    return to_utc_str(datetime(moment.year, moment.month, 1, tzinfo=tz))
+def local_month_start(tz: ZoneInfo, *, now: datetime | None = None) -> str:
+    """业务时区「本月 1 日 00:00」的北京时间存储格式（Numista 月度额度按此切月）。"""
+    moment = now or datetime.now(tz)
+    if moment.tzinfo is not None:
+        moment = moment.astimezone(tz)
+    return to_local_str(datetime(moment.year, moment.month, 1, tzinfo=tz))
 
 
 _DIGEST_COLUMNS = """i.id AS item_id, i.module, i.title, i.url, i.published_at, i.fetched_at,
@@ -537,7 +549,7 @@ def mark_clicked(item_id: int) -> bool:
     with db.connect() as conn, conn:
         cursor = conn.execute(
             "UPDATE items SET clicked_at = COALESCE(clicked_at, ?) WHERE id = ?",
-            (utcnow(), item_id),
+            (now_local(), item_id),
         )
         return cursor.rowcount > 0
 
@@ -690,7 +702,7 @@ def upsert_coin_order(order: CoinOrder) -> None:
                 order.denomination,
                 order.category,
                 order.condition,
-                utcnow(),
+                now_local(),
             ),
         )
 
@@ -772,7 +784,7 @@ def upsert_coin_purchase_grade(
                 grade      = excluded.grade,
                 updated_at = excluded.updated_at
             """,
-            (country, era, denomination, grade, utcnow(), theme, coin_name),
+            (country, era, denomination, grade, now_local(), theme, coin_name),
         )
 
 
@@ -861,7 +873,7 @@ def upsert_coin_collection_series(
     size_band: str | None = None,
 ) -> int:
     """按 `collection_key` 建/改收藏系列，返回 id。"""
-    now = utcnow()
+    now = now_local()
     with db.connect() as conn, conn:
         conn.execute(
             """
@@ -946,7 +958,7 @@ def upsert_coin_collection_member(
                 collection_id,
                 numista_series_id,
                 numista_series_name,
-                utcnow(),
+                now_local(),
             ),
         )
 
@@ -993,7 +1005,7 @@ def _row_to_explore_candidate(row: sqlite3.Row) -> CoinExploreCandidate:
 
 def upsert_coin_explore_candidate(candidate: CoinExploreCandidate) -> int:
     """按 numista_id 写入候选；**不改已有 status**（忽略过的不会被重新扫描复活）。"""
-    now = utcnow()
+    now = now_local()
     with db.connect() as conn, conn:
         conn.execute(
             """
@@ -1054,7 +1066,7 @@ def set_coin_explore_candidate_status(numista_id: int, status: str) -> bool:
     with db.connect() as conn, conn:
         cursor = conn.execute(
             "UPDATE coin_explore_candidates SET status = ?, updated_at = ? WHERE numista_id = ?",
-            (status, utcnow(), numista_id),
+            (status, now_local(), numista_id),
         )
     return cursor.rowcount > 0
 
@@ -1067,7 +1079,7 @@ def list_coin_today_lots(tz: ZoneInfo, *, now: datetime | None = None) -> list[C
 
 def list_coin_lots_on_day(tz: ZoneInfo, day: date) -> list[CoinTodayLot]:
     """指定业务日期截拍专场里的全部拍品（拍场页按日期筛选用）。"""
-    start, end = day_bounds_utc(tz, day)
+    start, end = day_bounds_local(tz, day)
     return _list_coin_lots_between(start, end)
 
 
@@ -1204,7 +1216,7 @@ def upsert_coin_tag(dimension: str, value: str, weight: float, hit_count: int) -
     不动 `enabled` / `note` —— 否则每次重跑 `coins-parse-orders` 都会把我关掉的标签打开
     （同 `sync_sources_from_config` 保留运行时状态的取舍）。
     """
-    now = utcnow()
+    now = now_local()
     with db.connect() as conn, conn:
         conn.execute(
             """
@@ -1222,7 +1234,7 @@ def upsert_coin_tag(dimension: str, value: str, weight: float, hit_count: int) -
 
 def add_coin_tag(dimension: str, value: str, weight: float = 1.0, note: str | None = None) -> bool:
     """手工新增标签；`(dimension, value)` 已存在则返回 False（不覆盖）。"""
-    now = utcnow()
+    now = now_local()
     with db.connect() as conn, conn:
         cursor = conn.execute(
             """
@@ -1240,7 +1252,7 @@ def set_coin_tag_enabled(tag_id: int, enabled: bool) -> bool:
     with db.connect() as conn, conn:
         cursor = conn.execute(
             "UPDATE coin_profile_tags SET enabled = ?, updated_at = ? WHERE id = ?",
-            (int(enabled), utcnow(), tag_id),
+            (int(enabled), now_local(), tag_id),
         )
         return cursor.rowcount > 0
 
@@ -1249,7 +1261,7 @@ def set_coin_tag_weight(tag_id: int, weight: float) -> bool:
     with db.connect() as conn, conn:
         cursor = conn.execute(
             "UPDATE coin_profile_tags SET weight = ?, updated_at = ? WHERE id = ?",
-            (weight, utcnow(), tag_id),
+            (weight, now_local(), tag_id),
         )
         return cursor.rowcount > 0
 
@@ -1563,7 +1575,7 @@ def upsert_coin_categories(
     """
     if not rows:
         return
-    now = utcnow()
+    now = now_local()
     with db.connect() as conn, conn:
         conn.executemany(
             """
@@ -1718,7 +1730,7 @@ def list_coin_lot_analysis_rows(
     if only_ungraded:
         conditions.append("COALESCE(l.is_graded, 0) = 0")
     if days is not None:
-        since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat().replace("+00:00", "Z")
+        since = to_local_str(datetime.now(timezone.utc) - timedelta(days=days))
         conditions.append("COALESCE(s.auction_at, l.fetched_at) >= ?")
         params.append(since)
     if shop_id is not None:
@@ -2042,7 +2054,7 @@ def list_coin_sold_lots() -> list[CoinSale]:
             WHERE l.outcome = 'sold' AND l.final_price IS NOT NULL
             """
         ).fetchall()
-    now = utcnow()
+    now = now_local()
     return [
         CoinSale(
             id=None,
@@ -2788,7 +2800,7 @@ def record_api_call(provider: str) -> None:
     with db.connect() as conn, conn:
         conn.execute(
             "INSERT INTO coin_api_usage (provider, called_at) VALUES (?, ?)",
-            (provider, utcnow()),
+            (provider, now_local()),
         )
 
 
@@ -2821,7 +2833,7 @@ def set_coin_filter_scan_page(category_code: str, next_page: int) -> None:
             " VALUES (?, ?, ?)"
             " ON CONFLICT(category_code) DO UPDATE SET"
             " next_page = excluded.next_page, updated_at = excluded.updated_at",
-            (category_code, next_page, utcnow()),
+            (category_code, next_page, now_local()),
         )
 
 
@@ -2834,4 +2846,27 @@ def count_uncovered_sold_by_category() -> dict[str, int]:
             " GROUP BY category_code"
         ).fetchall()
     return {str(row["category_code"]): int(row["n"]) for row in rows}
+
+
+def count_sold_by_category_since(since_utc: str) -> dict[str, int]:
+    """按 `category_code` 统计 `since_utc` 之后的成交数（估算顶部窗口页数）。"""
+    with db.connect() as conn:
+        rows = conn.execute(
+            "SELECT category_code, COUNT(*) AS n FROM coin_lots"
+            " WHERE outcome = 'sold' AND closed_at >= ? AND category_code IS NOT NULL"
+            " GROUP BY category_code",
+            (since_utc,),
+        ).fetchall()
+    return {str(row["category_code"]): int(row["n"]) for row in rows}
+
+
+def coin_filter_scan_progress() -> dict[str, tuple[int, str]]:
+    """各断点 key 的 `(next_page, updated_at)`：回补游标要按业务日重置。"""
+    with db.connect() as conn:
+        rows = conn.execute(
+            "SELECT category_code, next_page, updated_at FROM coin_filter_scan_progress"
+        ).fetchall()
+    return {
+        row["category_code"]: (int(row["next_page"]), str(row["updated_at"])) for row in rows
+    }
 

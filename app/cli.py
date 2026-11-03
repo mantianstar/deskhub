@@ -196,7 +196,7 @@ def cmd_purge(args: argparse.Namespace) -> int:
         print(f"错误：--before 需要 YYYY-MM-DD，当前 {args.before!r}", file=sys.stderr)
         return 1
     # 按业务时区切日：否则「删 09-22 之前」会按 UTC 切，实际删到本地 09-22 08:00 前
-    cutoff = repository.day_bounds_utc(cfg.app.tz, day)[0]
+    cutoff = repository.day_bounds_local(cfg.app.tz, day)[0]
     scope = f"fetched_at < {cutoff}（{args.before} 00:00 {cfg.app.timezone} 之前）"
 
     if not args.yes:
@@ -574,7 +574,7 @@ def _money(value: float | None) -> str:
 def _print_numista_quota(cfg: config.Config) -> None:
     """打印 Numista 本月额度用量（风控可见，别把免费额度刷完）。"""
     used = repository.count_api_calls_since(
-        coins_numista.PROVIDER, repository.local_month_start_utc(cfg.app.tz)
+        coins_numista.PROVIDER, repository.local_month_start(cfg.app.tz)
     )
     print(f"Numista 本月已用 {used}/{cfg.coins.numista.monthly_limit} 次")
 

@@ -45,7 +45,7 @@ def web(tmp_path, monkeypatch, no_scheduler):
 
 def _today_auction_at() -> str:
     """今日 15:25（业务时区）的截拍时间，UTC ISO 存储格式。"""
-    return repository.to_utc_str(
+    return repository.to_local_str(
         datetime.now(config.get().app.tz).replace(
             hour=15, minute=25, second=0, microsecond=0
         )
@@ -54,7 +54,7 @@ def _today_auction_at() -> str:
 
 def _seed_session() -> int:
     """造一个「有推荐拍品」的专场，返回 session_id。"""
-    now = repository.utcnow()
+    now = repository.now_local()
     shop_id = repository.upsert_coin_shop(
         CoinShop(
             id=None,
@@ -135,7 +135,7 @@ def _seed_session() -> int:
 def test_sessions_page_shows_only_sessions_with_hits(web):
     session_id = _seed_session()
     # 再插一个没有任何推荐拍品的专场 → 不该出现在列表里
-    now = repository.utcnow()
+    now = repository.now_local()
     repository.upsert_coin_session(
         CoinSession(
             id=None,
@@ -183,7 +183,7 @@ def test_sessions_page_filters_recommendation_and_type(web):
             lot_total=1,
             view_count=0,
             cover_urls=[],
-            fetched_at=repository.utcnow(),
+            fetched_at=repository.now_local(),
         )
     )
 
@@ -208,7 +208,7 @@ def test_sessions_page_filters_recommendation_and_type(web):
 
 def test_sessions_page_filters_kind_and_labels_time(web):
     """拍场类型可筛实时 / 限时；时间前缀按类型显示开拍 / 截拍。"""
-    now = repository.utcnow()
+    now = repository.now_local()
 
     def _seed(mxiqi_id: str, title: str, kind: str) -> int:
         return repository.upsert_coin_session(
@@ -247,7 +247,7 @@ def test_sessions_page_filters_kind_and_labels_time(web):
 
 def _seed_empty_session(name: str, *, followed: bool) -> int:
     """造一个没有拍品的专场（店铺名 = name），返回 session_id。"""
-    now = repository.utcnow()
+    now = repository.now_local()
     shop_id = repository.upsert_coin_shop(
         CoinShop(
             id=None,
@@ -343,7 +343,7 @@ def test_sessions_page_paginates(web):
                 lot_total=1,
                 view_count=0,
                 cover_urls=[],
-                fetched_at=repository.utcnow(),
+                fetched_at=repository.now_local(),
             )
         )
         repository.upsert_coin_lot(
@@ -359,7 +359,7 @@ def test_sessions_page_paginates(web):
                 tags={},
                 match_score=1.0,
                 is_recommended=True,
-                fetched_at=repository.utcnow(),
+                fetched_at=repository.now_local(),
             )
         )
 
@@ -374,7 +374,7 @@ def test_sessions_page_paginates(web):
 def test_session_page_paginates_other_lots(web):
     """拍品页只分页「其他拍品」，精准 / 相似推荐始终完整展示。"""
     session_id = _seed_session()
-    now = repository.utcnow()
+    now = repository.now_local()
     for index in range(21):
         repository.upsert_coin_lot(
             CoinLot(
@@ -408,7 +408,7 @@ def test_session_page_paginates_other_lots(web):
 def test_session_page_orders_lots_by_number(web):
     """Lot 号按数字排序（Lot.12 在 Lot.119 之前），不是字符串序。"""
     session_id = _seed_session()
-    now = repository.utcnow()
+    now = repository.now_local()
     for lot_no in ("Lot.119", "Lot.12", "Lot.2"):
         repository.upsert_coin_lot(
             CoinLot(
@@ -496,7 +496,7 @@ def test_session_page_shows_closed_status_and_lot_outcome(web):
     """已截拍专场：状态显示「已截拍」，拍品右侧标已成交 / 流拍图标并替换价签。"""
     session_id = _seed_empty_session("已截拍小店", followed=False)
     repository.set_coin_session_status(session_id, "closed")
-    now = repository.utcnow()
+    now = repository.now_local()
     for mxiqi_id, title, outcome, price in (
         ("closed-lot-1", "成交的硬币", "sold", 88.0),
         ("closed-lot-2", "流拍的硬币", "unsold", None),
@@ -564,7 +564,7 @@ def test_session_page_shows_sample_insufficient_without_point_estimate(web):
             median=None,
             p75=20.0,
             raw="[]",
-            queried_at=repository.utcnow(),
+            queried_at=repository.now_local(),
         )
     )
 
@@ -585,7 +585,7 @@ def test_session_page_shows_no_sample_marker(web):
             median=None,
             p75=None,
             raw="[]",
-            queried_at=repository.utcnow(),
+            queried_at=repository.now_local(),
         )
     )
 
@@ -606,7 +606,7 @@ def test_legacy_profile_page_removed(web):
 
 def _seed_series() -> int:
     """造一个系列（中文表 + 英文表，与采集落库一致）+ 2 个年份单版 + 1 条估值。"""
-    now = repository.utcnow()
+    now = repository.now_local()
     series = CoinSeries(
         id=None,
         numista_id=670,
@@ -737,7 +737,7 @@ def _make_series(numista_id: int, denomination: str, composition: str | None) ->
         catalog_no=None,
         comments=None,
         mints=[],
-        fetched_at=repository.utcnow(),
+        fetched_at=repository.now_local(),
     )
 
 
@@ -794,7 +794,7 @@ def test_series_page_shows_gregorian_year_when_different(web):
     """年份与公历不一致时并显 `year(gregorian_year)`；一致时只显年份。"""
     series = _make_series(2317, "2 分", "青铜")
     series_id = repository.upsert_coin_series_cn(series)
-    now = repository.utcnow()
+    now = repository.now_local()
     for numista_id, (year, gregorian_year) in enumerate(((6, 1873), (1895, 1895)), start=1):
         repository.upsert_coin_issue_cn(
             CoinIssue(
@@ -840,7 +840,7 @@ def test_series_page_image_click_zoom_markup(web, tmp_path, monkeypatch):
 
 def test_series_page_candidate_banner_and_adopt(web):
     """未采纳候选：显示横幅 + 采纳按钮（回跳本页），不显示补数据动作条。"""
-    now = repository.utcnow()
+    now = repository.now_local()
     payload = {
         "numista_id": 999001,
         "title": "候选系列",
@@ -876,7 +876,7 @@ def test_series_page_404_for_unknown(web):
 
 
 def test_series_page_no_issues_empty_state(web):
-    now = repository.utcnow()
+    now = repository.now_local()
     repository.upsert_coin_series_cn(
         CoinSeries(
             id=None,
@@ -938,7 +938,7 @@ def test_series_page_issues_without_values_hint(web):
             is_essai=None,
             picture=None,
             catalog_no="Sp#1",
-            fetched_at=repository.utcnow(),
+            fetched_at=repository.now_local(),
         )
     )
     page = web.get("/coins/series/670")
@@ -950,7 +950,7 @@ def test_year_stats_counts_distinct_years_not_issues(web):
     """年份统计修正：一个年份多个版别时，年份数按不同年份算，不按单版条数。"""
     series = _make_series(670, "1 便士", "青铜")
     series_id = repository.upsert_coin_series_cn(series)
-    now = repository.utcnow()
+    now = repository.now_local()
     # 3 个版别，但只落在 2 个年份上
     for numista_id, year in ((1, 1895), (2, 1895), (3, 1896)):
         repository.upsert_coin_issue_cn(
@@ -1887,7 +1887,7 @@ def test_search_page_matches_title_and_tags(web):
 
 def test_search_page_filters_price_and_skips_closed_sessions(web):
     _seed_session()
-    now = repository.utcnow()
+    now = repository.now_local()
     closed_id = repository.upsert_coin_session(
         CoinSession(
             id=None,
@@ -1928,9 +1928,9 @@ def test_search_page_filters_price_and_skips_closed_sessions(web):
 
 def test_search_page_skips_sessions_ended_before_today(web):
     """截拍日期早于今天的专场，即使状态仍是 running 也不进搜索结果。"""
-    now = repository.utcnow()
+    now = repository.now_local()
     tz = config.get().app.tz
-    past = repository.to_utc_str(
+    past = repository.to_local_str(
         datetime.now(tz).replace(hour=15, minute=25, second=0, microsecond=0)
         - timedelta(days=1)
     )
@@ -1974,7 +1974,7 @@ def test_search_page_skips_sessions_ended_before_today(web):
 
 def test_search_page_keeps_denomination_adjacent(web):
     """`英国 1便士` 只命中 1 便士，不得被年份 1901 或 6 便士带出来。"""
-    now = repository.utcnow()
+    now = repository.now_local()
     session_id = repository.upsert_coin_session(
         CoinSession(
             id=None,

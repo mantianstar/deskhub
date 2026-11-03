@@ -75,7 +75,7 @@ def _series(
         catalog_no=None,
         comments=comments,
         mints=[],
-        fetched_at=repository.utcnow(),
+        fetched_at=repository.now_local(),
     )
 
 
@@ -109,7 +109,7 @@ def _issue(
         is_essai=None,
         picture=None,
         catalog_no=None,
-        fetched_at=repository.utcnow(),
+        fetched_at=repository.now_local(),
     )
 
 
@@ -129,12 +129,12 @@ def _values(
         value_au=None,
         value_unc=None,
         frequency=frequency,
-        fetched_at=repository.utcnow(),
+        fetched_at=repository.now_local(),
     )
 
 
 def _collection(key: str = "uk-victoria-penny") -> CoinCollectionSeries:
-    now = repository.utcnow()
+    now = repository.now_local()
     return CoinCollectionSeries(
         id=1,
         collection_key=key,
@@ -164,7 +164,7 @@ def _profile(
     theme: str = "",
     coin_name: str = "",
 ) -> CoinCollectionProfile:
-    now = repository.utcnow()
+    now = repository.now_local()
     year_list = years or [1860, 1861, 1862, 1863]
     owned_list = owned or []
     return CoinCollectionProfile(
@@ -301,8 +301,8 @@ def test_build_profile_owned_missing_and_upgrade():
         },
         values_by_series={1: [_values(12, 1, frequency=0.6, vf=10.0, xf=30.0)]},
         grades=[
-            CoinPurchaseGrade(None, "英国", "1861", "1 便士", "差", repository.utcnow()),
-            CoinPurchaseGrade(None, "英国", "1862", "1 便士", "好", repository.utcnow()),
+            CoinPurchaseGrade(None, "英国", "1861", "1 便士", "差", repository.now_local()),
+            CoinPurchaseGrade(None, "英国", "1862", "1 便士", "好", repository.now_local()),
         ],
     )
 
@@ -316,7 +316,7 @@ def test_build_profile_owned_missing_and_upgrade():
 
 def test_build_profile_matches_japanese_years_by_gregorian_year():
     """明治 6 年（1873）与大正 6 年（1917）的 Numista year 都是 6，按公历年关联。"""
-    now = repository.utcnow()
+    now = repository.now_local()
     meiji = CoinCollectionSeries(
         id=1,
         collection_key="jp-meiji-2sen",
@@ -347,7 +347,7 @@ def test_build_profile_matches_japanese_years_by_gregorian_year():
 
 def test_build_profile_matches_year_when_gregorian_year_missing():
     """公历年只覆盖部分单版时，没录 gregorian_year 的年份仍按年份本身匹配（南非 1927 / 1929）。"""
-    now = repository.utcnow()
+    now = repository.now_local()
     no_gregorian_1927 = _issue(12, 1, year=1927)
     no_gregorian_1927.gregorian_year = None
     no_gregorian_1929 = _issue(13, 1, year=1929)
@@ -394,7 +394,7 @@ def test_build_profile_excludes_non_bronze_and_proof_years():
 
 def test_build_profile_named_series_do_not_share_grades():
     """同名面值同一年靠主题 / 名称区分：女排的品相不会算进男排的已有年份。"""
-    now = repository.utcnow()
+    now = repository.now_local()
 
     def china_series(collection_id: int, coin_name: str) -> CoinCollectionSeries:
         return CoinCollectionSeries(
@@ -464,7 +464,7 @@ def test_build_profile_named_series_do_not_share_grades():
 
 def test_build_profile_matches_grade_by_member_denomination():
     """品相按成员面值匹配：收藏系列写 5 元、成员是 1 元时，用成员的 1 元。"""
-    now = repository.utcnow()
+    now = repository.now_local()
     collection_row = CoinCollectionSeries(
         id=1,
         collection_key="cn-panda",
@@ -509,7 +509,7 @@ def test_build_profile_matches_grade_by_member_denomination():
 
 def test_build_profile_treats_hong_kong_fen_as_sin():
     """香港面值「分」与「仙」同义：1926 年 1 仙的品相记成 1 Cent 也要算已有。"""
-    now = repository.utcnow()
+    now = repository.now_local()
     collection_row = CoinCollectionSeries(
         id=1,
         collection_key="hk-george-v-1-cent",
@@ -554,7 +554,7 @@ def test_build_profile_treats_hong_kong_fen_as_sin():
 
 def test_build_profiles_merges_members_into_one_card():
     """收藏系列级画像：一个收藏系列一张卡，年份标签为 `1995(金丝猴)`。"""
-    now = repository.utcnow()
+    now = repository.now_local()
     collection_row = CoinCollectionSeries(
         id=1,
         collection_key="cn-1995-rare-animals",
@@ -647,8 +647,8 @@ def test_build_profile_keeps_commemorative_series_of_any_composition():
             denomination="10 元",
             size_mm=None,
             size_band=None,
-            created_at=repository.utcnow(),
-            updated_at=repository.utcnow(),
+            created_at=repository.now_local(),
+            updated_at=repository.now_local(),
         ),
         [series],
         issues_by_series={1: [_issue(11, 1, year=2015)]},
@@ -1290,13 +1290,13 @@ def test_collection_page_filters_series_reason_and_hit(web):
             shop_id=None,
             title="今日专场",
             status="预展",
-            auction_at=repository.utcnow(),
+            auction_at=repository.now_local(),
             auction_at_raw=None,
             deposit=None,
             lot_total=1,
             view_count=0,
             cover_urls=[],
-            fetched_at=repository.utcnow(),
+            fetched_at=repository.now_local(),
         )
     )
     repository.upsert_coin_lot(
@@ -1312,7 +1312,7 @@ def test_collection_page_filters_series_reason_and_hit(web):
             tags={},
             match_score=0.0,
             is_recommended=False,
-            fetched_at=repository.utcnow(),
+            fetched_at=repository.now_local(),
         )
     )
     other_session_id = repository.upsert_coin_session(
@@ -1322,13 +1322,13 @@ def test_collection_page_filters_series_reason_and_hit(web):
             shop_id=None,
             title="无关专场",
             status="预展",
-            auction_at=repository.utcnow(),
+            auction_at=repository.now_local(),
             auction_at_raw=None,
             deposit=None,
             lot_total=1,
             view_count=0,
             cover_urls=[],
-            fetched_at=repository.utcnow(),
+            fetched_at=repository.now_local(),
         )
     )
     repository.upsert_coin_lot(
@@ -1344,7 +1344,7 @@ def test_collection_page_filters_series_reason_and_hit(web):
             tags={},
             match_score=0.0,
             is_recommended=False,
-            fetched_at=repository.utcnow(),
+            fetched_at=repository.now_local(),
         )
     )
 
@@ -1417,13 +1417,13 @@ def test_collection_hit_filter_separates_precise_and_similar(web):
             shop_id=None,
             title="法国硬币专场",
             status="预展",
-            auction_at=repository.utcnow(),
+            auction_at=repository.now_local(),
             auction_at_raw=None,
             deposit=None,
             lot_total=1,
             view_count=0,
             cover_urls=[],
-            fetched_at=repository.utcnow(),
+            fetched_at=repository.now_local(),
         )
     )
     repository.upsert_coin_lot(
@@ -1439,7 +1439,7 @@ def test_collection_hit_filter_separates_precise_and_similar(web):
             tags={},
             match_score=0.0,
             is_recommended=False,
-            fetched_at=repository.utcnow(),
+            fetched_at=repository.now_local(),
         )
     )
 
@@ -1488,13 +1488,13 @@ def test_collection_rail_counts_similar_matches_with_transliteration(web):
             shop_id=None,
             title="希腊专场",
             status="预展",
-            auction_at=repository.utcnow(),
+            auction_at=repository.now_local(),
             auction_at_raw=None,
             deposit=None,
             lot_total=1,
             view_count=0,
             cover_urls=[],
-            fetched_at=repository.utcnow(),
+            fetched_at=repository.now_local(),
         )
     )
     repository.upsert_coin_lot(
@@ -1510,7 +1510,7 @@ def test_collection_rail_counts_similar_matches_with_transliteration(web):
             tags={},
             match_score=0.0,
             is_recommended=False,
-            fetched_at=repository.utcnow(),
+            fetched_at=repository.now_local(),
         )
     )
 
@@ -1546,13 +1546,13 @@ def test_sessions_page_rematches_today_before_listing(web):
             shop_id=None,
             title="今日专场",
             status="预展",
-            auction_at=repository.utcnow(),
+            auction_at=repository.now_local(),
             auction_at_raw=None,
             deposit=None,
             lot_total=1,
             view_count=0,
             cover_urls=[],
-            fetched_at=repository.utcnow(),
+            fetched_at=repository.now_local(),
         )
     )
     repository.upsert_coin_lot(
@@ -1568,7 +1568,7 @@ def test_sessions_page_rematches_today_before_listing(web):
             tags={},
             match_score=0.0,
             is_recommended=False,
-            fetched_at=repository.utcnow(),
+            fetched_at=repository.now_local(),
         )
     )
 
@@ -1597,7 +1597,7 @@ def _explore_candidate(
     ruler: str = "第三共和国",
     denomination: str = "1 便士",
 ) -> CoinExploreCandidate:
-    now = repository.utcnow()
+    now = repository.now_local()
     payload = {
         "numista_id": numista_id,
         "title": title,

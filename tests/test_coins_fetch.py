@@ -128,10 +128,10 @@ def test_format_and_parse_site_time():
     assert gapi.format_end_at("不是时间") is None
 
 
-def test_to_utc_iso_treats_site_time_as_business_timezone():
-    """站内时间是**朴素北京时间**，落库统一换成 UTC。"""
-    assert gapi.to_utc_iso("2026-10-12 19:30:00", SHANGHAI) == "2026-10-12T11:30:00Z"
-    assert gapi.to_utc_iso(None, SHANGHAI) is None
+def test_to_local_iso_treats_site_time_as_business_timezone():
+    """站内时间是**朴素北京时间**，落库按北京时间原样格式化。"""
+    assert gapi.to_local_iso("2026-10-12 19:30:00", SHANGHAI) == "2026-10-12T19:30:00"
+    assert gapi.to_local_iso(None, SHANGHAI) is None
 
 
 def test_card_from_auction_maps_list_card():
@@ -161,7 +161,7 @@ def test_card_from_auction_maps_live_mode_to_start_time():
     assert card is not None
     assert card.kind == "live"
     assert card.auction_at_raw == "10月12日 星期一 19:30"  # 开拍时间（start_time）
-    assert card.start_at == "2026-10-12T11:30:00Z"
+    assert card.start_at == "2026-10-12T19:30:00"
 
 
 def test_detail_from_payload_maps_session_shop_and_lots():
@@ -258,7 +258,7 @@ def test_sold_from_payload_keeps_only_sold_items():
 
     assert [sample.title for sample in samples] == ["英国1960年"]
     assert samples[0].price == 12.0  # 1200 分
-    assert samples[0].sold_at == "2026-09-01T02:00:00Z"
+    assert samples[0].sold_at == "2026-09-01T10:00:00"
 
 
 def test_category_code_from_item_prefers_second_level():
@@ -336,7 +336,7 @@ async def test_session_detail_sets_end_at_in_utc():
 
     detail = await api.session_detail("328115")
 
-    assert detail.end_at == "2026-10-12T11:30:00Z"  # 截拍时间的 UTC ISO
+    assert detail.end_at == "2026-10-12T19:30:00"  # 截拍时间的本地时间
     assert api.calls[-1] == (gapi.ACTION_GET, {"auction_id": 328115})
 
 
@@ -738,7 +738,7 @@ def test_lot_from_item_parses_terminal_fields():
     assert sold.outcome == "sold"
     assert sold.final_price == 88.0
     assert sold.winner_uid == "9001"
-    assert sold.closed_at == "2026-10-21T06:00:01Z"
+    assert sold.closed_at == "2026-10-21T14:00:01"
 
     unsold = gapi.lot_from_item(
         {"item_id": 2, "name": "未成交拍品", "status": 3, "end_time": "2026-10-21 14:00:01"},
@@ -886,7 +886,7 @@ def test_coin_sales_prefers_session_final(temp_db):
         "sold_at": "2026-10-20T12:00:00Z",
         "session_id": None,
         "shop_id": None,
-        "fetched_at": repository.utcnow(),
+        "fetched_at": repository.now_local(),
     }
     repository.upsert_coin_sales(
         [CoinSale(item_id="42", price=10.0, keyword="东印度", source="sold_search", **base)]
@@ -992,7 +992,7 @@ def _seed_running_session(mxiqi_id: str) -> int:
             lot_total=None,
             view_count=None,
             cover_urls=[],
-            fetched_at=repository.utcnow(),
+            fetched_at=repository.now_local(),
             kind="live",
         )
     )
@@ -1019,7 +1019,7 @@ def _bid_lot(
         tags={},
         match_score=0.0,
         is_recommended=False,
-        fetched_at=repository.utcnow(),
+        fetched_at=repository.now_local(),
         bid_num=bid_num,
         bid_user_num=bid_user_num,
         bid_source=source,

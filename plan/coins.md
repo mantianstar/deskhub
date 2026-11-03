@@ -80,7 +80,7 @@ data/
      → 当前专场列表（`name` / `start_time`（开拍）/ `end_time`（截拍）/ `num` / `status` / 店铺 / 围观）；
   2. 逐场 `POST miniprogram.auction.get`，body `{"auction_id":<id>}`
      → 专场详情 + 店铺 + **全部拍品**（`auction_items.items`，一次给全）。
-- **「拍卖时间」按专场类型取**：`coin_sessions.kind` 记 `live`（实时）/ `timed`（限时）；实时取 `start_time`（开拍）、限时取 `end_time`（截拍），`auction_at` 存 UTC ISO、`auction_at_raw` 存文案（如「10月12日 星期一 19:30」）。列表页那张卡显示的也是同一口径。
+- **「拍卖时间」按专场类型取**：`coin_sessions.kind` 记 `live`（实时）/ `timed`（限时）；实时取 `start_time`（开拍）、限时取 `end_time`（截拍），`auction_at` 存北京时间 ISO、`auction_at_raw` 存文案（如「10月12日 星期一 19:30」）。列表页那张卡显示的也是同一口径。
 - 价格字段是**分**（`price_deposit=2000` → ¥20）；图片是 OSS key，用响应里的 `cdn.oss` 拼前缀。
 - 以麦稀奇 id 幂等 upsert（专场、拍品各一个唯一键）；单场失败只记日志、不中断其余专场。
 - 查价（§18.6）同走 `miniprogram.home.filter` —— 不需要浏览器与登录。
@@ -143,7 +143,7 @@ CREATE TABLE IF NOT EXISTS coin_sessions (
   shop_id INTEGER REFERENCES coin_shops(id) ON DELETE SET NULL,
   title TEXT NOT NULL,
   status TEXT,            -- preview | running | closed
-  auction_at TEXT,        -- UTC ISO8601
+  auction_at TEXT,        -- 北京时间 ISO8601
   auction_at_raw TEXT,    -- 站点原始文案（如「10月8日 星期四 15:25」）
   deposit REAL, lot_total INTEGER, view_count INTEGER,
   cover_urls TEXT,        -- JSON 数组（列表页 4 图）
@@ -340,7 +340,7 @@ coins:
    - **枚举类字段**继续走这里；**描述 / 备注 / 名称**改由大模型翻译（§18.13.4），本模块对长文本退化为「词表结果」+「大模型不可用时的回退」。
 4. **风控**（免费额度每月 2000 次，响应**不带限流头**）：`NumistaClient._guard_quota` 每次请求前检查 —— 单轮上限 `max_requests_per_run`（默认 40）、月度上限 `monthly_limit`（默认 1500，按业务时区切月）；每次成功请求落 `coin_api_usage` 计数，CLI 末尾打印「本月已用 N/1500」。
 
-- **repository 增量**：`upsert_coin_series_cn` / `upsert_coin_issue_cn`、`get_coin_series(cn)` / `list_coin_series(cn)` / `list_coin_issues(cn)` / `count_coin_series(cn)` / `count_coin_issues(cn)`、`record_api_call` / `count_api_calls_since`、`local_month_start_utc`。
+- **repository 增量**：`upsert_coin_series_cn` / `upsert_coin_issue_cn`、`get_coin_series(cn)` / `list_coin_series(cn)` / `list_coin_issues(cn)` / `count_coin_series(cn)` / `count_coin_issues(cn)`、`record_api_call` / `count_api_calls_since`、`local_month_start`。
 - **字段新增链路**（单版 / 系列加字段，按此顺序一遍改完，不逐层探索）：`models.py` 的 DDL + dataclass → `SCHEMA_VERSION` + `app/migrations/vN.py`（老表加列）→ `IssueInfo` / `series_from_type` 解析 → `repository` 的 `_*_COLUMNS` / `_*_values` / `_row_to_*` → 模板 → 测试构造器与断言 → CHANGELOG。
 - **迁移机制**：见 [core.md](./core.md) §6.2（`CREATE TABLE IF NOT EXISTS` 只能新增表；加列走 `app/migrations/` 登记的幂等 `ALTER TABLE`）。
 
@@ -720,7 +720,7 @@ CREATE TABLE IF NOT EXISTS coin_collection_series_members (
 
 **采集改动**
 
-- `SessionCard` 增加 `end_at` / `start_at`（UTC ISO）与 `kind`（live / timed）；`list_sessions` 传入业务时区和请求的 `auction_mode`。
+- `SessionCard` 增加 `end_at` / `start_at`（北京时间 ISO）与 `kind`（live / timed）；`list_sessions` 传入业务时区和请求的 `auction_mode`。
 - `pipeline._collect` 先用 `repository.local_day_bounds` 过滤：实时专场看 `start_at`（今日开拍）、限时专场看 `end_at`（今日截拍），只对当日场次拉详情。
 - `pipeline.run` 优先调用 `recommend.rematch_all`；收藏画像为空时回退 `matcher.rematch_all`。
 - `_price_recommended` 新增 `keywords` 参数：新推荐直接使用推荐项关键词；旧画像仍从标题反推。
@@ -815,7 +815,7 @@ CREATE TABLE IF NOT EXISTS coin_collection_series_members (
 - 表：`coin_lots` 增 `outcome`（`sold` / `unsold`）、`final_price`、`winner_uid`、`closed_at`；
   迁移登记在 `app/migrations/v14.py`（`COLUMNS` → `COLUMN_MIGRATIONS[(13, 14)]`）。
 - 解析：`gapi.lot_from_item` 把 `item.status` 2/3 映射为终态，只有 `sold` 才取 `price` 作成交价；
-  `closed_at` 取 `item.end_time` 并转 UTC（已是「场次截拍时刻」口径，见 spec §14.18.8）。
+  `closed_at` 取 `item.end_time` 并转北京时间（已是「场次截拍时刻」口径，见 spec §14.18.8）。
 - 触发：`pipeline._finalize` 在每轮采集后跑，取 `auction_at ∈ [now - finalize_days, now - 6h]`
   且仍有 `outcome IS NULL` 拍品的专场；`fetched_at >= 本轮开始` 的场次跳过（本轮刚采过，数据是新的）；
   仍在拍的拍品（`status=1`）不落终态，下一轮再取。

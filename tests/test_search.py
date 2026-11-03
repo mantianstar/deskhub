@@ -17,7 +17,7 @@ from app.main import app as fastapi_app
 from app.models import Item
 
 SHANGHAI = ZoneInfo("Asia/Shanghai")
-DAY_START, DAY_END = "2026-09-21T16:00:00Z", "2026-09-22T16:00:00Z"  # 上海 2026-09-22 全天
+DAY_START, DAY_END = "2026-09-22T00:00:00", "2026-09-23T00:00:00"  # 上海 2026-09-22 全天
 
 
 @pytest.fixture()
@@ -160,7 +160,7 @@ def test_search_filters_by_published_time_not_fetched_time(temp_db):
         fetched_at=fetched,
     )
 
-    assert repository.day_bounds_utc(SHANGHAI, date(2026, 9, 22)) == (DAY_START, DAY_END)
+    assert repository.day_bounds_local(SHANGHAI, date(2026, 9, 22)) == (DAY_START, DAY_END)
 
     # 左闭右开，且按发布时间降序
     hits, total = repository.search_items(start_utc=DAY_START, end_utc=DAY_END)
@@ -223,7 +223,7 @@ def test_search_page_hits_keyword_and_grades_score(web):
         source_id,
         "使用 DuckDB 分析 CSV 文件",
         url="https://example.com/duckdb",
-        fetched_at=repository.utcnow(),
+        fetched_at=repository.now_local(),
     )
     repository.upsert_score(item_id, 62, "讲的是 DuckDB 的用法，与大数据栈相关", "fake", "v1")
 
@@ -250,14 +250,14 @@ def test_search_page_filters_by_published_date(web):
         source_id,
         "今天发布的条目",
         url="https://example.com/pub-today",
-        fetched_at=repository.utcnow(),
+        fetched_at=repository.now_local(),
         published_at="2026-09-23T02:00:00Z",  # 北京 09-23 10:00
     )
     _add_item(
         source_id,
         "昨天发布的条目",
         url="https://example.com/pub-yesterday",
-        fetched_at=repository.utcnow(),
+        fetched_at=repository.now_local(),
         published_at="2026-09-22T02:00:00Z",  # 北京 09-22 10:00
     )
 
@@ -279,7 +279,7 @@ def test_search_page_keeps_filters_in_pager_url(web):
             source_id,
             f"DuckDB 笔记 {index}",
             url=f"https://example.com/duckdb-{index}",
-            fetched_at=repository.utcnow(),
+            fetched_at=repository.now_local(),
             published_at=f"2026-09-22T0{index}:00:00Z",
         )
 
@@ -301,7 +301,7 @@ def test_search_page_tolerates_bad_params(web):
         source_id,
         "能被搜到的条目",
         url="https://example.com/any",
-        fetched_at=repository.utcnow(),
+        fetched_at=repository.now_local(),
     )
 
     for query in (

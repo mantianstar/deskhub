@@ -92,7 +92,7 @@ def _record(
             kind=kind,
             target=target,
             started_at=started_at,
-            finished_at=repository.utcnow(),
+            finished_at=repository.now_local(),
             status=status,
             http_status=http_status,
             items_new=items_new,
@@ -117,7 +117,7 @@ async def run(
     - `price_only=True`：只对已入库的推荐拍品查价（不采集、不回采）
     - `gapi`：注入替身（测试用）；不传就自己开一个（整个模块唯一的站点客户端）
     """
-    started = repository.utcnow()
+    started = repository.now_local()
     errors = 0
     sessions_seen = sessions_stored = lots_stored = 0
 
@@ -299,7 +299,7 @@ async def _collect(config: Config, api: MxiqiGapi, started: str) -> tuple[int, i
             delay = random.uniform(interval * 0.6, interval * 1.4)
             logger.info("采集限速：等 %.1f 秒（每场间隔 %d 秒）", delay, interval)
             await asyncio.sleep(delay)
-        detail_started = repository.utcnow()
+        detail_started = repository.now_local()
         try:
             # 详情页拿不到的字段用列表页那张卡兜底（gapi.detail_from_payload）
             detail = await api.session_detail(card.mxiqi_id, fallback=card)
@@ -320,7 +320,7 @@ async def _collect(config: Config, api: MxiqiGapi, started: str) -> tuple[int, i
                     name=shop.name,
                     avatar_url=shop.avatar_url,
                     badges=shop.badges,
-                    fetched_at=repository.utcnow(),
+                    fetched_at=repository.now_local(),
                 )
             )
 
@@ -340,7 +340,7 @@ async def _collect(config: Config, api: MxiqiGapi, started: str) -> tuple[int, i
                 lot_total=detail.card.lot_total,
                 view_count=detail.card.view_count,
                 cover_urls=detail.card.cover_urls,
-                fetched_at=repository.utcnow(),
+                fetched_at=repository.now_local(),
                 commission_rate=detail.commission_rate,
                 commission_min=detail.commission_min,
                 express_desc=detail.express_desc,
@@ -373,7 +373,7 @@ async def _collect(config: Config, api: MxiqiGapi, started: str) -> tuple[int, i
                     tags=lot.tags,
                     match_score=0.0,
                     is_recommended=False,
-                    fetched_at=repository.utcnow(),
+                    fetched_at=repository.now_local(),
                     bid_num=lot.bid_num,
                     bid_user_num=lot.bid_user_num,
                     bid_source=lot.bid_source,
@@ -399,7 +399,7 @@ async def _collect(config: Config, api: MxiqiGapi, started: str) -> tuple[int, i
                     tags=lot.tags,
                     match_score=0.0,
                     is_recommended=False,
-                    fetched_at=repository.utcnow(),
+                    fetched_at=repository.now_local(),
                     bid_num=lot.bid_num,
                     bid_user_num=lot.bid_user_num,
                     bid_source=lot.bid_source,
@@ -431,9 +431,9 @@ async def _finalize(config: Config, api: MxiqiGapi, run_started: str) -> tuple[i
         return 0, 0, 0
     categories.sync_seed()
 
-    now = datetime.now(timezone.utc)
-    since = (now - timedelta(days=days)).isoformat().replace("+00:00", "Z")
-    before = (now - timedelta(hours=FINALIZE_GRACE_HOURS)).isoformat().replace("+00:00", "Z")
+    now = datetime.now(repository.BEIJING)
+    since = repository.to_local_str(now - timedelta(days=days))
+    before = repository.to_local_str(now - timedelta(hours=FINALIZE_GRACE_HOURS))
     pending = repository.list_coin_sessions_pending_finalize(
         since, before, run_started, config.coins.max_sessions_per_run
     )
@@ -449,7 +449,7 @@ async def _finalize(config: Config, api: MxiqiGapi, run_started: str) -> tuple[i
             logger.info("终态回采限速：等 %.1f 秒", delay)
             await asyncio.sleep(delay)
 
-        detail_started = repository.utcnow()
+        detail_started = repository.now_local()
         try:
             detail = await api.session_detail(mxiqi_id)
         except GapiError as exc:
@@ -481,7 +481,7 @@ async def _finalize(config: Config, api: MxiqiGapi, run_started: str) -> tuple[i
                     tags=lot.tags,
                     match_score=0.0,
                     is_recommended=False,
-                    fetched_at=repository.utcnow(),
+                    fetched_at=repository.now_local(),
                     outcome=lot.outcome,
                     final_price=lot.final_price,
                     winner_uid=lot.winner_uid,
@@ -541,10 +541,10 @@ async def backfill_categories(
     """
     categories.sync_seed()
 
-    since = "1970-01-01T00:00:00Z"
+    since = "1970-01-01T00:00:00"
     if days is not None:
-        now = datetime.now(timezone.utc)
-        since = (now - timedelta(days=days)).isoformat().replace("+00:00", "Z")
+        now = datetime.now(repository.BEIJING)
+        since = repository.to_local_str(now - timedelta(days=days))
     pending = repository.list_coin_sessions_pending_category(since, limit)
     if not pending:
         logger.info("分类回填：没有待补的专场")
@@ -564,7 +564,7 @@ async def backfill_categories(
                 logger.info("分类回填限速：等 %.1f 秒", delay)
                 await asyncio.sleep(delay)
 
-            started = repository.utcnow()
+            started = repository.now_local()
             try:
                 detail = await api.session_detail(mxiqi_id)
             except GapiError as exc:
@@ -676,7 +676,7 @@ async def _price_recommended(
             await asyncio.sleep(delay)
         attempts += 1
 
-        started = repository.utcnow()
+        started = repository.now_local()
         try:
             ref = await pricing.price_lot(
                 client,

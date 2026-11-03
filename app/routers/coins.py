@@ -101,7 +101,7 @@ def sessions_page(
     match_type = match_type if match_type in ("all", "precise", "similar") else "all"
     follow = follow if follow in ("all", "followed", "unfollowed") else "all"
     kind = kind if kind in ("all", "live", "timed") else "all"
-    start, end = repository.day_bounds_utc(cfg.app.tz, selected_day)
+    start, end = repository.day_bounds_local(cfg.app.tz, selected_day)
     cards = repository.list_coin_session_cards(
         day_bounds=(start, end),
         only_recommended=False,
@@ -348,7 +348,7 @@ def _lot_recommendations(detail) -> tuple[dict[int, str], dict[int, str]]:
     """拍品 → 精准 / 相似推荐的推荐原因；精准优先，相似不重复计数。"""
     cfg = config.get()
     moment = repository.parse_dt(detail.auction_at)
-    day = moment.astimezone(cfg.app.tz).date() if moment is not None else None
+    day = moment.date() if moment is not None else None
     _, items = coins_recommend.load_recommendations(cfg, day=day)
     if not items:
         # 未配置收藏画像时沿用入库的标签匹配结果，全部视为精准推荐
@@ -543,7 +543,7 @@ def series_page(request: Request, numista_id: int) -> Response:
                 {"request": request, "page_title": "系列不存在", "series": None},
                 status_code=404,
             )
-        now = repository.utcnow()
+        now = repository.now_local()
         series = coins_explore._series_from_payload(candidate.payload_cn, now)
         issues = [
             coins_explore._issue_from_payload(item, 0, now)

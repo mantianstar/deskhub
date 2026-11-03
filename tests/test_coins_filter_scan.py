@@ -34,7 +34,7 @@ def _seed_lot(mxiqi_id: str, *, bid_num: int | None = None) -> None:
             lot_total=None,
             view_count=None,
             cover_urls=[],
-            fetched_at=repository.utcnow(),
+            fetched_at=repository.now_local(),
             kind="live",
         )
     )
@@ -51,10 +51,25 @@ def _seed_lot(mxiqi_id: str, *, bid_num: int | None = None) -> None:
             tags={},
             match_score=0.0,
             is_recommended=False,
-            fetched_at=repository.utcnow(),
+            fetched_at=repository.now_local(),
             bid_num=bid_num,
         )
     )
+
+
+def _seed_gap(cate: str = "11010") -> None:
+    """造一条已成交但缺出价人数的拍品，让该分类进入深扫。"""
+    _seed_lot(f"33{cate}:1")
+    with db.connect() as conn, conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO coin_categories (code, name, fetched_at, updated_at)"
+            " VALUES (?, ?, ?, ?)",
+            (cate, cate, repository.now_local(), repository.now_local()),
+        )
+        conn.execute(
+            "UPDATE coin_lots SET outcome = 'sold', category_code = ? WHERE mxiqi_id = ?",
+            (cate, f"33{cate}:1"),
+        )
 
 
 def _lot_row(mxiqi_id: str) -> dict:
@@ -155,6 +170,7 @@ def _item(page: int) -> dict:
 
 
 def test_full_scan_resumes_from_saved_page(temp_db, monkeypatch):
+    _seed_gap()
     repository.set_coin_filter_scan_page("11010", 30)
     fake = _FakeApi({page: [_item(page)] for page in range(1, 31)})
     monkeypatch.setattr(filter_scan, "MxiqiGapi", lambda cfg: fake)
@@ -172,6 +188,7 @@ def test_full_scan_resumes_from_saved_page(temp_db, monkeypatch):
 
 
 def test_full_scan_marks_deep_done_when_category_exhausted(temp_db, monkeypatch):
+    _seed_gap()
     repository.set_coin_filter_scan_page("11010", 22)
     fake = _FakeApi({page: [_item(page)] for page in range(1, 23)})  # 第 23 页为空 → 已扫完
     monkeypatch.setattr(filter_scan, "MxiqiGapi", lambda cfg: fake)
@@ -188,12 +205,13 @@ def test_full_scan_marks_deep_done_when_category_exhausted(temp_db, monkeypatch)
     assert repository.coin_filter_scan_pages() == {"11010": filter_scan.DEEP_DONE_PAGE}
 
 
-def test_full_scan_stops_deep_when_pages_older_than_lookback(temp_db, monkeypatch):
+def test_full_scan_keeps_deep_after_stale_pages(temp_db, monkeypatch):
+    _seed_gap()
     repository.set_coin_filter_scan_page("11010", 21)
     pages = {page: [_item(page)] for page in range(1, 21)}
     pages[21] = [
         {"auction_id": 1, "item_id": 999, "update_time": "2020-01-01 00:00:00"}
-    ]  # 深处第 21 页整体早于回补下限
+    ]  # 深处第 21 页整体很旧：不再据此停扫
     fake = _FakeApi(pages)
     monkeypatch.setattr(filter_scan, "MxiqiGapi", lambda cfg: fake)
     monkeypatch.setattr(
@@ -204,9 +222,23 @@ def test_full_scan_stops_deep_when_pages_older_than_lookback(temp_db, monkeypatc
 
     result = asyncio.run(filter_scan.scan(_cfg(), full=True))
 
-    assert fake.requested == [*range(1, 22)]  # 扫到旧页立即停，不再往更深处打
-    assert result.stopped == "deep_floor"
-    assert repository.coin_filter_scan_pages() == {"11010": 21}  # 断点不前移
+    assert fake.requested == [*range(1, 23)]  # 旧页不停，扫到空页才收
+    assert result.stopped is None
+    assert repository.coin_filter_scan_pages() == {"11010": filter_scan.DEEP_DONE_PAGE}
+
+
+def test_full_scan_skips_deep_when_no_uncovered_sold(temp_db, monkeypatch):
+    fake = _FakeApi({page: [_item(page)] for page in range(1, 24)})
+    monkeypatch.setattr(filter_scan, "MxiqiGapi", lambda cfg: fake)
+    monkeypatch.setattr(
+        repository, "list_coin_categories", lambda parent: [{"code": "11010"}]
+    )
+    monkeypatch.setattr(filter_scan, "DAILY_QUOTA", 30)
+    monkeypatch.setattr(filter_scan, "_pause", _noop)
+
+    asyncio.run(filter_scan.scan(_cfg(), full=True))
+
+    assert fake.requested == [*range(1, 21)]  # 没有未回填成交：只扫顶部 20 页
 
 
 def test_incremental_scan_stops_when_pages_older_than_lookback(temp_db, monkeypatch):
@@ -226,12 +258,6 @@ def test_incremental_scan_stops_when_pages_older_than_lookback(temp_db, monkeypa
 
     assert fake.requested == [1, 2]  # 扫到旧页立即停，不再往更深处打
     assert result.stopped == "incremental_floor"
-
-
-def test_top_pages_raises_hot_category():
-    assert filter_scan._top_pages("11070", 20) == 60
-    assert filter_scan._top_pages("11010", 20) == 20
-    assert filter_scan._top_pages("11010", 80) == 80
 
 
 def test_allocate_pages_follows_yesterday_weights():

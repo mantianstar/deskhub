@@ -107,7 +107,7 @@ def _add_item(
             url_hash=fetcher.url_hash(link),
             published_at=published_at,
             summary=summary,
-            fetched_at=fetched_at or repository.utcnow(),
+            fetched_at=fetched_at or repository.now_local(),
         )
     )
     assert item_id is not None
@@ -330,7 +330,7 @@ def test_pending_pool_excludes_scored_and_outdated_items(tmp_path):
     stale_id = _add_item(
         title="老条目",
         url="https://example.com/stale",
-        fetched_at=repository.to_utc_str(datetime.now(timezone.utc) - timedelta(days=9)),
+        fetched_at=repository.to_local_str(datetime.now(timezone.utc) - timedelta(days=9)),
     )
     repository.upsert_score(fresh_id, 90.0, GOOD_REASON, "test-model", "v1")
 

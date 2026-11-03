@@ -296,7 +296,7 @@ async def test_entry_without_link_is_skipped(tmp_path, respx_mock):
     assert row["url"] == "https://example.com/a?utm_source=rss"  # 原始链接保留，便于跳转
     assert fetcher.canonicalize(row["url"]) == "https://example.com/a"
     assert row["summary"] == "hello world"
-    assert row["published_at"] == "2026-09-21T10:00:00Z"
+    assert row["published_at"] == "2026-09-21T18:00:00"
     assert row["module"] == "agent"  # 继承自源
 
 
@@ -346,7 +346,7 @@ async def test_source_timezone_corrects_mislabelled_gmt(tmp_path, respx_mock):
     await fetcher.run_once(config)
 
     with db.connect() as conn:
-        assert conn.execute("SELECT published_at FROM items").fetchone()[0] == "2026-09-23T01:26:00Z"
+        assert conn.execute("SELECT published_at FROM items").fetchone()[0] == "2026-09-23T09:26:00"
 
 
 @pytest.mark.asyncio
@@ -358,7 +358,7 @@ async def test_without_source_timezone_gmt_is_taken_literally(tmp_path, respx_mo
     await fetcher.run_once(config)
 
     with db.connect() as conn:
-        assert conn.execute("SELECT published_at FROM items").fetchone()[0] == "2026-09-23T09:26:00Z"
+        assert conn.execute("SELECT published_at FROM items").fetchone()[0] == "2026-09-23T17:26:00"
 
 
 @pytest.mark.asyncio
@@ -382,8 +382,8 @@ async def test_source_timezone_does_not_shift_other_sources(tmp_path, respx_mock
             "ORDER BY s.name"
         ).fetchall()
     assert [(row["name"], row["published_at"]) for row in rows] == [
-        ("正常源", "2026-09-23T09:26:00Z"),
-        ("被修正的源", "2026-09-23T01:26:00Z"),
+        ("正常源", "2026-09-23T17:26:00"),
+        ("被修正的源", "2026-09-23T09:26:00"),
     ]
 
 
@@ -394,7 +394,7 @@ def test_url_date_parsing_boundaries():
     """路径里的数字凑不出合法日期就返回 None —— 宁可不填，也不编时间。"""
     assert (
         fetcher._published_at_from_url("https://tech.meituan.com/2026/7/4/a.html")
-        == "2026-07-04T00:00:00Z"
+        == "2026-07-04T00:00:00"
     )
     assert fetcher._published_at_from_url("https://tech.meituan.com/2026/13/45/a.html") is None
     assert fetcher._published_at_from_url("https://tech.meituan.com/2026/02/30/a.html") is None
@@ -419,10 +419,10 @@ async def test_meituan_feed_gets_published_at_from_url(tmp_path, respx_mock):
         rows = conn.execute("SELECT url, published_at FROM items").fetchall()
     assert len(rows) == 10
     assert all(row["published_at"] for row in rows)  # 10 条全部有发布时间
-    assert max(row["published_at"] for row in rows) == "2026-09-22T00:00:00Z"  # 样本里最新的一篇
+    assert max(row["published_at"] for row in rows) == "2026-09-22T00:00:00"  # 样本里最新的一篇
     # 抽查：URL 里的日期就是入库的发布日期（文章页上显示的就是这个）
     july = next(row for row in rows if "/2026/07/24/" in row["url"])
-    assert july["published_at"] == "2026-07-24T00:00:00Z"
+    assert july["published_at"] == "2026-07-24T00:00:00"
 
 
 @pytest.mark.asyncio
@@ -441,7 +441,7 @@ async def test_feed_time_wins_over_url_date(tmp_path, respx_mock):
 
     with db.connect() as conn:
         assert (
-            conn.execute("SELECT published_at FROM items").fetchone()[0] == "2026-09-21T10:00:00Z"
+            conn.execute("SELECT published_at FROM items").fetchone()[0] == "2026-09-21T18:00:00"
         )
 
 

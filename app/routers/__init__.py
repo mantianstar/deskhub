@@ -20,11 +20,11 @@ templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 
 def format_local_time(value: str | None) -> str:
-    """UTC 存储串 → 业务时区的 `MM-DD HH:MM`；无值（如美团 feed 没有发布时间）显示 `—`。"""
+    """北京时间存储串 → `MM-DD HH:MM`；无值（如美团 feed 没有发布时间）显示 `—`。"""
     parsed = repository.parse_dt(value)
     if parsed is None:
         return "—"
-    return parsed.astimezone(config.get().app.tz).strftime("%m-%d %H:%M")
+    return parsed.strftime("%m-%d %H:%M")
 
 
 def module_label(key: str) -> str:

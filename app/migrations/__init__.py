@@ -32,6 +32,7 @@ from app.migrations import (
     v27,
     v28,
     v29,
+    v30,
 )
 
 # (from_version, to_version) -> {表名: {列名: 列定义}}
@@ -216,6 +217,16 @@ for _from in ("20", "21", "22", "23", "24", "25", "26", "27"):
         **v29.COLUMNS,
     }
     DATA_MIGRATIONS[(_from, "29")] = DATA_MIGRATIONS[(_from, "28")]
+
+# 跨版本直升级到 v30：沿用 v29 的加列与回填，再把存量时间列整体转成北京时间
+COLUMN_MIGRATIONS[("29", "30")] = {}
+DATA_MIGRATIONS[("29", "30")] = v30.to_beijing
+for _from in ("20", "21", "22", "23", "24", "25", "26", "27", "28"):
+    COLUMN_MIGRATIONS[(_from, "30")] = COLUMN_MIGRATIONS[(_from, "29")]
+    _previous = DATA_MIGRATIONS.get((_from, "29"))
+    DATA_MIGRATIONS[(_from, "30")] = (
+        v30.to_beijing if _previous is None else _then_steps(_previous, v30.to_beijing)
+    )
 
 
 def apply_columns(conn: sqlite3.Connection, tables: dict[str, dict[str, str]]) -> list[str]:

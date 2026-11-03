@@ -467,7 +467,7 @@ class NumistaClient:
                 f"本轮 Numista 请求已达上限 {cfg.max_requests_per_run} 次，先停下（下次再跑）"
             )
         used = repository.count_api_calls_since(
-            PROVIDER, repository.local_month_start_utc(self._cfg.app.tz)
+            PROVIDER, repository.local_month_start(self._cfg.app.tz)
         )
         if used >= cfg.monthly_limit:
             raise NumistaError(
@@ -751,7 +751,7 @@ async def collect_series(
         async with _translator(config, llm_client) as translator:
             type_ids = await api.search_type_ids(issuer=issuer, year=year, denomination=keyword)
             picked = type_ids[:cap]
-            fetched_at = repository.utcnow()
+            fetched_at = repository.now_local()
             series_list: list[SeriesInfo] = []
             skipped = 0
             for type_id in picked:
@@ -802,7 +802,7 @@ async def collect_series_by_id(
     try:
         async with _translator(config, llm_client) as translator:
             info = await api.type_detail(series_id)
-            await _store_series(info, repository.utcnow(), llm_client=translator)
+            await _store_series(info, repository.now_local(), llm_client=translator)
             logger.info("Numista 系列（按 ID）：%s → %s", series_id, info.title)
             return info
     finally:
@@ -828,7 +828,7 @@ async def collect_issues(
     try:
         async with _translator(config, llm_client) as translator:
             info = await api.type_detail(series_id)
-            fetched_at = repository.utcnow()
+            fetched_at = repository.now_local()
             db_id = repository.upsert_coin_series(_series_row(info, fetched_at))
             cn_info = await _cn_series_info(info, translator)
             cn_id = repository.upsert_coin_series_cn(_series_row(cn_info, fetched_at))
