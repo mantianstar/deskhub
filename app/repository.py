@@ -1309,10 +1309,10 @@ def upsert_coin_session(session: CoinSession) -> int:
             """
             INSERT INTO coin_sessions
                 (mxiqi_id, shop_id, title, status, kind, auction_at, auction_at_raw,
-                 deposit, lot_total, view_count, cover_urls, fetched_at,
+                 deposit, lot_total, view_count, viewer_count, cover_urls, fetched_at,
                  commission_rate, commission_min, express_desc, express_day,
                  express_fee, express_free_amount, is_storage)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(mxiqi_id) DO UPDATE SET
                 shop_id        = excluded.shop_id,
                 title          = excluded.title,
@@ -1323,6 +1323,7 @@ def upsert_coin_session(session: CoinSession) -> int:
                 deposit        = excluded.deposit,
                 lot_total      = excluded.lot_total,
                 view_count     = excluded.view_count,
+                viewer_count   = excluded.viewer_count,
                 cover_urls     = excluded.cover_urls,
                 fetched_at     = excluded.fetched_at,
                 commission_rate = excluded.commission_rate,
@@ -1344,6 +1345,7 @@ def upsert_coin_session(session: CoinSession) -> int:
                 session.deposit,
                 session.lot_total,
                 session.view_count,
+                session.viewer_count,
                 _dump(session.cover_urls),
                 session.fetched_at,
                 session.commission_rate,
@@ -1362,18 +1364,22 @@ def upsert_coin_session(session: CoinSession) -> int:
 
 
 def set_coin_session_status(
-    session_id: int, status: str, *, view_count: int | None = None
+    session_id: int,
+    status: str,
+    *,
+    view_count: int | None = None,
+    viewer_count: int | None = None,
 ) -> None:
     """同步拍场状态（回采终态时以站内三态为准：preview / running / closed）。
 
-    `view_count` 是专场级累计围观数（`auction_stat.pv`）；未提供时保留旧值，
-    不用 NULL 覆盖。
+    `view_count` / `viewer_count` 分别是专场级累计围观次数（`auction_stat.pv`）
+    与去重人数（`auction_user_total`）；未提供时保留旧值，不用 NULL 覆盖。
     """
     with db.connect() as conn, conn:
         conn.execute(
-            "UPDATE coin_sessions SET status = ?, view_count = COALESCE(?, view_count)"
-            " WHERE id = ?",
-            (status, view_count, session_id),
+            "UPDATE coin_sessions SET status = ?, view_count = COALESCE(?, view_count),"
+            " viewer_count = COALESCE(?, viewer_count) WHERE id = ?",
+            (status, view_count, viewer_count, session_id),
         )
 
 
@@ -2177,7 +2183,8 @@ def coin_fetch_summary() -> dict[str, object]:
 
 _SESSION_CARD_SQL = """
     SELECT s.id AS session_id, s.mxiqi_id, s.title, s.status, s.kind,
-           s.auction_at, s.auction_at_raw, s.lot_total, s.view_count, s.cover_urls,
+           s.auction_at, s.auction_at_raw, s.lot_total, s.view_count, s.viewer_count,
+           s.cover_urls,
            sh.name AS shop_name, sh.avatar_url AS shop_avatar,
            COALESCE(sh.followed, 0) AS shop_followed,
            (SELECT COUNT(*) FROM coin_lots l
@@ -2203,6 +2210,7 @@ def _row_to_session_card(row: sqlite3.Row) -> CoinSessionCard:
         recommended_count=row["recommended_count"],
         shop_followed=bool(row["shop_followed"]),
         kind=row["kind"],
+        viewer_count=row["viewer_count"],
     )
 
 
@@ -2331,6 +2339,7 @@ def get_coin_session_detail(session_id: int) -> CoinSessionDetail | None:
         deposit=session["deposit"],
         lot_total=session["lot_total"],
         view_count=session["view_count"],
+        viewer_count=session["viewer_count"],
         recommended_count=sum(1 for lot in lots if lot.is_recommended),
         shop=_row_to_coin_shop(shop_row) if shop_row else None,
         lots=lots,

@@ -82,6 +82,7 @@
       {% if card.kind %}<span>{% if card.kind == 'live' %}实时拍卖{% else %}限时拍卖{% endif %}</span>{% endif %}
       <span>共 {{ card.lot_total if card.lot_total is not none else '—' }} 件拍品</span>
       <span>{{ card.view_count or 0 }} 人次围观</span>
+      {% if card.viewer_count is not none %}<span>{{ card.viewer_count }} 人围观</span>{% endif %}
       <span class="coin-hit">精准 {{ card.precise_count }} 件</span>
       {% if card.similar_count %}<span class="coin-hit">相似 {{ card.similar_count }} 件</span>{% endif %}
     </div>

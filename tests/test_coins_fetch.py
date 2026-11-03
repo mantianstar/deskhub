@@ -76,6 +76,7 @@ DETAIL_PAYLOAD = {
         "deposit": 49960,
     },
     "auction_stat": {"stat_id": 328115, "auction_id": 328115, "pv": 7127, "praise": 0},
+    "auction_user_total": 349,
     "auction_items": {
         "page": 1,
         "pageSize": 128,
@@ -174,6 +175,7 @@ def test_detail_from_payload_maps_session_shop_and_lots():
     assert card.auction_at_raw == "10月12日 星期一 19:30"  # 截拍时间（end_time）
     assert card.lot_total == 128
     assert card.view_count == 7127
+    assert card.viewer_count == 349  # 累计去重围观人数（auction_user_total）
     # 封面图取前几条拍品的图（专场层没有封面字段）
     assert card.cover_urls == ["https://oss.mxiqi.com/V1/AUC/20261006/IMG/eae82305fe564"]
 

@@ -55,6 +55,7 @@
   <span class="coin-fact coin-fact-hit" id="coin-precise-fact">精准推荐 {{ precise_lots|length }} 件</span>
   <span class="coin-fact coin-fact-hit" id="coin-similar-fact">相似推荐 {{ similar_lots|length }} 件</span>
   <span class="coin-fact">{{ detail.view_count or 0 }} 人次围观</span>
+  {% if detail.viewer_count is not none %}<span class="coin-fact">{{ detail.viewer_count }} 人围观</span>{% endif %}
   <div class="coin-facts-tools">
     <input class="coin-lot-search" id="coin-lot-search" type="search" placeholder="搜索拍品" aria-label="搜索拍品">
     <label class="coin-hide-rec"><input type="checkbox" id="coin-hide-rec"> 隐藏推荐模块</label>

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-SCHEMA_VERSION = "30"
+SCHEMA_VERSION = "31"
 
 # 所有时间列存北京时间 ISO8601 字符串（`YYYY-MM-DDTHH:MM:SS`，无时区后缀；SQLite 无原生时间类型）
 DDL = """
@@ -125,7 +125,8 @@ CREATE TABLE IF NOT EXISTS coin_sessions (
   express_free_amount REAL,  -- 满额包邮门槛（元）
   is_storage      INTEGER NOT NULL DEFAULT 0,  -- 是否可寄存（拍下不发货、先存店）
   lot_total      INTEGER,
-  view_count     INTEGER,
+  view_count     INTEGER,   -- 累计围观次数（auction_stat.pv）
+  viewer_count   INTEGER,   -- 累计围观人数（去重 UV，auction.get 的 auction_user_total）
   cover_urls     TEXT,      -- JSON 数组（列表页 4 图）
   fetched_at     TEXT    NOT NULL
 );
@@ -707,6 +708,8 @@ class CoinSession:
     express_fee: float | None = None
     express_free_amount: float | None = None
     is_storage: bool = False
+    # 累计去重围观人数；老库与列表接口缺键时为空
+    viewer_count: int | None = None
 
 
 @dataclass
@@ -919,6 +922,8 @@ class CoinSessionCard:
     shop_followed: bool = False
     # live（实时）/ timed（限时）
     kind: str | None = None
+    # 累计去重围观人数；老库未回采时为空
+    viewer_count: int | None = None
 
 
 @dataclass
@@ -962,6 +967,8 @@ class CoinSessionDetail:
     lots: list[CoinLotCard]
     # live（实时）/ timed（限时）
     kind: str | None = None
+    # 累计去重围观人数；老库未回采时为空
+    viewer_count: int | None = None
 
 
 # ---------------------------------------------------------------- 收藏画像（spec §14.17）

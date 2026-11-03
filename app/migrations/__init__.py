@@ -33,6 +33,7 @@ from app.migrations import (
     v28,
     v29,
     v30,
+    v31,
 )
 
 # (from_version, to_version) -> {表名: {列名: 列定义}}
@@ -227,6 +228,15 @@ for _from in ("20", "21", "22", "23", "24", "25", "26", "27", "28"):
     DATA_MIGRATIONS[(_from, "30")] = (
         v30.to_beijing if _previous is None else _then_steps(_previous, v30.to_beijing)
     )
+
+# 跨版本直升级到 v31：沿用 v30 的加列与回填，再补 coin_sessions 的围观人数列
+COLUMN_MIGRATIONS[("30", "31")] = v31.COLUMNS
+for _from in ("20", "21", "22", "23", "24", "25", "26", "27", "28", "29"):
+    COLUMN_MIGRATIONS[(_from, "31")] = {
+        **COLUMN_MIGRATIONS[(_from, "30")],
+        **v31.COLUMNS,
+    }
+    DATA_MIGRATIONS[(_from, "31")] = DATA_MIGRATIONS[(_from, "30")]
 
 
 def apply_columns(conn: sqlite3.Connection, tables: dict[str, dict[str, str]]) -> list[str]:

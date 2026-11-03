@@ -116,6 +116,8 @@ class SessionCard:
     start_at: str | None = None
     # 列表卡只嵌 5 条拍品预览；只有这里带 bid_num / bid_user_num（plan §18.18.1 P1-6）
     preview_lots: tuple["LotInfo", ...] = ()
+    # 累计去重围观人数（`auction.get` 的 `auction_user_total`）；列表接口不带，缺键即 None
+    viewer_count: int | None = None
 
 
 @dataclass(frozen=True)
@@ -490,6 +492,9 @@ def detail_from_payload(
     express_desc = auction.get("express_desc")
     policy_text = f"{_plain_text(express_desc)} {_plain_text(auction.get('desc_orginal'))}"
     express_day = _number(auction.get("express_day"))
+    viewer_count = _whole(data.get("auction_user_total"))
+    if viewer_count is None and fallback is not None:
+        viewer_count = fallback.viewer_count
     card = SessionCard(
         mxiqi_id=mxiqi_id,
         title=(auction.get("name") or (fallback.title if fallback else "") or f"专场 {mxiqi_id}").strip(),
@@ -504,6 +509,7 @@ def detail_from_payload(
         cover_urls=cover_urls,
         shop=shop_from(org) or (fallback.shop if fallback else None),
         kind=kind,
+        viewer_count=viewer_count,
     )
     return SessionDetail(
         card=card,

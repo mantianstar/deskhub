@@ -339,6 +339,7 @@ async def _collect(config: Config, api: MxiqiGapi, started: str) -> tuple[int, i
                 deposit=detail.deposit,
                 lot_total=detail.card.lot_total,
                 view_count=detail.card.view_count,
+                viewer_count=detail.card.viewer_count,
                 cover_urls=detail.card.cover_urls,
                 fetched_at=repository.now_local(),
                 commission_rate=detail.commission_rate,
@@ -500,10 +501,14 @@ async def _finalize(config: Config, api: MxiqiGapi, run_started: str) -> tuple[i
                 batch_unsold += 1
 
         # 拍场状态以站内为准：已截拍的专场同步成 closed，列表页与拍品页才有「已截拍」
-        # 围观数（`auction_stat.pv`）是专场级累计值，随回采一并落库
+        # 围观次数（`auction_stat.pv`）与人数（`auction_user_total`）都是专场级累计值，
+        # 随回采一并落库
         if detail.card.status is not None:
             repository.set_coin_session_status(
-                session_id, detail.card.status, view_count=detail.card.view_count
+                session_id,
+                detail.card.status,
+                view_count=detail.card.view_count,
+                viewer_count=detail.card.viewer_count,
             )
 
         sessions_done += 1
