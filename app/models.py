@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-SCHEMA_VERSION = "31"
+SCHEMA_VERSION = "32"
 
 # 所有时间列存北京时间 ISO8601 字符串（`YYYY-MM-DDTHH:MM:SS`，无时区后缀；SQLite 无原生时间类型）
 DDL = """
@@ -165,9 +165,9 @@ CREATE TABLE IF NOT EXISTS coin_lots (
   is_graded      INTEGER,  -- 1 = 评级盒（标题正则），0 = 裸币；NULL 视作裸币（v22）
   series_numista_id INTEGER,  -- 匹配到的 Numista 系列号（plan §18.18.5）
   issue_numista_id  INTEGER,  -- 唯一命中的单版号；多候选 / 无命中为空
-  match_method   TEXT,    -- attrs / title（后缀 _multi = 多候选未落库）；NULL = 未映射
-  confidence     REAL,    -- 0..1；多候选时为 1/候选数
-  match_candidates TEXT,  -- JSON 数组：歧义候选的 Numista 编号（系列级或单版级）
+  match_method   TEXT,    -- attrs / title；NULL 或 none = 未映射（含多候选、多枚装）
+  confidence     REAL,    -- 0..1；属性路径 0.9 / 标题 0.7，唯一单版再 +0.05
+  match_candidates TEXT,  -- JSON 数组：保留字段（多候选不再落库，当前恒为空）
   match_score    REAL    NOT NULL DEFAULT 0,
   is_recommended INTEGER NOT NULL DEFAULT 0,
   -- 热度：只有 ListAuction 预览 / home.filter 带，auction.get 没有（plan §18.18.1 P1-6）

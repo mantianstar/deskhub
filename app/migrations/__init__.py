@@ -34,6 +34,7 @@ from app.migrations import (
     v29,
     v30,
     v31,
+    v32,
 )
 
 # (from_version, to_version) -> {表名: {列名: 列定义}}
@@ -237,6 +238,30 @@ for _from in ("20", "21", "22", "23", "24", "25", "26", "27", "28", "29"):
         **v31.COLUMNS,
     }
     DATA_MIGRATIONS[(_from, "31")] = DATA_MIGRATIONS[(_from, "30")]
+
+# 跨版本直升级到 v32：沿用 v31 的加列，再把品相历史归一值按当前口径重算
+COLUMN_MIGRATIONS[("31", "32")] = {}
+DATA_MIGRATIONS[("31", "32")] = v32.normalize_grade_keys
+for _from in (
+    "20",
+    "21",
+    "22",
+    "23",
+    "24",
+    "25",
+    "26",
+    "27",
+    "28",
+    "29",
+    "30",
+):
+    COLUMN_MIGRATIONS[(_from, "32")] = COLUMN_MIGRATIONS[(_from, "31")]
+    _previous = DATA_MIGRATIONS.get((_from, "31"))
+    DATA_MIGRATIONS[(_from, "32")] = (
+        v32.normalize_grade_keys
+        if _previous is None
+        else _then_steps(_previous, v32.normalize_grade_keys)
+    )
 
 
 def apply_columns(conn: sqlite3.Connection, tables: dict[str, dict[str, str]]) -> list[str]:

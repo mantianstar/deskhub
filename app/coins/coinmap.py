@@ -18,16 +18,27 @@ import re
 from dataclasses import dataclass
 
 from app import repository
-from app.coins.grades import normalize_country, normalize_denomination, normalize_year
+from app.coins.grades import (
+    era_year_from_text,
+    normalize_country,
+    normalize_denomination,
+    normalize_year,
+)
 
 # 拍品属性里的键名（attrs 落库后就是 tags）
 COUNTRY_KEYS = ("国家地区", "国家")
 YEAR_KEYS = ("发行年份", "年份")
 
-# 只认 4 位公历年；年号纪年（明治十五年…）在 grades 里是年号数字，无法直接对公历区间，
-# 宁可留空也不猜（宁缺勿错）。
+# 公历年只认 4 位数字；标题里只写年号时另走 grades.era_year_from_text 换算（昭和十五年 → 1940）
 _YEAR_RE = re.compile(r"(?<!\d)(1[5-9]\d{2}|20\d{2})(?!\d)")
+# 多枚装（`2枚` / `二枚`）：含不同年份 / 版别，映射必错，整条跳过
+_MULTI_COIN_RE = re.compile(r"\d+\s*枚|[零〇一二两三四五六七八九十百千]+\s*枚")
 _WHITESPACE_RE = re.compile(r"\s+")
+# 标题只写日本年号（明治 / 大正 / 昭和 / 平成 / 令和）时，国家推断为日本
+_JP_ERA_RE = re.compile(r"明治|大正|昭和|平成|令和")
+# 面值写法归一：标题用中文数字（`二钱` / `五十钱`）或分数（`1/2便士`）时，与币库的阿拉伯写法对齐
+_CN_NUMERAL_RUN_RE = re.compile(r"[零〇一二两三四五六七八九十百千壹贰貳叁肆伍陆陸柒捌玖拾佰仟]+")
+_HALF_IN_TITLE_RE = re.compile(r"(?<!\d)(?:½|1\s*[/⁄]\s*2)(?!\d)")
 
 # 置信度：属性路径比标题路径可靠；单版唯一再 +0.05
 _CONFIDENCE_ATTRS = 0.9
@@ -87,6 +98,13 @@ def _compact(text: str | None) -> str:
     return _WHITESPACE_RE.sub("", text or "").replace("/", "⁄")
 
 
+def _denomination_text(title: str | None) -> str:
+    """标题里参与面值比较的文本：`二钱` → `2钱`、`1/2便士` → `半便士`，再去空白。"""
+    text = _HALF_IN_TITLE_RE.sub("半", title or "")
+    text = _CN_NUMERAL_RUN_RE.sub(lambda match: normalize_denomination(match.group()), text)
+    return _compact(text)
+
+
 def _has_value(value: str, text: str) -> bool:
     """紧凑子串命中，但数字开头/结尾的值不许咬进更长的数字里（`1分` 不咬 `25分`）。"""
     if not value:
@@ -128,7 +146,13 @@ def lot_facts(title: str, tags: dict[str, str], issuers: tuple[tuple[str, str], 
     attr_years = years_from_text(normalize_year(_attr(tags, YEAR_KEYS)))
     text = _compact(title)
     country = attr_country or _country_in_title(text, issuers)
+    if not country and _JP_ERA_RE.search(title or ""):  # 只写日本年号：按日本推断
+        country = "日本"
     years = attr_years or years_from_text(title)
+    if not years:
+        era_year = era_year_from_text(title)  # 只写年号（昭和十五年）时补公历年
+        if era_year is not None:
+            years = (era_year,)
     return LotFacts(country=country, years=years, from_attrs=bool(attr_country or attr_years))
 
 
@@ -160,6 +184,9 @@ def _filter_by_denomination(candidates: list[SeriesFacts], text: str) -> list[Se
 
 def match_lot(title: str, tags: dict[str, str], catalogue: Catalogue) -> LotMapping:
     """单条拍品 → 系列 / 单版 / 匹配方式 / 置信度。"""
+    if _MULTI_COIN_RE.search(title or ""):  # 多枚装整条不映射
+        return _NONE
+
     facts = lot_facts(title, tags, catalogue.issuers)
     if not facts.country or not facts.years:
         return _NONE
@@ -172,19 +199,12 @@ def match_lot(title: str, tags: dict[str, str], catalogue: Catalogue) -> LotMapp
     ]
     if not candidates:
         return _NONE
-    candidates = _filter_by_denomination(candidates, _compact(title))
+    candidates = _filter_by_denomination(candidates, _denomination_text(title))
     if not candidates:
         return _NONE
 
-    if len(candidates) > 1:
-        ids = tuple(sorted(item.numista_id for item in candidates))
-        return LotMapping(
-            series_numista_id=None,
-            issue_numista_id=None,
-            match_method=f"{method}_multi",
-            confidence=round(1 / len(candidates), 2),
-            candidates=ids,
-        )
+    if len(candidates) > 1:  # 多候选不落库、也不再记 `_multi`
+        return _NONE
 
     series = candidates[0]
     issue_ids: tuple[int, ...] = ()

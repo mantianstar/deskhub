@@ -7,7 +7,8 @@
   （`明治十五年` → `15`、`康德元年` → `1`），与 Numista 的 `year` 对齐；只有年号没有年份数字的
   （`光绪`）**原样保留**。
 - **面值**：数字转成阿拉伯数字、与单位之间加一个空格（`1便士` → `1 便士`、`一分` → `1 分`、
-  `半便士` → `半 便士`、`二十文` → `20 文`）；分数斜杠统一成 Numista 的 `⁄`（U+2044，
+  `半便士` → `半 便士`、`二十文` → `20 文`）；「圆」统一成「元」，`½` 与 `1/2` 统一成「半」，
+  「安那」统一成「安娜」；分数斜杠统一成 Numista 的 `⁄`（U+2044，
   `1/12先令` → `1⁄12 先令`）。认不出前导数字的（如 `当制钱十文`）原样保留。
 - **国家**：去掉殖民时期的前缀（`英属新西兰` → `新西兰`、`英属澳大利亚` → `澳大利亚`），
   与 Numista 的发行方命名对齐。
@@ -36,6 +37,9 @@ _CN_UNITS = {"十": 10, "拾": 10, "百": 100, "佰": 100, "千": 1000, "仟": 1
 
 # 前导分数符号 → 展示口径（`¼` 与系列库的 1⁄4 安娜 统一）
 _LEADING_FRACTION = {"½": "半", "¼": "1⁄4", "¾": "四分之三"}
+
+# 半便士的分数写法（`1/2便士` / `1⁄2便士`）；`½` 走上面的分数符号
+_HALF_FRACTION = re.compile(r"^1\s*[/⁄]\s*2(?!\d)")
 
 # 前导数字：整数 / 小数 / 「1/4」「1⁄4」这类分数，可带尾随 ½¼¾（如 `2½盾`）
 _LEADING_ARABIC = re.compile(r"^\s*(\d+(?:\.\d+)?(?:\s*[/⁄]\s*\d+)?[½¼¾]?)")
@@ -154,6 +158,33 @@ def _gregorian_from_roc_era(text: str) -> int | None:
     return None
 
 
+# 标题里的年号 + 年份（`昭和十五年` / `民国70年`），用于只写年号、不写公历年的拍品
+_ERA_IN_TEXT = re.compile(
+    r"(明治|大正|昭和|平成|令和|中華民國|中华民国|民國|民国)\s*"
+    r"([0-9]+|[零〇一二两三四五六七八九十百千壹贰貳叁肆伍陆陸柒捌玖拾佰仟]+|元)\s*年"
+)
+
+
+def era_year_from_text(text: str | None) -> int | None:
+    """标题里的日本年号 / 民国纪年 → 公历年（`昭和十五年` → 1940）；认不出返回 None。"""
+    match = _ERA_IN_TEXT.search(text or "")
+    if not match:
+        return None
+    name, digits = match.group(1), match.group(2)
+    number = int(digits) if digits.isdigit() else _cn_numeral_to_int(
+        "一" if digits == "元" else digits
+    )
+    if number is None:
+        return None
+    for zh, start in _ROC_ERAS:
+        if name == zh:
+            return start + number
+    for zh, start in _JP_ERAS:
+        if name == zh:
+            return start + number - 1
+    return None
+
+
 def _to_cn_numeral(number: int) -> str:
     """1~99 → 中文数字（明治六年 / 明治十五年）。"""
     digits = "零一二三四五六七八九"
@@ -258,7 +289,7 @@ def era_label(country: str | None, era: str | None) -> str:
 
 def normalize_denomination(value: str | None) -> str:
     """面值：前导数字转阿拉伯数字、与单位之间加一个空格；认不出前导数字的原样保留。"""
-    text = (value or "").strip().replace("安那", "安娜")
+    text = (value or "").strip().replace("安那", "安娜").replace("圆", "元")
     if not text:
         return text
 
@@ -274,6 +305,11 @@ def normalize_denomination(value: str | None) -> str:
     if text.startswith("四分之一"):  # 四分之一安娜 → 1⁄4 安娜（与 ¼ 同口径）
         rest = text[len("四分之一") :].strip()
         return f"1⁄4 {rest}" if rest else "1⁄4"
+
+    half = _HALF_FRACTION.match(text)  # 1/2便士 / 1⁄2便士 → 半 便士（与 ½ 同口径）
+    if half:
+        rest = text[half.end() :].strip()
+        return f"半 {rest}" if rest else "半"
 
     match = _LEADING_ARABIC.match(text)
     if match:

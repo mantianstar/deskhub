@@ -853,7 +853,8 @@ CREATE TABLE IF NOT EXISTS coin_collection_series_members (
   面值**必须**命中标题（数字边界见 `_has_value`，`1分` 不咬 `25分`），
   否则只靠国家 + 年份会把「1 弗洛林」「5 先令」甚至纸币记到便士系列上。
 - 唯一命中才写 `issue_numista_id`；同年多版别时 issue 留空、候选写进 `match_candidates`；
-  多系列时 series / issue 都留空，`match_method` 记 `<attrs|title>_multi`，`confidence = 1/候选数`。
+  多系列 / 多候选一律不映射（series / issue 全空，`match_method = none`），标题含多枚装也不映射；
+  标题只写年号（`光绪` 等）时用 `grades.era_year_from_text` 补公历年再匹配。
 - 置信度：属性路径 0.9、标题路径 0.7，单版唯一再 +0.05。
 - 触发：管道每轮匹配后跑 `coinmap.remap_all()`（只写有变化的行，不动 `match_score` / 页面）；
   `python -m app.cli coins-map` 可手动重跑并打印「已映射 / 总数」与 `match_method` 分布。

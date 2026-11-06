@@ -6,6 +6,7 @@ import pytest
 
 from app import db, repository
 from app.coins import coinmap
+from app.migrations import v32
 from app.models import CoinLot, CoinSession, CoinShop
 
 _FETCHED_AT = "2026-10-22T00:00:00Z"
@@ -65,16 +66,111 @@ def test_title_path_leaves_issue_empty_when_several_varieties():
     assert mapping.confidence == 0.7
 
 
-def test_multiple_series_store_candidates_only():
+def test_multiple_series_is_not_mapped():
     catalogue = _catalogue(_penny(578, 1911, 1926), _penny(669, 1911, 1926))
 
     mapping = coinmap.match_lot("英国1919年1便士", {}, catalogue)
 
-    assert mapping.match_method == "title_multi"
+    assert mapping.match_method == "none"
     assert mapping.series_numista_id is None
     assert mapping.issue_numista_id is None
-    assert mapping.candidates == (578, 669)
-    assert mapping.confidence == 0.5
+    assert mapping.candidates == ()
+
+
+def test_multi_coin_title_is_not_mapped():
+    catalogue = _catalogue(_penny(578, 1911, 1926))
+
+    mapping = coinmap.match_lot("英国1919年1便士2枚", {}, catalogue)
+
+    assert mapping.match_method == "none"
+    assert mapping.series_numista_id is None
+
+
+def test_title_era_year_falls_back_to_gregorian():
+    catalogue = _catalogue(
+        coinmap.SeriesFacts(
+            numista_id=1, country="日本", min_year=1926, max_year=1989, denomination="1钱"
+        ),
+        issuers=(("日本", "日本"),),
+    )
+
+    mapping = coinmap.match_lot("日本昭和十五年1钱", {}, catalogue)
+
+    assert mapping.match_method == "title"
+    assert mapping.series_numista_id == 1
+
+
+def test_title_chinese_numeral_denomination_is_mapped():
+    # 标题写「二钱」，币库是「2 钱」：中文数字归一后仍能对上
+    catalogue = _catalogue(
+        coinmap.SeriesFacts(
+            numista_id=2317, country="日本", min_year=1873, max_year=1892, denomination="2钱"
+        ),
+        issuers=(("日本", "日本"),),
+    )
+
+    mapping = coinmap.match_lot("日本明治十五年龙二钱", {}, catalogue)
+
+    assert mapping.match_method == "title"
+    assert mapping.series_numista_id == 2317
+
+
+def test_title_chinese_numeral_one_penny_is_mapped():
+    catalogue = _catalogue(
+        coinmap.SeriesFacts(
+            numista_id=1591, country="新西兰", min_year=1953, max_year=1965, denomination="1便士"
+        ),
+        issuers=(("新西兰", "新西兰"),),
+    )
+
+    mapping = coinmap.match_lot("新西兰1964年一便士铜币", {}, catalogue)
+
+    assert mapping.series_numista_id == 1591
+
+
+def test_title_half_fraction_denomination_is_mapped():
+    # 标题写「1/2便士」，币库归一成「半 便士」：要落到半便士，不能落到 1 便士
+    catalogue = _catalogue(
+        coinmap.SeriesFacts(
+            numista_id=3203, country="南非", min_year=1953, max_year=1960, denomination="1便士"
+        ),
+        coinmap.SeriesFacts(
+            numista_id=9968, country="南非", min_year=1953, max_year=1960, denomination="半便士"
+        ),
+        issuers=(("南非", "南非"),),
+    )
+
+    mapping = coinmap.match_lot("1960英属南非1/2便士铜币 好品", {}, catalogue)
+
+    assert mapping.match_method == "title"
+    assert mapping.series_numista_id == 9968
+
+
+def test_title_japanese_era_infers_country():
+    # 标题没写国家、标签也为空：日本年号（明治）推断出日本
+    catalogue = _catalogue(
+        coinmap.SeriesFacts(
+            numista_id=2317, country="日本", min_year=1873, max_year=1892, denomination="2钱"
+        )
+    )
+
+    mapping = coinmap.match_lot("明治十五年龙二钱", {}, catalogue)
+
+    assert mapping.match_method == "title"
+    assert mapping.series_numista_id == 2317
+
+
+def test_roc_era_does_not_infer_japan():
+    # 民国纪年不是日本年号，不能推断成日本
+    catalogue = _catalogue(
+        coinmap.SeriesFacts(
+            numista_id=2317, country="日本", min_year=1970, max_year=1990, denomination="1元"
+        )
+    )
+
+    mapping = coinmap.match_lot("民国七十年1元", {}, catalogue)
+
+    assert mapping.series_numista_id is None
 
 
 def test_denomination_conflict_is_not_mapped():
@@ -167,3 +263,41 @@ def test_remap_all_writes_mapping_and_keeps_multi_issue_empty(temp_db):
     assert result.lots_series_mapped == 1
     assert result.lots_issue_mapped == 0
     assert result.by_method == {"title": 1}
+
+
+def _insert_grade(country: str, era: str, denomination: str, grade: str) -> None:
+    with db.connect() as conn, conn:
+        conn.execute(
+            "INSERT INTO coin_purchase_grades "
+            "(country, era, denomination, grade, updated_at, theme, coin_name) "
+            "VALUES (?, ?, ?, ?, ?, '', '')",
+            (country, era, denomination, grade, _FETCHED_AT),
+        )
+
+
+def test_v32_normalizes_legacy_grade_keys(temp_db):
+    _insert_grade("中国", "1987", "1 圆", "好")
+
+    with db.connect() as conn, conn:
+        v32.normalize_grade_keys(conn)
+
+    with db.connect() as conn:
+        row = conn.execute("SELECT denomination FROM coin_purchase_grades").fetchone()
+    assert row["denomination"] == "1 元"
+
+
+def test_v32_keeps_conflicting_legacy_row(temp_db):
+    _insert_grade("中国", "1987", "1 圆", "差")
+    _insert_grade("中国", "1987", "1 元", "好")
+
+    with db.connect() as conn, conn:
+        v32.normalize_grade_keys(conn)
+
+    with db.connect() as conn:
+        rows = conn.execute(
+            "SELECT denomination, grade FROM coin_purchase_grades ORDER BY id"
+        ).fetchall()
+    assert [(row["denomination"], row["grade"]) for row in rows] == [
+        ("1 圆", "差"),
+        ("1 元", "好"),
+    ]
