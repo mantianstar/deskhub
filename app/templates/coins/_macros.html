@@ -1,3 +1,15 @@
+{% macro coin_analysis_nav(active) %}
+<nav class="coin-subtabs" aria-label="分析子导航">
+  {% set items = [
+    ("category", "/coins/analysis", "分类分析"),
+    ("shops", "/coins/shops", "店铺分析"),
+  ] %}
+  {% for key, href, label in items %}
+  <a href="{{ href }}"{% if active == key %} class="is-active" aria-current="page"{% endif %}>{{ label }}</a>
+  {% endfor %}
+</nav>
+{% endmacro %}
+
 {% macro coin_nav(active) %}
 <nav class="coin-tabs" aria-label="铜币模块导航">
   {% set items = [

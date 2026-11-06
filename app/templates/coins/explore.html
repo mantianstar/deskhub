@@ -19,28 +19,25 @@
       </select>
     </label>
     <label class="field">国家
-      <select class="search-input" name="country" onchange="this.form.ruler.value=''; this.form.denomination.value=''; this.form.requestSubmit();">
-        <option value="">全部</option>
-        {% for option in countries %}
-        <option value="{{ option }}"{% if option == country %} selected{% endif %}>{{ option }}</option>
-        {% endfor %}
-      </select>
+      <input class="search-input" type="text" name="country" value="{{ country }}"
+             list="explore-country-options" placeholder="可输入，如 英国" autocomplete="off">
+      <datalist id="explore-country-options">
+        {% for option in countries %}<option value="{{ option }}"></option>{% endfor %}
+      </datalist>
     </label>
     <label class="field">执政者
-      <select class="search-input" name="ruler" onchange="this.form.denomination.value=''; this.form.requestSubmit();">
-        <option value="">全部</option>
-        {% for option in rulers %}
-        <option value="{{ option }}"{% if option == ruler %} selected{% endif %}>{{ option }}</option>
-        {% endfor %}
-      </select>
+      <input class="search-input" type="text" name="ruler" value="{{ ruler }}"
+             list="explore-ruler-options" placeholder="可输入，如 维多利亚" autocomplete="off">
+      <datalist id="explore-ruler-options">
+        {% for option in rulers %}<option value="{{ option }}"></option>{% endfor %}
+      </datalist>
     </label>
     <label class="field">面值
-      <select class="search-input" name="denomination" onchange="this.form.requestSubmit();">
-        <option value="">全部</option>
-        {% for option in denominations %}
-        <option value="{{ option }}"{% if option == denomination %} selected{% endif %}>{{ option }}</option>
-        {% endfor %}
-      </select>
+      <input class="search-input" type="text" name="denomination" value="{{ denomination }}"
+             list="explore-denomination-options" placeholder="可输入，如 1 便士" autocomplete="off">
+      <datalist id="explore-denomination-options">
+        {% for option in denominations %}<option value="{{ option }}"></option>{% endfor %}
+      </datalist>
     </label>
     <button class="btn btn-primary" type="submit">筛选</button>
     {% if filters_active %}<a class="btn btn-ghost" href="/coins/explore">重置</a>{% endif %}

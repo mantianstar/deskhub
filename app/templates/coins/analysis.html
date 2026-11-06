@@ -1,10 +1,11 @@
 {% extends "base.html" %}
 {% block title %}{{ page_title }} · deskhub{% endblock %}
 {% block content_class %} content-wide{% endblock %}
-{% from "coins/_macros.html" import coin_nav, coin_head with context %}
+{% from "coins/_macros.html" import coin_nav, coin_analysis_nav, coin_head with context %}
 
 {% block content %}
 {{ coin_nav("analysis") }}
+{{ coin_analysis_nav("category") }}
 {% set subtitle = totals.lots ~ " 件拍品 · 成交 " ~ totals.sold ~ " · 流拍 " ~ totals.unsold
   ~ " · 在拍 " ~ totals.running ~ " · 样本 < " ~ min_samples ~ " 的分组不给结论" %}
 {{ coin_head("分类分析", subtitle) }}
@@ -167,7 +168,7 @@
     <tbody>
       {% for row in shops %}
       <tr{% if row.insufficient %} class="coin-analysis-dim"{% endif %}>
-        <td>{{ row.name }}</td>
+        <td><a class="coin-detail-link" href="/coins/shops#shop-{{ row.shop_id }}">{{ row.name }}</a></td>
         <td class="nowrap">{{ row.lots }}</td>
         <td class="nowrap">{{ row.sold }}</td>
         <td class="nowrap">{{ row.unsold }}</td>

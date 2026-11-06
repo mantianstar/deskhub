@@ -339,6 +339,18 @@ _GLOSSARY_PATTERNS = tuple(
 )
 
 
+# 台湾硬币上的「中華民國 N 年」按钱币读序（自右向左）入库，字符整段倒序；
+# 翻译前先摆正，否则「七十」会被读成「十七」（如 1587 系列的 `年十七國民華中`）。
+_REVERSED_ROC_LEGEND = re.compile(r"年[零〇一二两三四五六七八九十百千元]+國民華中")
+
+
+def fix_reversed_roc_legend(text: str | None) -> str | None:
+    """把倒序的 `年十七國民華中` 摆正成 `中華民國七十年`；其他文本原样返回。"""
+    if not text:
+        return text
+    return _REVERSED_ROC_LEGEND.sub(lambda match: match.group(0)[::-1], text)
+
+
 @lru_cache(maxsize=8192)
 def to_zh(text: str | None) -> str | None:
     """按词表把英文替换成中文；未收录的片段保留英文原文（纯函数，结果可缓存）。"""

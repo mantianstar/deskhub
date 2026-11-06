@@ -10,6 +10,66 @@
 
 ---
 
+## v1.123 — 2026-11-05 候选池筛选条件改为可手输
+
+**起因**：候选池的国家 / 执政者 / 面值只能从下拉里挑，值一多滚动费事；币库（`/coins/info`）早就是「输入框 + datalist」。
+
+**改了什么**：`coins/explore.html` 三个 `<select>` 换成 `<input list=…>` + `<datalist>`（沿用 `.search-input`，不加 CSS）；去掉三者的 `onchange` 自动提交与级联清空——输入框逐字打字时失焦就刷新会丢焦点，筛选改由「筛选」按钮触发。`explore_page` 不再把不在候选里的值折回「全部」，按输入值精确过滤（与币库一致），输入不存在的值返回空列表。
+
+**验证**：`tests/test_coins_collection.py` 候选池用例改为断言输入框回显值，并补一条「输入不存在的国家返回空」；`pytest -q` 全量通过。
+
+受影响：`spec/coins.md`。
+
+## v1.122 — 2026-11-05 台湾民国年号对齐日本年号 + 1587 备注倒序修正
+
+**起因**：台湾钱币的年份写作民国纪年（如 `民国七十年`），录入 / 匹配链路只认公历年与日本年号，民国文本换算不出来；1587（1981 年台湾币）的备注被 OCR 读成倒序 `年十七國民華中`，页面直接显示这串乱序钱文。
+
+**改动**：`app/coins/grades.py` 新增 `_ROC_ERAS`（民国 1 年 = 1912）与 `_gregorian_from_roc_era`，`normalize_year` 在日文年号之后接民国换算（`民国七十年` → `1981`、`民国元年` → `1912`）；新增 `is_taiwan_country` / `roc_era_label`（`1981` → `民国七十年`）/ `era_label`（日本优先、其次民国），`build_combos` 的 `era_label` 改调 `era_label`。`app/coins/recommend.py` 新增 `_is_taiwan`，台湾的 `year_labels` 补 `民国70年` / `民国七十年` / `民国元年`。品相匹配链路无需改：`collection._parse_gregorian` 走 `normalize_year`，民国自动按公历年与系列 `gregorian_year` 对齐。`app/coins/translate.py` 新增 `fix_reversed_roc_legend`，把倒序钱文 `年十七國民華中` 摆正为 `中華民國七十年`；`app/repository.py` 的 `_row_to_coin_issue` 对 `comment` 调用它，存量数据（含 1587 的 70/1981）读取即修正。`app/templates/coins/grades.html` 说明与年号占位符补上民国。`app/coins/grades.py` 另新增 `fix_roc_comment`：备注开头的民国年号按 `year` 字段重写——库内部分行（如 1587 的 70/1981）数字已被倒序成 `中华民国十七年`，只反转文本无法还原（`十七` / `七十` 有歧义），`_row_to_coin_issue` 在倒序修正后再按年份校正。
+
+**验证**：`pytest -q` 540 passed / 1 skipped（新增 `tests/test_series_issue_comment_roc.py`）。受影响：`app/coins/grades.py`、`app/coins/recommend.py`、`app/coins/translate.py`、`app/repository.py`、`app/templates/coins/grades.html`、`tests/test_coins_pages.py`、`tests/test_coins_translate.py`。
+
+---
+
+## v1.121 — 2026-11-05 增量扫按类目优先级 + 昨日 bid_num 缺口逐类推进
+
+**起因**：增量模式按分类字典顺序、每类固定扫 20 页就切下一个，昨日成交的 `bid_num` 还空着也照样往后走；中断后重跑只能从头再来。
+
+**改动**：`app/coins/filter_scan.py` 增量模式（`full=False`）改为 11070 → 11050 → 11020 → 其他 的类目顺序；每个类目持续扫描，直到「昨日成交且 `bid_num IS NULL`」缺口归零、遇到空页或 3 天回补下限才切下一个（配额用尽 / 限速仍整体中断）；类目断点写入 `coin_filter_scan_progress` 的 `incremental:{code}` 键——同日重跑从断点页续扫，跨天回到第 1 页，缺口为 0 记 0 表示本类收工；增量不再用「上次成功扫描时间」截断。`app/repository.py` 新增 `count_uncovered_sold_by_category_between`。
+
+**验证**：`pytest tests/test_coins_filter_scan.py -q` 15 passed（新增优先级顺序、同日断点续扫用例，原回补下限用例补造昨日成交缺口）；全量 `pytest -q` 537 passed / 1 skipped。
+
+---
+
+## v1.120 — 2026-11-04 店铺榜单标签列收敛与场均出价口径修正
+
+**起因**：风险标签没有宽度上限，长标签把整列撑宽、挤压左侧指标；场均出价人数 / 次数沿用拍品中位数，与「场内去重 / 累加」的定义不符。
+
+**改动**：`.coin-risk-tags` 加 `max-width: 168px`，标签最多一行两个、超出换行，把宽度让回左侧指标列；`app/coins/shops.py` 新增 `_session_bid_stats`：出价人数按专场内 `bid_users` 去重（缺列表的拍品按 `bid_user_num` 计入且无法去重）、出价次数按专场内拍品 `bid_num` 累加，再取各场次中位数；`_heat_detail` 改为接收该结果，竞争热度评分同步用新口径；页面口径说明同步更新。
+
+**验证**：`pytest tests/test_coins_pages.py -q -k shops` 通过（含新增 `test_shop_session_bid_stats_dedupes_users_and_sums_lots`）。
+
+---
+
+## v1.119 — 2026-11-04 店铺榜单收敛列与场均口径
+
+**起因**：店铺榜单列过多、默认宽度下热度和风险标签看不全且出现横向滚动；热度与出价人数口径分散（拍品中位 / 场次值）。
+
+**改动**：导航把「店铺」并入「分析」子导航（分类分析 / 店铺分析同级）；榜单表头改为上架量（取 `lots`）、竞价率、出价转化率，删除同标题价差与同图重挂两列（11 → 9 列）；五维评分由进度条改雷达图；最近成交样本改为最新专场内出价人数前五；热度 4 项统一为场均围观人数 / 次数、场均出价人数 / 次数（专场中位数，不加单位），表格「出价人数（中位）」同步改「场均出价人数」；表格改为可换行、去掉最小宽度与标签最大宽度，避免横向滚动；口径说明同步更新。
+
+**验证**：`pytest tests/test_coins_pages.py -q -k shops` 6 passed；全量 `pytest -q` 534 passed / 1 skipped。受影响：`app/templates/coins/_macros.html`、`analysis.html`、`shop_analysis.html`、`app/coins/shops.py`、`app/static/style.css`。
+
+---
+
+## v1.118 — 2026-11-04 店铺分析页落地（/coins/shops）
+
+**起因**：分析页只有「店铺画像」清单（上架量 / 成交率 / 中位价），看不到店铺可信度——真实竞价、同图重挂、交付条件都要逐场翻拍品才能判断。
+
+**改动**：`app/repository.py` 新增 `list_coin_shop_analysis_rows`（拍品级明细，带店铺、场次热度、交付字段与 `image_keys`）和 `list_coin_shop_today_sessions`（`local_day_bounds` + `coin_sessions.auction_at` 取当天场次）；新建 `app/coins/shops.py` 做店铺聚合：11 列指标、五维加权评分（30/20/20/20/10）、风险标签、最近成交 / 热度 / 买家结论；新增 `GET /coins/shops`，支持时间窗 / 二级分类 / 裸币 / 只看已关注 / 排序（不做 CSV 导出）；新增 `app/templates/coins/shop_analysis.html`（行展开详情 + `#shop-{id}` 自动展开）与导航「店铺」；分析页店铺画像的店名改为跳 `/coins/shops#shop-{id}`。口径与取舍见 `data/handoffs/2026-11-03-shop-analysis.md`。
+
+**验证**：`pytest tests/test_coins_pages.py -q` 新增 7 个用例（11 列表头 / 今日在拍跳转 / 昨日场次「今日无拍卖」/ 同日多场优先在拍 / 裸币过滤 / 样本不足不给总分 / 无出价数据仍出分 / 分析页店名链接），全量 `pytest -q` 通过。
+
+**影响**：无 schema 变更；仅新增只读页与查询，旧分析页统计行为不变。
+
 ## v1.117 — 2026-11-03 时间口径统一为北京时间（存储 / 代码 / 页面）
 
 **起因**：时间列此前统一存 UTC 串（`2026-09-21T03:12:00Z`），页面、日报窗口、铜币截拍时间与 URL 兜底日期各自再算一次时区，跨日边界容易出现「差 8 小时」的错位。

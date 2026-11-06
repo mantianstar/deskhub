@@ -374,7 +374,7 @@ def test_build_profile_matches_year_when_gregorian_year_missing():
     assert profile.upgrade_years == [1929]
 
 
-def test_build_profile_excludes_non_bronze_and_proof_years():
+def test_build_profile_excludes_proof_years():
     bronze = _series(1)
     silver = _series(2, composition="Silver", size_mm=31.0)
     profile = collection.build_profile(
@@ -388,8 +388,8 @@ def test_build_profile_excludes_non_bronze_and_proof_years():
         grades=[],
     )
 
-    assert profile.years == [1860]  # 银币年份与精制年份都被剔除
-    assert profile.year_specs[(1860, "")].mintage == 1000
+    assert profile.years == [1860]  # 精制年份剔除；非青铜/铜的银币年份保留
+    assert profile.year_specs[(1860, "")].mintage == 999999  # 同年取发行量最大
 
 
 def test_build_profile_named_series_do_not_share_grades():
@@ -1743,7 +1743,7 @@ def test_explore_page_filters_by_country_ruler_denomination(web):
     page = web.get("/coins/explore", params={"country": "英国"})
     assert "990006" in page.text and "990005" not in page.text
     assert "第三共和国" not in page.text
-    assert '<option value="英国" selected>' in page.text
+    assert 'name="country" value="英国"' in page.text
     assert '<option value="维多利亚">' in page.text
 
     page = web.get(
@@ -1755,6 +1755,10 @@ def test_explore_page_filters_by_country_ruler_denomination(web):
 
     page = web.get("/coins/explore", params={"country": "法国"})
     assert "990005" in page.text and "990006" not in page.text
+
+    # 手输的值不在候选里：按该值过滤，不再退回「全部」
+    page = web.get("/coins/explore", params={"country": "瑞典"})
+    assert "990005" not in page.text and "990006" not in page.text
 
 
 def test_explore_page_filters_by_status_defaults_to_candidate(web):

@@ -55,6 +55,14 @@ _JP_ERAS: tuple[tuple[str, int], ...] = (
     ("令和", 2019),
 )
 
+# 民国纪年起始公历年：民国 1 年 = 1912（1911 + 年号数字）
+_ROC_ERAS: tuple[tuple[str, int], ...] = (
+    ("中華民國", 1911),
+    ("中华民国", 1911),
+    ("民國", 1911),
+    ("民国", 1911),
+)
+
 
 def _cn_numeral_to_int(text: str) -> int | None:
     """中文数字 → 整数（`十` / `十二` / `二十` / `二十五` / `一百` / `五千`）；不可解析返回 None。"""
@@ -134,6 +142,18 @@ def _gregorian_from_japanese_era(text: str) -> int | None:
     return None
 
 
+def _gregorian_from_roc_era(text: str) -> int | None:
+    """民国纪年 → 公历年（`民国七十年` → `1981`）；非民国纪年返回 None。"""
+    for name, start in _ROC_ERAS:
+        index = text.find(name)
+        if index < 0:
+            continue
+        number = _era_number(text[index + len(name) :].strip())
+        if number is not None:
+            return start + number
+    return None
+
+
 def _to_cn_numeral(number: int) -> str:
     """1~99 → 中文数字（明治六年 / 明治十五年）。"""
     digits = "零一二三四五六七八九"
@@ -159,10 +179,10 @@ def year_number(value: str | None) -> str:
 
 
 def normalize_year(value: str | None) -> str:
-    """年份：去「年 / 年度」后缀只留数字；日本年号纪年换算成公历年。
+    """年份：去「年 / 年度」后缀只留数字；日本 / 民国年号纪年换算成公历年。
 
-    `明治十五年` → `1882`、`大正六年` → `1917`，与系列的 `gregorian_year` 同口径；
-    其他年号仍取年份数字（`康德四年` → `4`、`民国六十二年` → `62`）；
+    `明治十五年` → `1882`、`大正六年` → `1917`、`民国七十年` → `1981`，
+    与系列的 `gregorian_year` 同口径；其他年号仍取年份数字（`康德四年` → `4`）；
     只有年号没有年份数字（`光绪`）或认不出数字的原样保留。
     """
     text = (value or "").strip()
@@ -172,6 +192,8 @@ def normalize_year(value: str | None) -> str:
     if stripped.isdigit():
         return stripped
     gregorian = _gregorian_from_japanese_era(stripped)
+    if gregorian is None:
+        gregorian = _gregorian_from_roc_era(stripped)
     if gregorian is not None:
         return str(gregorian)
     number = _era_number(stripped)
@@ -195,6 +217,43 @@ def japanese_era_label(country: str | None, era: str | None) -> str:
         return ""
     number = value - start + 1
     return f"{name}{'元' if number == 1 else _to_cn_numeral(number)}年"
+
+
+def is_taiwan_country(country: str | None) -> bool:
+    """国家是否为中国台湾（兼容 `Taiwan` / `台湾` / `中華民國`）。"""
+    text = (country or "").strip().lower()
+    return any(name in text for name in ("台湾", "台灣", "taiwan", "中华民国", "中華民國"))
+
+
+def roc_era_label(country: str | None, era: str | None) -> str:
+    """台湾品相行的年号 + 年号年份（`1981` → `民国七十年`）；无公历年 / 非台湾返回空串。"""
+    if not is_taiwan_country(country):
+        return ""
+    year = (era or "").strip()
+    if len(year) != 4 or not year.isdigit():
+        return ""
+    number = int(year) - 1911
+    if number < 1:
+        return ""
+    return f"民国{'元' if number == 1 else _to_cn_numeral(number)}年"
+
+
+_ROC_COMMENT_NUMERAL = re.compile(
+    r"^(\s*)(?:中华民国|中華民國)\s*[零〇一二两三四五六七八九十百千元]+年"
+)
+
+
+def fix_roc_comment(text: str | None, roc_year: int | None) -> str | None:
+    """备注开头的民国年号按年份字段重写（库内数字可能被倒序成 `十七`）；其余原样返回。"""
+    if not text or not roc_year or not 1 <= roc_year <= 99:
+        return text
+    label = f"中华民国{'元' if roc_year == 1 else _to_cn_numeral(roc_year)}年"
+    return _ROC_COMMENT_NUMERAL.sub(lambda match: match.group(1) + label, text)
+
+
+def era_label(country: str | None, era: str | None) -> str:
+    """品相行年号标签：日本年号优先，其次民国纪年；都不是返回空串。"""
+    return japanese_era_label(country, era) or roc_era_label(country, era)
 
 
 def normalize_denomination(value: str | None) -> str:
@@ -280,7 +339,7 @@ def build_combos(
             grade=graded.get(key),
             theme=key[3],
             coin_name=key[4],
-            era_label=japanese_era_label(key[0], key[1]),
+            era_label=era_label(key[0], key[1]),
         )
         for key in sorted(set(counts) | set(graded))
     ]

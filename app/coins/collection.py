@@ -80,13 +80,6 @@ def is_commemorative_object(object_type: str | None) -> bool:
     return bool(object_type and _COMMEMORATIVE_PATTERN.search(object_type))
 
 
-def is_eligible_series(series: CoinSeries) -> bool:
-    """可进画像 / 可选为成员的系列：青铜 / 铜，或纪念币（不限材质）。"""
-    return is_bronze_or_copper(series.composition) or is_commemorative_object(
-        series.object_type
-    )
-
-
 def is_proof_issue(issue: CoinIssue, series: CoinSeries | None = None) -> bool:
     """精制币剔除：看 `is_proof`，再看**该单版**备注 / 版别里是否出现 Proof / 精制。
 
@@ -267,9 +260,7 @@ def build_profile(
     grades: list[CoinPurchaseGrade],
 ) -> CoinCollectionProfile:
     """组装一个收藏系列**成员**的画像（无成员时是空画像）。"""
-    eligible = [
-        series for series in member_series if is_eligible_series(series)
-    ]
+    eligible = list(member_series)
     # (年份, 发行主题) 唯一：纪念币按发行主题区分同年的不同主题
     name = next(
         (
@@ -458,7 +449,7 @@ def merge_profiles(
             for series_id in member_series_ids
             if series_id in series_by_numista_id
         ]
-        eligible = [series for series in member_series if is_eligible_series(series)]
+        eligible = member_series
         size_mm = _collection_size(collection, eligible)
         commemorated_topic = next(
             (

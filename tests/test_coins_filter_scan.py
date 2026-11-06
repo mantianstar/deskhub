@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -69,6 +69,16 @@ def _seed_gap(cate: str = "11010") -> None:
         conn.execute(
             "UPDATE coin_lots SET outcome = 'sold', category_code = ? WHERE mxiqi_id = ?",
             (cate, f"33{cate}:1"),
+        )
+
+
+def _set_closed_yesterday(cate: str) -> None:
+    """把该分类的成交时间挪到昨天，命中「昨日成交」缺口口径。"""
+    yesterday = datetime.now(timezone.utc) - timedelta(days=1)
+    with db.connect() as conn, conn:
+        conn.execute(
+            "UPDATE coin_lots SET closed_at = ? WHERE category_code = ?",
+            (yesterday.strftime("%Y-%m-%dT12:00:00"), cate),
         )
 
 
@@ -205,6 +215,28 @@ def test_full_scan_marks_deep_done_when_category_exhausted(temp_db, monkeypatch)
     assert repository.coin_filter_scan_pages() == {"11010": filter_scan.DEEP_DONE_PAGE}
 
 
+def test_full_scan_restarts_done_category_with_gap(temp_db, monkeypatch):
+    _seed_gap()
+    repository.set_coin_filter_scan_page("11010", filter_scan.DEEP_DONE_PAGE)
+    with db.connect() as conn, conn:
+        conn.execute(
+            "UPDATE coin_filter_scan_progress SET updated_at = ? WHERE category_code = '11010'",
+            ("2020-01-01T00:00:00",),
+        )
+    fake = _FakeApi({page: [_item(page)] for page in range(1, 24)})
+    monkeypatch.setattr(filter_scan, "MxiqiGapi", lambda cfg: fake)
+    monkeypatch.setattr(
+        repository, "list_coin_categories", lambda parent: [{"code": "11010"}]
+    )
+    monkeypatch.setattr(filter_scan, "DAILY_QUOTA", 30)
+    monkeypatch.setattr(filter_scan, "_pause", _noop)
+
+    asyncio.run(filter_scan.scan(_cfg(), full=True))
+
+    # 已扫到底但仍有缺口：冷却到期后断点重置为 1，顶部 20 页 + 深扫 21~24（24 页为空）
+    assert fake.requested == [*range(1, 25)]
+
+
 def test_full_scan_keeps_deep_after_stale_pages(temp_db, monkeypatch):
     _seed_gap()
     repository.set_coin_filter_scan_page("11010", 21)
@@ -241,23 +273,91 @@ def test_full_scan_skips_deep_when_no_uncovered_sold(temp_db, monkeypatch):
     assert fake.requested == [*range(1, 21)]  # 没有未回填成交：只扫顶部 20 页
 
 
-def test_incremental_scan_stops_when_pages_older_than_lookback(temp_db, monkeypatch):
-    pages = {1: [_item(1)]}
-    pages[2] = [
-        {"auction_id": 1, "item_id": 999, "update_time": "2020-01-01 00:00:00"}
-    ]  # 第 2 页整体早于增量回补下限
-    fake = _FakeApi(pages)
+def test_incremental_scan_stops_after_pages_without_db_hits(temp_db, monkeypatch):
+    unknown = {"auction_id": 1, "item_id": 999, "update_time": "2020-01-01 00:00:00"}
+    fake = _FakeApi({page: [unknown] for page in range(1, 13)})
     monkeypatch.setattr(filter_scan, "MxiqiGapi", lambda cfg: fake)
     monkeypatch.setattr(
         repository, "list_coin_categories", lambda parent: [{"code": "11010"}]
     )
+    monkeypatch.setattr(filter_scan, "_yesterday_gap", lambda cfg: {"11010": 1})
     monkeypatch.setattr(filter_scan, "DAILY_QUOTA", 30)
     monkeypatch.setattr(filter_scan, "_pause", _noop)
 
     result = asyncio.run(filter_scan.scan(_cfg(), full=False))
 
-    assert fake.requested == [1, 2]  # 扫到旧页立即停，不再往更深处打
-    assert result.stopped == "incremental_floor"
+    assert fake.requested == [*range(1, 11)]  # 连续 10 页无库内命中才停，与 update_time 无关
+    assert result.stopped == "incremental_no_gain"
+    cursor = f"{filter_scan.INCREMENTAL_CURSOR_PREFIX}11010"
+    assert repository.coin_filter_scan_pages()[cursor] == 11  # 断点保留在下一页
+
+
+def test_incremental_scan_orders_priority_categories(temp_db, monkeypatch):
+    codes = ["11010", "11040", "11020", "11050", "11070"]
+    fake = _FakeApi({})
+    seen: list[str] = []
+
+    async def _search(search_params: dict, page: int) -> list[dict]:
+        seen.append(str(search_params["cate_id_2"]))
+        return []
+
+    fake.search_filter_items = _search  # type: ignore[method-assign]
+    monkeypatch.setattr(filter_scan, "MxiqiGapi", lambda cfg: fake)
+    monkeypatch.setattr(
+        repository,
+        "list_coin_categories",
+        lambda parent: [{"code": code} for code in codes],
+    )
+    monkeypatch.setattr(filter_scan, "_yesterday_gap", lambda cfg: {code: 1 for code in codes})
+    monkeypatch.setattr(filter_scan, "_pause", _noop)
+
+    asyncio.run(filter_scan.scan(_cfg(), full=False))
+
+    assert seen == ["11070", "11050", "11020", "11010", "11040"]
+
+
+def test_incremental_scan_resumes_saved_cursor_same_day(temp_db, monkeypatch):
+    _seed_gap()
+    _set_closed_yesterday("11010")
+    cursor = f"{filter_scan.INCREMENTAL_CURSOR_PREFIX}11010"
+    repository.set_coin_filter_scan_page(cursor, 5)
+    fake = _FakeApi({})
+    monkeypatch.setattr(filter_scan, "MxiqiGapi", lambda cfg: fake)
+    monkeypatch.setattr(
+        repository, "list_coin_categories", lambda parent: [{"code": "11010"}]
+    )
+    monkeypatch.setattr(filter_scan, "_pause", _noop)
+
+    asyncio.run(filter_scan.scan(_cfg(), full=False))
+
+    assert fake.requested == [5]  # 同日重跑从断点页续扫
+    assert repository.coin_filter_scan_pages()[cursor] == 0  # 空页 → 本类收工
+
+
+def test_incremental_scan_ends_category_on_page_error(temp_db, monkeypatch):
+    class _FlakyApi(_FakeApi):
+        async def search_filter_items(self, search_params: dict, page: int) -> list[dict]:
+            self.requested.append(page)
+            if page >= 3:  # 模拟站点封顶后第 477 页起恒报「拍品查询失败」
+                raise filter_scan.GapiError("拍品查询失败")
+            return [_item(page)]
+
+    fake = _FlakyApi({})
+    monkeypatch.setattr(filter_scan, "MxiqiGapi", lambda cfg: fake)
+    monkeypatch.setattr(
+        repository, "list_coin_categories", lambda parent: [{"code": "11010"}]
+    )
+    monkeypatch.setattr(filter_scan, "_yesterday_gap", lambda cfg: {"11010": 1})
+    monkeypatch.setattr(filter_scan, "DAILY_QUOTA", 30)
+    monkeypatch.setattr(filter_scan, "REQUEST_RETRIES", 0)
+    monkeypatch.setattr(filter_scan, "_pause", _noop)
+
+    result = asyncio.run(filter_scan.scan(_cfg(), full=False))
+
+    assert fake.requested == [1, 2, 3]  # 失败页即收工，不再空打后续页
+    assert result.stopped == "page_error"
+    cursor = f"{filter_scan.INCREMENTAL_CURSOR_PREFIX}11010"
+    assert repository.coin_filter_scan_pages()[cursor] == 3  # 断点停在失败页，次日从第 1 页重扫
 
 
 def test_allocate_pages_follows_yesterday_weights():

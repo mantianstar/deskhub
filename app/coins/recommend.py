@@ -64,6 +64,11 @@ def _is_japanese(profile: CoinCollectionProfile) -> bool:
     return any(zh in text or en in text.lower() for zh, en, _, _ in JAPANESE_ERAS)
 
 
+def _is_taiwan(profile: CoinCollectionProfile) -> bool:
+    text = f"{profile.collection.country}{profile.collection.ruler}{profile.collection.name}"
+    return any(name in text.lower() for name in ("台湾", "台灣", "taiwan", "中华民国", "中華民國"))
+
+
 def _japanese_era(profile: CoinCollectionProfile, spec: CoinYearSpec | None) -> str | None:
     """按执政者 / 系列名 / 公历年份定位年号；定位不到返回 None。"""
     text = f"{profile.collection.ruler or ''}{profile.collection.name}"
@@ -88,6 +93,13 @@ def year_labels(profile: CoinCollectionProfile, year: int, spec: CoinYearSpec | 
             labels.append(f"{era}{to_cn_numeral(year)}年")
             if year == 1:
                 labels.append(f"{era}元年")
+    elif _is_taiwan(profile):
+        number = year - 1911 if year > 1911 else year
+        if number >= 1:
+            labels.append(f"民国{number}年")
+            labels.append(f"民国{to_cn_numeral(number)}年")
+            if number == 1:
+                labels.append("民国元年")
 
     labels.append(str(year))
     gregorian = spec.gregorian_year if spec else None

@@ -1,0 +1,245 @@
+{% extends "base.html" %}
+{% block title %}{{ page_title }} · deskhub{% endblock %}
+{% block content_class %} content-wide{% endblock %}
+{% from "coins/_macros.html" import coin_nav, coin_analysis_nav, coin_head with context %}
+
+{% block content %}
+{{ coin_nav("analysis") }}
+{{ coin_analysis_nav("shops") }}
+{% set subtitle = "共 " ~ totals.shops ~ " 家 · 有效样本 " ~ totals.samples ~ " 条 · 样本 < " ~ min_samples ~ " 的店铺不给结论" %}
+{{ coin_head("店铺分析", subtitle) }}
+
+<form class="search-form coin-filter-sticky" method="get" action="/coins/shops">
+  <div class="search-row search-row-labeled">
+    <label class="field">时间窗
+      <select class="search-input" name="days" onchange="this.form.requestSubmit();">
+        <option value=""{% if not days %} selected{% endif %}>全部</option>
+        <option value="30"{% if days == 30 %} selected{% endif %}>近 30 天</option>
+        <option value="90"{% if days == 90 %} selected{% endif %}>近 90 天</option>
+        <option value="180"{% if days == 180 %} selected{% endif %}>近 180 天</option>
+      </select>
+    </label>
+    <label class="field">二级分类
+      <select class="search-input" name="category" onchange="this.form.requestSubmit();">
+        <option value="">全部硬币</option>
+        {% for item in categories %}
+        <option value="{{ item.code }}"{% if item.code == category %} selected{% endif %}>{{ item.name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label class="field">口径
+      <select class="search-input" name="graded" onchange="this.form.requestSubmit();">
+        <option value="0"{% if not graded %} selected{% endif %}>只看裸币</option>
+        <option value="1"{% if graded %} selected{% endif %}>含评级盒</option>
+      </select>
+    </label>
+    <label class="coin-check"><input type="checkbox" name="follow" value="1"{% if follow %} checked{% endif %} onchange="this.form.requestSubmit();"> 只看已关注</label>
+    <label class="field">排序
+      <select class="search-input" name="sort" onchange="this.form.requestSubmit();">
+        {% for key, label in [("score", "综合靠谱分"), ("rate", "成交率"), ("gap", "同标题价差"), ("lots", "上架量")] %}
+        <option value="{{ key }}"{% if key == sort %} selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    {% if days or category or graded or follow %}<a class="btn btn-ghost" href="/coins/shops">重置</a>{% endif %}
+  </div>
+</form>
+
+<div class="coin-kpis">
+  <div class="coin-kpi">
+    <span class="coin-kpi-label">覆盖店铺</span>
+    <span class="coin-kpi-value">{{ totals.shops }} 家</span>
+    <span class="coin-kpi-note">当前筛选下有成交或流拍样本</span>
+  </div>
+  <div class="coin-kpi">
+    <span class="coin-kpi-label">有效样本</span>
+    <span class="coin-kpi-value">{{ totals.samples }} 条</span>
+    <span class="coin-kpi-note">成交 + 流拍，不含在拍</span>
+  </div>
+  <div class="coin-kpi">
+    <span class="coin-kpi-label">样本充足店铺</span>
+    <span class="coin-kpi-value">{{ totals.sufficient }} 家</span>
+    <span class="coin-kpi-note">有效样本 ≥{{ min_samples }} 条</span>
+  </div>
+  <div class="coin-kpi">
+    <span class="coin-kpi-label">待核查店铺</span>
+    <span class="coin-kpi-value">{{ totals.risk }} 家</span>
+    <span class="coin-kpi-note">带同图重挂 / 疑似托价等风险标签</span>
+  </div>
+</div>
+
+<h2 class="coin-section-title">店铺榜单 <span class="coin-section-count">共 {{ totals.shops }} 家 · 按{{ sort_label }}排序</span></h2>
+{% if shops %}
+<div class="table-wrap">
+  <table class="sources-table coin-analysis-table coin-shop-table">
+    <thead>
+      <tr>
+        <th>店铺</th>
+        <th>靠谱分</th>
+        <th>上架量</th>
+        <th>成交率</th>
+        <th>竞价率</th>
+        <th>场均出价人数</th>
+        <th>出价转化率</th>
+        <th>交付（佣金/运费/发货）</th>
+        <th>风险标签</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for shop in shops %}
+      <tr class="coin-shop-row{% if shop.insufficient %} coin-analysis-dim{% endif %}" data-target="shop-{{ shop.shop_id }}" aria-expanded="false" tabindex="0">
+        <td>
+          <span class="coin-shop-title">{% if shop.followed %}<span class="coin-shop-star">★</span>{% endif %}{{ shop.name }}</span>
+          <span class="coin-shop-sub">{{ shop.sub }}</span>
+        </td>
+        <td><span class="score {{ shop.score_class }}">{{ shop.score_text }}</span></td>
+        <td>{{ shop.lots }}</td>
+        <td>{{ shop.rate_text }}</td>
+        <td>{{ shop.real_bid_text }}{% if shop.coverage_text %}<span class="coin-shop-sub">{{ shop.coverage_text }}</span>{% endif %}</td>
+        <td>{{ shop.bidders_text }}{% if shop.coverage_text %}<span class="coin-shop-sub">{{ shop.coverage_text }}</span>{% endif %}</td>
+        <td>{{ shop.watch_text }}</td>
+        <td>{{ shop.delivery_text }}<span class="coin-shop-sub">{{ shop.delivery_sub }}</span></td>
+        <td>
+          {% if shop.tags %}
+          <span class="coin-risk-tags">{% for tag in shop.tags %}<span class="coin-tag coin-risk-{{ tag.tone }}">{{ tag.label }}</span>{% endfor %}</span>
+          {% endif %}
+        </td>
+      </tr>
+      <tr class="coin-shop-detail" id="shop-{{ shop.shop_id }}" hidden>
+        <td colspan="9">
+          <div class="coin-detail-grid">
+            <div class="coin-detail-col">
+              <h3>五维评分</h3>
+              <svg class="coin-radar" viewBox="0 0 240 180" role="img" aria-label="五维评分雷达图">
+                <g class="coin-radar-grid">
+                  <polygon points="120,34 171.4,71.3 151.7,131.7 88.3,131.7 68.6,71.3"/>
+                  <polygon points="120,47.5 158.5,75.5 143.8,120.8 96.2,120.8 81.5,75.5"/>
+                  <polygon points="120,61 145.7,79.7 135.9,109.8 104.1,109.8 94.3,79.7"/>
+                  <polygon points="120,74.5 132.8,83.8 127.9,98.9 112.1,98.9 107.2,83.8"/>
+                  <line x1="120" y1="88" x2="120" y2="34"/>
+                  <line x1="120" y1="88" x2="171.4" y2="71.3"/>
+                  <line x1="120" y1="88" x2="151.7" y2="131.7"/>
+                  <line x1="120" y1="88" x2="88.3" y2="131.7"/>
+                  <line x1="120" y1="88" x2="68.6" y2="71.3"/>
+                </g>
+                <polygon class="coin-radar-shape" points="{% for rating in shop.ratings %}{{ rating.xy[0] }},{{ rating.xy[1] }} {% endfor %}"/>
+                <g class="coin-radar-labels">
+                  <text x="120" y="14" text-anchor="middle">成交真实度</text>
+                  <text x="184" y="66">竞争热度</text>
+                  <text x="166" y="152">价格合理</text>
+                  <text x="74" y="152" text-anchor="end">交付条件</text>
+                  <text x="56" y="66" text-anchor="end">样本可信</text>
+                </g>
+              </svg>
+              <p class="coin-rating-legend">{% for rating in shop.ratings %}<span>{{ rating.label }} <b>{{ rating.text }}</b></span>{% endfor %}</p>
+              <p class="coin-rating-note">{{ shop.rating_note }}</p>
+              <ul class="coin-detail-facts">
+                {% for fact in shop.facts %}
+                <li><span class="coin-fact-label">{{ fact.label }}</span><span>{{ fact.value }}</span></li>
+                {% endfor %}
+              </ul>
+              <p class="coin-detail-note">起拍价为 0 的拍品占比仅作数据说明，不参与评分。</p>
+            </div>
+            <div class="coin-detail-col">
+              <h3>最近成交样本</h3>
+              {% if shop.samples_list %}
+              <ul class="coin-sample-list">
+                {% for sample in shop.samples_list %}
+                <li><span>{{ sample.title }}</span><span class="coin-sample-price">{{ sample.price }}</span><span class="coin-sample-meta">{{ sample.meta }}</span></li>
+                {% endfor %}
+              </ul>
+              {% else %}
+              <p class="coin-detail-note">暂无已成交样本。</p>
+              {% endif %}
+            </div>
+            <div class="coin-detail-col coin-detail-side">
+              <h3>热度</h3>
+              <ul class="coin-detail-facts">
+                <li><span class="coin-fact-label">场均围观人数</span><span>{{ shop.heat.viewers }}</span></li>
+                <li><span class="coin-fact-label">场均围观次数</span><span>{{ shop.heat.views }}</span></li>
+                <li><span class="coin-fact-label">场均出价人数</span><span>{{ shop.heat.bidders }}</span></li>
+                <li><span class="coin-fact-label">场均出价次数</span><span>{{ shop.heat.bids }}</span></li>
+              </ul>
+              <p class="coin-detail-note">{{ shop.heat.note }}</p>
+              <h3>买家结论</h3>
+              <p>关注状态：<strong>{% if shop.followed %}★ 已关注{% else %}未关注{% endif %}</strong></p>
+              {% if shop.today_session %}
+              <p><a class="coin-detail-link" href="/coins/session/{{ shop.today_session.id }}">前往今日拍场</a></p>
+              {% else %}
+              <p class="coin-detail-note">今日无拍卖</p>
+              {% endif %}
+              <p class="coin-verdict">{{ shop.verdict }}</p>
+            </div>
+          </div>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<p class="coin-ref-none">当前筛选下没有店铺样本。</p>
+{% endif %}
+
+<details class="coin-notes">
+  <summary>口径说明</summary>
+  <ul>
+    <li>成交率 = 成交 /（成交 + 流拍），不含在拍；有效样本 = 成交 + 流拍。</li>
+    <li>竞价率 = 成交拍品中出价人数 ≥2 的占比，只统计有出价数据的样本；单元格小字为覆盖率（有出价数据样本 / 全部样本），无数据显示「—」。</li>
+    <li>竞争热度：场均围观人数 / 次数按专场取值后再取中位数；场均出价人数按专场内出价人列表去重、场均出价次数按专场内所有拍品累加，再分别取各专场中位数；出价人明细不在页面展示。出价转化率 = 出价人数 ÷ 围观人数，仅对已结束场次计算。</li>
+    <li>同标题价差 = 本店成交价中位数 ÷ 全平台同标题成交中位数 − 1；同标题成交样本 &lt;5 条显示「—」，不扣分。同标题只作可比样本，不作为异常依据；详情另列同分类价差。</li>
+    <li>起拍价为 0 的拍品占比仅作数据说明，不参与评分。</li>
+    <li>同图重挂 = 同一 oss_key 在本店流拍后于后续专场再次出现；排除店铺模板图（同一 oss_key 出现 ≥10 次或跨 ≥5 家店）；≥3 次标红。标题相同不视为异常。</li>
+    <li>出价人集中 = 单一出价人占本店成交 ≥60% 且样本 ≥10；热度覆盖不足 = 有出价数据样本占比过低。</li>
+    <li>疑似托价（参考）= 同一 uid 在本店出价 ≥10 场但中签率 ≤10%，且此类 uid 的出价次数占本店 ≥20%；只在有出价数据的样本上计算，覆盖率 &lt;30% 时只展示不参与评分。</li>
+    <li>评分权重：成交真实度 30%（成交率 60% + 竞价率 40%，无出价数据按成交率归一）· 竞争热度 20%（场均出价人数与出价转化率分档，无数据不扣分、按可得权重归一）· 价格合理 20%（同标题价差绝对值越小越高，无基准不计分）· 交付条件 20%（佣金率、运费、发货天数、是否可寄存）· 样本可信 10%（≥30 条满分，5–30 条线性，&lt;5 条「样本不足」不计分）。</li>
+    <li>店铺口径仅本平台已见场次，不代表该店全量经营情况；缺失字段不扣分，按可得权重归一。</li>
+    <li>麦稀奇在 App / 小程序内，本站不提供店铺外链；「前往今日拍场」只跳本站当天的场次页。</li>
+    <li>免责声明：本页为买家侧参考，不构成交易建议；历史成交可能滞后。</li>
+  </ul>
+</details>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  var rows = document.querySelectorAll('.coin-shop-row');
+  var details = document.querySelectorAll('.coin-shop-detail');
+
+  function render(row, detail) {
+    Array.prototype.forEach.call(details, function (item) { item.hidden = true; });
+    Array.prototype.forEach.call(rows, function (item) {
+      item.classList.remove('is-open');
+      item.setAttribute('aria-expanded', 'false');
+    });
+    if (row && detail) {
+      detail.hidden = false;
+      row.classList.add('is-open');
+      row.setAttribute('aria-expanded', 'true');
+    }
+  }
+
+  Array.prototype.forEach.call(rows, function (row) {
+    var detail = document.getElementById(row.getAttribute('data-target'));
+    if (!detail) return;
+    row.addEventListener('click', function () { render(row, detail.hidden ? detail : null); });
+    row.addEventListener('keydown', function (event) {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        render(row, detail.hidden ? detail : null);
+      }
+    });
+  });
+
+  function openFromHash() {
+    var hash = window.location.hash.slice(1);
+    if (!hash) return;
+    var detail = document.getElementById(hash);
+    var row = detail ? document.querySelector('.coin-shop-row[data-target="' + hash + '"]') : null;
+    if (row) render(row, detail);
+  }
+  openFromHash();
+  window.addEventListener('hashchange', openFromHash);
+})();
+</script>
+{% endblock %}

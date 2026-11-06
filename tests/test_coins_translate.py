@@ -103,6 +103,13 @@ def test_parse_issue_comments_maps_by_id_and_skips_junk():
     assert translate_llm.parse_issue_comments(raw) == {116868: "正常浪，精制"}
 
 
+def test_fix_reversed_roc_legend_restores_order():
+    # 竖排钱文被 OCR 读成倒序 → 摆正；非倒序文本原样返回
+    assert translate.fix_reversed_roc_legend("年十七國民華中") == "中華民國七十年"
+    assert translate.fix_reversed_roc_legend("年十七國民華中 Proof") == "中華民國七十年 Proof"
+    assert translate.fix_reversed_roc_legend("标准重量") == "标准重量"
+
+
 # ---------------------------------------------------------------- HTML 片段 → 纯文本
 
 

@@ -13,6 +13,7 @@ from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from app import db, models, textmatch
+from app.coins import grades, translate
 from app.config import SourceConfig
 from app.models import (
     CoinCollectionMember,
@@ -1775,6 +1776,85 @@ def list_coin_analysis_shops() -> list[sqlite3.Row]:
         ).fetchall()
 
 
+def list_coin_shop_analysis_rows(
+    *,
+    level1: str = "110",
+    category_code: str | None = None,
+    only_ungraded: bool = True,
+    days: int | None = None,
+) -> list[sqlite3.Row]:
+    """店铺分析页的拍品级明细（一次取全量，聚合在 `app/coins/shops.py`）。
+
+    与 `list_coin_lot_analysis_rows` 同口径（硬币 + 默认裸币 + 时间窗落
+    `auction_at` / `fetched_at`），额外带出店铺、场次热度、交付字段与图片 key，
+    让榜单 11 列指标一次算完，避免按店铺逐条查询。
+    """
+    conditions = ["substr(l.category_code, 1, 3) = ?"]
+    params: list[object] = [level1]
+    if category_code:
+        conditions.append("l.category_code = ?")
+        params.append(category_code)
+    if only_ungraded:
+        conditions.append("COALESCE(l.is_graded, 0) = 0")
+    if days is not None:
+        since = to_local_str(datetime.now(timezone.utc) - timedelta(days=days))
+        conditions.append("COALESCE(s.auction_at, l.fetched_at) >= ?")
+        params.append(since)
+    with db.connect() as conn:
+        return conn.execute(
+            f"""
+            SELECT l.id, l.title, l.start_price, l.final_price, l.outcome, l.closed_at,
+                   l.category_code, l.bid_num, l.bid_user_num, l.bid_users,
+                   l.winner_uid, l.session_id,
+                   s.shop_id, s.title AS session_title, s.status AS session_status,
+                   s.kind AS session_kind, s.auction_at, s.view_count, s.viewer_count,
+                   s.commission_rate, s.commission_min, s.express_fee, s.express_day,
+                   s.is_storage,
+                   COALESCE(sh.name, '未知店铺') AS shop_name,
+                   COALESCE(sh.followed, 0) AS shop_followed,
+                   (SELECT GROUP_CONCAT(img.oss_key)
+                      FROM coin_lot_images img WHERE img.lot_id = l.id) AS image_keys
+              FROM coin_lots l
+              JOIN coin_sessions s ON s.id = l.session_id
+              LEFT JOIN coin_shops sh ON sh.id = s.shop_id
+             WHERE {' AND '.join(conditions)}
+             ORDER BY l.id
+            """,
+            params,
+        ).fetchall()
+
+
+def list_coin_shop_today_sessions(
+    shop_ids: Sequence[int], tz: ZoneInfo, *, now: datetime | None = None
+) -> dict[int, list[sqlite3.Row]]:
+    """按店铺取「今天」的场次（`auction_at` 落在业务时区当日）。
+
+    「今日」与拍场页同口径（`local_day_bounds` + `coin_sessions.auction_at`），
+    供店铺分析页的「前往今日拍场」判断有没有可跳转的场次。
+    """
+    ids = [int(shop_id) for shop_id in shop_ids if shop_id is not None]
+    if not ids:
+        return {}
+    start, end = local_day_bounds(tz, now=now)
+    placeholders = ",".join("?" * len(ids))
+    with db.connect() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT id, shop_id, title, status, kind, auction_at
+              FROM coin_sessions
+             WHERE shop_id IN ({placeholders})
+               AND auction_at IS NOT NULL
+               AND auction_at >= ? AND auction_at < ?
+             ORDER BY auction_at, id
+            """,
+            [*ids, start, end],
+        ).fetchall()
+    grouped: dict[int, list[sqlite3.Row]] = {}
+    for row in rows:
+        grouped.setdefault(int(row["shop_id"]), []).append(row)
+    return grouped
+
+
 def coin_lot_bid_coverage() -> list[sqlite3.Row]:
     """按来源统计热度覆盖率（`AVG` 自动忽略 NULL，不把缺值当 0）。"""
     with db.connect() as conn:
@@ -2551,7 +2631,9 @@ def _row_to_coin_issue(row: sqlite3.Row) -> CoinIssue:
         mint=row["mint"],
         mint_mark=row["mint_mark"],
         variety=row["variety"],
-        comment=row["comment"],
+        comment=grades.fix_roc_comment(
+            translate.fix_reversed_roc_legend(row["comment"]), row["year"]
+        ),
         mintage=row["mintage"],
         size_mm=row["size_mm"],
         weight_g=row["weight_g"],
@@ -2853,6 +2935,19 @@ def count_uncovered_sold_by_category() -> dict[str, int]:
             "SELECT category_code, COUNT(*) AS n FROM coin_lots"
             " WHERE outcome = 'sold' AND bid_num IS NULL AND category_code IS NOT NULL"
             " GROUP BY category_code"
+        ).fetchall()
+    return {str(row["category_code"]): int(row["n"]) for row in rows}
+
+
+def count_uncovered_sold_by_category_between(since: str, until: str) -> dict[str, int]:
+    """按 `category_code` 统计 `[since, until)` 成交且缺出价人数（`bid_num IS NULL`）的拍品数。"""
+    with db.connect() as conn:
+        rows = conn.execute(
+            "SELECT category_code, COUNT(*) AS n FROM coin_lots"
+            " WHERE outcome = 'sold' AND bid_num IS NULL AND category_code IS NOT NULL"
+            " AND closed_at >= ? AND closed_at < ?"
+            " GROUP BY category_code",
+            (since, until),
         ).fetchall()
     return {str(row["category_code"]): int(row["n"]) for row in rows}
 

@@ -1426,10 +1426,14 @@ def test_normalize_year_to_numista_style():
     assert coins_grades.normalize_year("明治15年") == "1882"
     assert coins_grades.normalize_year("大正六年") == "1917"
     assert coins_grades.normalize_year("昭和元年") == "1926"
+    # 民国年号同样 → 公历年（民国 1 年 = 1912）
+    assert coins_grades.normalize_year("民国七十年") == "1981"
+    assert coins_grades.normalize_year("民国六十二年") == "1973"
+    assert coins_grades.normalize_year("民国元年") == "1912"
+    assert coins_grades.normalize_year("中華民國七十年") == "1981"
     # 其他年号仍取年份数字（与 Numista 的 year 对齐）
     assert coins_grades.normalize_year("康德四年") == "4"
     assert coins_grades.normalize_year("康德元年") == "1"
-    assert coins_grades.normalize_year("民国六十二年") == "62"
     # 只有年号、没有年份数字 → 原样保留
     assert coins_grades.normalize_year("光绪") == "光绪"
 
@@ -1441,6 +1445,10 @@ def test_japanese_era_label():
     # 没有公历年 / 非日本 → 空
     assert coins_grades.japanese_era_label("日本", "6") == ""
     assert coins_grades.japanese_era_label("英国", "1873") == ""
+    # 台湾品相行同口径：公历年 → 民国纪年
+    assert coins_grades.era_label("台湾", "1981") == "民国七十年"
+    assert coins_grades.era_label("Taiwan", "1981") == "民国七十年"
+    assert coins_grades.era_label("英国", "1981") == ""
 
 
 def test_normalize_denomination_to_numista_style():
@@ -2015,3 +2023,217 @@ def test_search_page_keeps_denomination_adjacent(web):
     page = web.get("/coins/search", params={"q": "英国 1便士"})
     assert "英国1901年1便士铜币" in page.text
     assert "英国1901年6便士铜币" not in page.text
+
+
+# ---------------------------------------------------------------- 店铺分析（v1.118）
+
+
+def _seed_shop_category() -> None:
+    repository.upsert_coin_categories([("11050", "中国铜元", 1, "11000", 2, None, None, None)])
+
+
+def _today_at(hour: int, minute: int = 0) -> str:
+    moment = datetime.now(config.get().app.tz).replace(
+        hour=hour, minute=minute, second=0, microsecond=0
+    )
+    return repository.to_local_str(moment)
+
+
+def _seed_shop(name: str, *, followed: bool = False) -> int:
+    now = repository.now_local()
+    shop_id = repository.upsert_coin_shop(
+        CoinShop(
+            id=None,
+            mxiqi_uid=f"shop-{name}",
+            name=name,
+            avatar_url=None,
+            badges=[],
+            fetched_at=now,
+        )
+    )
+    repository.set_coin_shop_followed(shop_id, followed)
+    return shop_id
+
+
+def _add_shop_session(
+    shop_id: int, key: str, *, status: str = "running", auction_at: str | None = None
+) -> int:
+    return repository.upsert_coin_session(
+        CoinSession(
+            id=None,
+            mxiqi_id=f"session-{key}",
+            shop_id=shop_id,
+            title=f"{key} 的专场",
+            status=status,
+            auction_at=auction_at or _today_auction_at(),
+            auction_at_raw=None,
+            deposit=None,
+            lot_total=0,
+            view_count=0,
+            cover_urls=[],
+            fetched_at=repository.now_local(),
+        )
+    )
+
+
+def _seed_shop_lot(
+    session_id: int,
+    mxiqi_id: str,
+    *,
+    outcome: str = "sold",
+    graded: int = 0,
+    price: float = 100.0,
+) -> None:
+    repository.upsert_coin_lot(
+        CoinLot(
+            id=None,
+            session_id=session_id,
+            mxiqi_id=mxiqi_id,
+            lot_no=None,
+            title=f"拍品 {mxiqi_id}",
+            start_price=10.0,
+            current_price=price,
+            image_urls=[],
+            tags={},
+            match_score=0.0,
+            is_recommended=False,
+            fetched_at=repository.now_local(),
+            outcome=outcome,
+            final_price=price if outcome == "sold" else None,
+            category_code="11050",
+            is_graded=graded,
+        )
+    )
+
+
+def test_shops_page_lists_ranking_and_today_session(web):
+    """店铺榜单：9 列表头齐全，今日在拍场次给「前往今日拍场」链接。"""
+    _seed_shop_category()
+    shop_id = _seed_shop("沪上泉庄")
+    session_id = _add_shop_session(shop_id, "沪上泉庄-今日")
+    for index in range(6):
+        _seed_shop_lot(session_id, f"hsl-{index}", price=100.0 + index)
+
+    page = web.get("/coins/shops")
+
+    assert page.status_code == 200
+    for header in (
+        "靠谱分",
+        "上架量",
+        "成交率",
+        "竞价率",
+        "场均出价人数",
+        "出价转化率",
+        "交付（佣金/运费/发货）",
+        "风险标签",
+    ):
+        assert header in page.text
+    assert "沪上泉庄" in page.text
+    assert f'data-target="shop-{shop_id}"' in page.text
+    assert f'href="/coins/session/{session_id}"' in page.text
+    assert "前往今日拍场" in page.text
+
+
+def test_shops_page_shows_no_auction_when_only_yesterday_session(web):
+    """只有昨日场次：详情显示「今日无拍卖」，不给场次链接。"""
+    _seed_shop_category()
+    shop_id = _seed_shop("昨日小店")
+    yesterday = repository.to_local_str(
+        datetime.now(config.get().app.tz) - timedelta(days=1)
+    )
+    session_id = _add_shop_session(
+        shop_id, "昨日小店-昨日", status="closed", auction_at=yesterday
+    )
+    _seed_shop_lot(session_id, "yesterday-1")
+
+    page = web.get("/coins/shops")
+
+    assert "今日无拍卖" in page.text
+    assert "/coins/session/" not in page.text
+
+
+def test_shops_page_prefers_running_session_today(web):
+    """同一天多场：选在拍场次，不选已截拍的最晚场次。"""
+    _seed_shop_category()
+    shop_id = _seed_shop("多场小店")
+    closed_id = _add_shop_session(
+        shop_id, "多场小店-已截拍", status="closed", auction_at=_today_at(20, 0)
+    )
+    running_id = _add_shop_session(
+        shop_id, "多场小店-在拍", status="running", auction_at=_today_at(9, 0)
+    )
+    _seed_shop_lot(running_id, "multi-1", price=88.0)
+
+    page = web.get("/coins/shops")
+
+    assert f'href="/coins/session/{running_id}"' in page.text
+    assert f'href="/coins/session/{closed_id}"' not in page.text
+
+
+def test_shops_page_filters_graded_by_default(web):
+    """默认只看裸币；`graded=1` 才带出评级盒样本。"""
+    _seed_shop_category()
+    shop_id = _seed_shop("评级小店")
+    session_id = _add_shop_session(shop_id, "评级小店-今日")
+    _seed_shop_lot(session_id, "graded-1", graded=1)
+
+    assert "评级小店" not in web.get("/coins/shops").text
+    assert "评级小店" in web.get("/coins/shops?graded=1").text
+
+
+def test_shops_page_insufficient_samples_hides_total_score(web):
+    """有效样本 3 条：靠谱分显示「—」并带「样本不足」标签。"""
+    _seed_shop_category()
+    shop_id = _seed_shop("小样本店")
+    session_id = _add_shop_session(shop_id, "小样本店-今日")
+    for index in range(3):
+        _seed_shop_lot(session_id, f"small-{index}")
+
+    page = web.get("/coins/shops")
+
+    assert f'data-target="shop-{shop_id}"' in page.text
+    assert "样本不足" in page.text
+    assert 'score-none">—' in page.text
+
+
+def test_shop_session_bid_stats_dedupes_users_and_sums_lots():
+    """场均口径：人数按专场内出价人去重、次数按专场内拍品累加，再取场次中位数。"""
+    from app.coins.shops import _session_bid_stats
+
+    rows = [
+        {"session_id": 1, "bid_users": "[1, 2]", "bid_user_num": 2, "bid_num": 4},
+        {"session_id": 1, "bid_users": "[2, 3]", "bid_user_num": 2, "bid_num": 6},
+        {"session_id": 2, "bid_users": "[9]", "bid_user_num": 1, "bid_num": 20},
+    ]
+
+    bidders, bids = _session_bid_stats(rows)
+
+    assert bidders == 2  # 场次人数 3 / 1 → 中位 2
+    assert bids == 15  # 场次次数 4+6 / 20 → 中位 15
+
+
+def test_shops_page_scores_without_bid_data(web):
+    """没有出价数据：仍按成交率给出靠谱分，不因缺热度沉底为「—」。"""
+    _seed_shop_category()
+    shop_id = _seed_shop("无热度小店")
+    session_id = _add_shop_session(shop_id, "无热度小店-今日")
+    for index in range(6):
+        _seed_shop_lot(session_id, f"nobid-{index}")
+
+    page = web.get("/coins/shops")
+
+    assert f'data-target="shop-{shop_id}"' in page.text
+    assert 'score-none">—' not in page.text
+    assert "热度覆盖不足" in page.text
+
+
+def test_analysis_page_links_shop_name_to_shop_ranking(web):
+    """分析页店铺画像的店名跳店铺分析锚点。"""
+    _seed_shop_category()
+    shop_id = _seed_shop("链接小店")
+    session_id = _add_shop_session(shop_id, "链接小店-今日")
+    _seed_shop_lot(session_id, "link-1")
+
+    page = web.get("/coins/analysis")
+
+    assert f'href="/coins/shops#shop-{shop_id}"' in page.text

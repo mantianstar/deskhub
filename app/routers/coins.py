@@ -23,6 +23,7 @@ from app.coins import numista as coins_numista
 from app.coins import numista_web as coins_numista_web
 from app.coins import recommend as coins_recommend
 from app.coins import search as coins_search
+from app.coins import shops as coins_shops
 from app.coins.numista import ISSUER_CODES, NumistaError
 from app.coins.numista_web import NumistaPageError
 from app.models import (
@@ -1189,14 +1190,15 @@ def explore_page(
 
     total = len(rows)
     countries = _explore_options(rows, "issuer")
-    selected_country = country if country in countries else ""
+    # 国家 / 执政者 / 面值可手输：按输入值精确过滤，候选值只作 datalist 提示
+    selected_country = country.strip()
     in_country = [row for row in rows if not selected_country or row["issuer"] == selected_country]
-    # 下拉逐级收窄：选定国家后只列该国的执政者，再按执政者收窄面值
+    # 提示值逐级收窄：填了国家就只提示该国的执政者，再按执政者收窄面值
     rulers = _explore_options(in_country, "ruler")
-    selected_ruler = ruler if ruler in rulers else ""
+    selected_ruler = ruler.strip()
     in_scope = [row for row in in_country if not selected_ruler or row["ruler"] == selected_ruler]
     denominations = _explore_options(in_scope, "denomination")
-    selected_denomination = denomination if denomination in denominations else ""
+    selected_denomination = denomination.strip()
     # 状态默认只看「候选」，选「全部」（空值）才回显采纳项；忽略项本就不入池
     status_options = [item for item in COIN_EXPLORE_STATUSES if item != "ignored"]
     selected_status = status if status in ("", *status_options) else "candidate"
@@ -1297,6 +1299,85 @@ def analysis_page(
             "shop": selected_shop or "",
             "graded": graded == "1",
             "min_samples": coins_analysis.MIN_SAMPLES,
+        },
+    )
+
+
+_SHOP_SORTS = {"score": "综合靠谱分", "rate": "成交率", "gap": "同标题价差", "lots": "上架量"}
+
+
+def _sort_shops(shops: list[dict], sort: str) -> list[dict]:
+    """榜单排序：无该指标的店铺沉底，同值按样本数兜底。"""
+    if sort == "rate":
+        return sorted(
+            shops,
+            key=lambda shop: (shop["rate"] is not None, shop["rate"] or 0.0, shop["samples"]),
+            reverse=True,
+        )
+    if sort == "gap":
+        return sorted(
+            shops,
+            key=lambda shop: (shop["gap"] is None, abs(shop["gap"] or 0.0), -shop["samples"]),
+        )
+    if sort == "lots":
+        return sorted(shops, key=lambda shop: (shop["lots"], shop["samples"]), reverse=True)
+    return sorted(
+        shops,
+        key=lambda shop: (shop["score"] is not None, shop["score"] or 0.0, shop["samples"]),
+        reverse=True,
+    )
+
+
+@router.get("/coins/shops")
+def shops_page(
+    request: Request,
+    days: str = "",
+    category: str = "",
+    graded: str = "0",
+    follow: str = "0",
+    sort: str = "score",
+) -> Response:
+    """店铺分析（handoff 2026-11-03）：只读 `coin_lots`，默认全部时间 + 仅裸币。
+
+    「前往今日拍场」按该店当天 `auction_at` 的场次判断；当天没有就展示「今日无拍卖」。
+    """
+    cfg = config.get()
+    filters = repository.list_coin_categories("11000")
+    codes = {row["code"] for row in filters}
+    selected = category if category in codes else ""
+    try:
+        window = int(days) if days else None
+    except ValueError:
+        window = None
+    if window is not None and window <= 0:
+        window = None
+    rows = repository.list_coin_shop_analysis_rows(
+        category_code=selected or None,
+        only_ungraded=graded != "1",
+        days=window,
+    )
+    shop_ids = {row["shop_id"] for row in rows if row["shop_id"] is not None}
+    today = repository.list_coin_shop_today_sessions(shop_ids, cfg.app.tz)
+    report = coins_shops.build_shop_report(rows, today)
+    shops = [shop for shop in report.shops if follow != "1" or shop["followed"]]
+    selected_sort = sort if sort in _SHOP_SORTS else "score"
+    shops = _sort_shops(shops, selected_sort)
+    return templates.TemplateResponse(
+        request,
+        "coins/shop_analysis.html",
+        {
+            "request": request,
+            "page_title": "店铺分析",
+            "shops": shops,
+            "totals": {**report.totals, "shops": len(shops)},
+            "categories": filters,
+            "days": window or "",
+            "category": selected,
+            "graded": graded == "1",
+            "follow": follow == "1",
+            "sort": selected_sort,
+            "sort_label": _SHOP_SORTS[selected_sort],
+            "min_samples": coins_shops.MIN_SAMPLES,
         },
     )
 
@@ -1648,10 +1729,8 @@ def collections_page(
             "max_year": profile.max_year,
             "size_band": profile.size_band,
         }
-    # 映射候选列青铜/铜系列 + 纪念币（材质不限），避免银、镍币误入
-    series_candidates = [
-        item for item in series if coins_collection.is_eligible_series(item)
-    ]
+    # 映射候选不限材质（青铜 / 铜 / 银 / 镍等都可选）
+    series_candidates = list(series)
 
     try:
         expand_id = int(expand)
@@ -1800,8 +1879,6 @@ def add_collection_member(
 ) -> Response:
     series = repository.get_coin_series(numista_series_id, cn=True)
     if series is None:
-        return Response(status_code=400)
-    if not coins_collection.is_eligible_series(series):
         return Response(status_code=400)
     name = " · ".join(
         part for part in (series.issuer, series.ruler, series.denomination) if part

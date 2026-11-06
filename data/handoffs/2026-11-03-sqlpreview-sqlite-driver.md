@@ -1,4 +1,4 @@
-status: pending
+status: done
 date: 2026-11-03
 topic: SQL Preview 扩展 SQLite 驱动缺失（sql.js）
 
@@ -21,3 +21,9 @@ topic: SQL Preview 扩展 SQLite 驱动缺失（sql.js）
 - 读取起点：
   - `~/.trae-cn/extensions/mehul.sql-preview-0.6.28-universal/out/extension.js` 搜索 `installOptionalDependency(`；
   - `~/.trae-cn/extensions/mehul.sql-preview-0.6.28-universal/out/server/Daemon.js` 搜索 `optionalDrivers` / `sql.js`。
+- 结论（2026-11-03 收口）：
+  - sql.js 已装在扩展根 node_modules（`npm install` 的 cwd 就是 extensionUri）。
+  - 真正原因不是驱动缺失：`Daemon.js:74218` / `standalone.js:93202` 的 `acquireDb` 把整库读进内存后永久缓存，只在 databasePath 变化时重载；
+    运行中的 `standalone.js`（PID 4634，已跑 74 分钟）快照早于 14:02 的写入，故 viewer_count 全为 NULL。
+  - 交叉验证：新进程用 sql.js 读 `data/deskhub.db` 结果与 sqlite CLI 完全一致（601 行 / 593 NULL / sum 1531）；`id=663` 两侧都是 0 行（已删）。
+  - 另注：sql.js 不读 `-wal`，写库后须 `PRAGMA wal_checkpoint(FULL)`（或 CLI 写后自动 checkpoint）再让 daemon 重载。

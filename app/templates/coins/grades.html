@@ -17,8 +17,8 @@
     未录入 = 有订单但实物缺失，计入缺失年份。<br>
     国家 / 年份 / 面值统一成 <strong>Numista 口径</strong>：<code>英属新西兰</code> → <code>新西兰</code>、
     <code>1910年</code> → <code>1910</code>、<code>1便士</code> → <code>1 便士</code>、<code>一分</code> → <code>1 分</code>；
-    年号纪年：日本年号按<strong>公历年</strong>关联（<code>明治十五年</code> → <code>1882</code>、
-    <code>大正六年</code> → <code>1917</code>），其余年号取年份数字（<code>康德四年</code> → <code>4</code>），
+    年号纪年：日本 / 民国年号按<strong>公历年</strong>关联（<code>明治十五年</code> → <code>1882</code>、
+    <code>民国七十年</code> → <code>1981</code>），其余年号取年份数字（<code>康德四年</code> → <code>4</code>），
     只有年号没有数字的原样保留。<br>
     行尾<strong>删除</strong>用于清掉错误数据：<strong>连该组合的历史订单一起删</strong>（需二次确认）；
     重跑 <code>coins-parse-orders</code> 会把 <code>orders.xlsx</code> 里的订单重新导回来。
@@ -67,7 +67,7 @@
       <input class="search-input" type="text" name="year" required placeholder="如 1910">
     </label>
     <label class="field">年号
-      <input class="search-input" type="text" name="era_name" placeholder="如 明治（可空）">
+      <input class="search-input" type="text" name="era_name" placeholder="如 明治 / 民国（可空）">
     </label>
     <label class="field">面值
       <input class="search-input" type="text" name="denomination" required
