@@ -28,6 +28,7 @@ from app.models import (
     CoinLot,
     CoinOrder,
     CoinPriceRef,
+    CoinSale,
     CoinSeries,
     CoinSession,
     CoinShop,
@@ -85,7 +86,7 @@ def _seed_session() -> int:
         CoinLot(
             id=None,
             session_id=session_id,
-            mxiqi_id="lot-1",
+            mxiqi_id="328062:lot-1",
             lot_no="Lot.1",
             title="东印度公司1808年硬币",
             start_price=15.0,
@@ -102,7 +103,7 @@ def _seed_session() -> int:
         CoinLot(
             id=None,
             session_id=session_id,
-            mxiqi_id="lot-2",
+            mxiqi_id="328062:lot-2",
             lot_no="Lot.9",
             title="某无关的纪念章",
             start_price=1.0,
@@ -873,6 +874,58 @@ def test_series_page_candidate_banner_and_adopt(web):
 
 def test_series_page_404_for_unknown(web):
     assert web.get("/coins/series/999999").status_code == 404
+
+
+def test_series_page_shows_mxiqi_sales_mapped_from_lots(web):
+    """成交与拍品按「专场id:拍品id」的后段关联。
+
+    回归：曾直接拿 `coin_lots.mxiqi_id` 等同裸拍品 id，线上全库零匹配，
+    导致麦稀奇列与成交区块全空。
+    """
+    _seed_series()
+    session_id = _seed_empty_session("成交专场", followed=False)
+    now = repository.now_local()
+    lot_id = repository.upsert_coin_lot(
+        CoinLot(
+            id=None,
+            session_id=session_id,
+            mxiqi_id="330227:6990610",
+            lot_no=None,
+            title="英国1966年一便士",
+            start_price=1.0,
+            current_price=12.0,
+            image_urls=[],
+            tags={"发行年份": "1808"},
+            match_score=0.0,
+            is_recommended=False,
+            fetched_at=now,
+            outcome="sold",
+            final_price=12.0,
+        )
+    )
+    repository.update_coin_lot_mappings([(670, 9001, "auto", 1.0, None, lot_id)])
+    repository.upsert_coin_sales(
+        [
+            CoinSale(
+                id=None,
+                item_id="6990610",
+                title="英国1966年一便士",
+                price=12.0,
+                sold_at="2026-10-27T21:48:21",
+                session_id=session_id,
+                shop_id=None,
+                keyword=None,
+                source="session_final",
+                fetched_at=now,
+            )
+        ]
+    )
+
+    page = web.get("/coins/series/670")
+
+    assert page.status_code == 200
+    assert "英国1966年一便士" in page.text  # 成交区块有行
+    assert "12.0" in page.text  # 麦稀奇列（单版中位数）有值
 
 
 def test_series_page_no_issues_empty_state(web):

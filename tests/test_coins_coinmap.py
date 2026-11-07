@@ -21,12 +21,14 @@ def temp_db(tmp_path):
 def _catalogue(
     *series: coinmap.SeriesFacts,
     issue_years: dict[int, dict[int, list[int]]] | None = None,
+    issue_stats: dict[int, coinmap.IssueFacts] | None = None,
     issuers: tuple[tuple[str, str], ...] = (("英国", "英国"), ("美国", "美国")),
 ) -> coinmap.Catalogue:
     return coinmap.Catalogue(
         series=series,
         issuers=issuers,
         issue_years=issue_years or {},
+        issue_stats=issue_stats or {},
     )
 
 
@@ -64,6 +66,37 @@ def test_title_path_leaves_issue_empty_when_several_varieties():
     assert mapping.issue_numista_id is None
     assert mapping.candidates == (9001, 9002)
     assert mapping.confidence == 0.7
+
+
+def test_several_varieties_pick_largest_mintage():
+    catalogue = _catalogue(
+        _penny(578, 1911, 1926),
+        issue_years={578: {1919: [9001, 9002]}},
+        issue_stats={
+            9001: coinmap.IssueFacts(mintage=1000, rarity=5.0),
+            9002: coinmap.IssueFacts(mintage=20000, rarity=0.5),
+        },
+    )
+
+    mapping = coinmap.match_lot("英国1919年1便士 好品", {}, catalogue)
+
+    assert mapping.issue_numista_id == 9002
+    assert mapping.candidates == ()
+
+
+def test_several_varieties_without_mintage_pick_higher_frequency():
+    catalogue = _catalogue(
+        _penny(578, 1911, 1926),
+        issue_years={578: {1919: [9001, 9002]}},
+        issue_stats={
+            9001: coinmap.IssueFacts(mintage=None, rarity=0.2),
+            9002: coinmap.IssueFacts(mintage=None, rarity=1.5),
+        },
+    )
+
+    mapping = coinmap.match_lot("英国1919年1便士 好品", {}, catalogue)
+
+    assert mapping.issue_numista_id == 9002
 
 
 def test_multiple_series_is_not_mapped():

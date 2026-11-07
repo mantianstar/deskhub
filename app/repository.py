@@ -1936,14 +1936,16 @@ def update_coin_lot_mappings(
 
 
 def list_coin_issue_years(*, cn: bool = False) -> list[sqlite3.Row]:
-    """全部单版的 `(系列号, 单版号, 年份)`；年份取 `gregorian_year`，为空退回 `year`。"""
+    """全部单版的 `(系列号, 单版号, 年份, 发行量, Frequency)`；年份取 `gregorian_year`，为空退回 `year`。"""
     series_table = "coin_series_cn" if cn else "coin_series"
     issue_table = "coin_issues_cn" if cn else "coin_issues"
     with db.connect() as conn:
         return conn.execute(
             f"SELECT s.numista_id AS series_numista_id, i.numista_id AS issue_numista_id,"
-            f" COALESCE(i.gregorian_year, i.year) AS year"
+            f" COALESCE(i.gregorian_year, i.year) AS year,"
+            f" i.mintage AS mintage, v.frequency AS frequency"
             f" FROM {issue_table} i JOIN {series_table} s ON s.id = i.series_id"
+            f" LEFT JOIN coin_issue_values v ON v.numista_id = i.numista_id"
         ).fetchall()
 
 
@@ -2183,6 +2185,34 @@ def list_coin_sales(source: str | None = None) -> list[CoinSale]:
         )
         for row in rows
     ]
+
+
+def list_coin_series_sales(numista_id: int) -> list[sqlite3.Row]:
+    """某系列下已映射的麦稀奇成交（只有 `session_final` 能映射到系列）。
+
+    成交（`coin_sales.item_id`）与拍品（`coin_lots.mxiqi_id`）一一对应，
+    系列 / 单版映射、标题、图片都在 `coin_lots` 上：拍品名称取 `coin_lots.title`，
+    专场名称取 `coin_sessions.title`。`currency` 是该单版的估值币种，供中位数按
+    「币种 + 单版」分组时使用（没有估值行时由调用方回落系列币种）。
+    """
+    sql = """
+        SELECT s.item_id, s.price, s.sold_at,
+               l.id AS lot_id, l.title AS lot_title, l.image_urls, l.tags,
+               l.issue_numista_id,
+               se.title AS session_title,
+               sh.name AS shop_name,
+               iv.currency AS currency
+          FROM coin_sales s
+          JOIN coin_lots l
+            ON substr(l.mxiqi_id, instr(l.mxiqi_id, ':') + 1) = s.item_id
+          JOIN coin_sessions se ON se.id = l.session_id
+          LEFT JOIN coin_shops sh ON sh.id = se.shop_id
+          LEFT JOIN coin_issue_values iv ON iv.numista_id = l.issue_numista_id
+         WHERE s.source = 'session_final' AND l.series_numista_id = ?
+         ORDER BY s.sold_at DESC, s.id DESC
+    """
+    with db.connect() as conn:
+        return conn.execute(sql, (numista_id,)).fetchall()
 
 
 def count_coin_sales_by_source() -> dict[str, int]:

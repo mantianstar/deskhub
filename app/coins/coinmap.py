@@ -5,8 +5,8 @@
 1. 国家 / 年份优先取拍品属性 `attrs`（落库在 `coin_lots.tags` 的「国家地区 / 发行年份」）；
 2. 属性缺失时从标题抽「国家 + 4 位年份 + 面值」；
 3. 两边都过 `grades.normalize_country` / `normalize_denomination` 统一口径；
-4. 用 `coin_series` 的 `issuer` + 年份区间 + `denomination` 匹配，**唯一命中才写单版**；
-   多候选只落候选集与置信度，`series/issue_numista_id` 留空（宁缺勿错）。
+4. 用 `coin_series` 的 `issuer` + 年份区间 + `denomination` 匹配，**系列唯一命中才落库**；
+   同年多个单版时按「发行量 → Frequency」取一条，两者都缺才只落候选集。
 
 不改 `match_score`：映射是独立维度，与推荐匹配互不影响。
 """
@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from app import repository
 from app.coins.grades import (
@@ -58,12 +58,21 @@ class SeriesFacts:
 
 
 @dataclass(frozen=True)
+class IssueFacts:
+    """单版的择一依据：发行量与 Frequency（百分数，越高越常见，与 collection._rarity 同口径）。"""
+
+    mintage: int | None
+    rarity: float | None
+
+
+@dataclass(frozen=True)
 class Catalogue:
     """匹配目录：系列 + 国家词表 + 单版年份索引。"""
 
     series: tuple[SeriesFacts, ...]
     issuers: tuple[tuple[str, str], ...]  # (标题里找的紧凑词, 归一化国家)，长词优先
     issue_years: dict[int, dict[int, list[int]]]  # 系列号 -> 年份 -> 单版号
+    issue_stats: dict[int, IssueFacts] = field(default_factory=dict)  # 单版号 -> 发行量 / Frequency
 
 
 @dataclass(frozen=True)
@@ -182,6 +191,21 @@ def _filter_by_denomination(candidates: list[SeriesFacts], text: str) -> list[Se
     return [item for item in candidates if _has_value(item.denomination, text)]
 
 
+def _pick_issue(issue_ids: tuple[int, ...], stats: dict[int, IssueFacts]) -> int | None:
+    """同年多版别时择一：发行量大者优先，其次 Frequency 高者；都缺返回 None（保持原状）。"""
+    facts = [(issue_id, stats.get(issue_id)) for issue_id in issue_ids]
+    with_mintage = [item for item in facts if item[1] is not None and item[1].mintage is not None]
+    if with_mintage:
+        # 发行量并列时看 Frequency，再并列取单版号小的，保证结果稳定
+        best = max(with_mintage, key=lambda item: (item[1].mintage, item[1].rarity or 0, -item[0]))
+        return best[0]
+    with_rarity = [item for item in facts if item[1] is not None and item[1].rarity is not None]
+    if with_rarity:
+        best = max(with_rarity, key=lambda item: (item[1].rarity, -item[0]))
+        return best[0]
+    return None
+
+
 def match_lot(title: str, tags: dict[str, str], catalogue: Catalogue) -> LotMapping:
     """单条拍品 → 系列 / 单版 / 匹配方式 / 置信度。"""
     if _MULTI_COIN_RE.search(title or ""):  # 多枚装整条不映射
@@ -219,13 +243,15 @@ def match_lot(title: str, tags: dict[str, str], catalogue: Catalogue) -> LotMapp
             match_method=method,
             confidence=round(base + _CONFIDENCE_ISSUE_BONUS, 2),
         )
-    # 同年多版别（Numista 一个年份常有多个 issue）：系列可信，单版留空并记候选
+    # 同年多版别（Numista 一个年份常有多个 issue）：先按发行量 / Frequency 择一，
+    # 两者都缺才留空并记候选（宁缺勿错）
+    picked = _pick_issue(issue_ids, catalogue.issue_stats)
     return LotMapping(
         series_numista_id=series.numista_id,
-        issue_numista_id=None,
+        issue_numista_id=picked,
         match_method=method,
         confidence=round(base, 2),
-        candidates=tuple(sorted(issue_ids)),
+        candidates=() if picked is not None else tuple(sorted(issue_ids)),
     )
 
 
@@ -255,14 +281,24 @@ def load_catalogue() -> Catalogue:
     issuers = tuple(sorted(((_compact(name), name) for name in countries), key=lambda p: -len(p[0])))
 
     issue_years: dict[int, dict[int, list[int]]] = {}
+    issue_stats: dict[int, IssueFacts] = {}
     for row in repository.list_coin_issue_years(cn=cn):
+        issue_id = int(row["issue_numista_id"])
+        mintage = row["mintage"]
+        frequency = row["frequency"]
+        issue_stats[issue_id] = IssueFacts(
+            mintage=int(mintage) if mintage is not None else None,
+            rarity=float(frequency) if frequency is not None else None,
+        )
         year = row["year"]
         if year is None:
             continue
         issue_years.setdefault(int(row["series_numista_id"]), {}).setdefault(int(year), []).append(
-            int(row["issue_numista_id"])
+            issue_id
         )
-    return Catalogue(series=series, issuers=issuers, issue_years=issue_years)
+    return Catalogue(
+        series=series, issuers=issuers, issue_years=issue_years, issue_stats=issue_stats
+    )
 
 
 def _load_tags(raw: str | None) -> dict[str, str]:

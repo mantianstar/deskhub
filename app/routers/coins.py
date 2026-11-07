@@ -6,8 +6,11 @@
 
 from __future__ import annotations
 
+import json
 import logging
+import statistics
 from datetime import datetime
+from math import ceil
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Form, Query, Request
@@ -523,17 +526,26 @@ def info_page(
 
 
 @router.get("/coins/series/{numista_id}")
-def series_page(request: Request, numista_id: int) -> Response:
+def series_page(
+    request: Request,
+    numista_id: int,
+    issue: int | None = Query(None),
+    sort: str = Query("sold"),
+    order: str = Query("desc"),
+    page: int = Query(1),
+) -> Response:
     """系列详情：系列信息 + 各年份信息表 + 各年份估值表（估值只读展示）。
 
     尚未采纳的候选（只存在于候选池）也走这里：用候选保存的详情渲染，避免跳去 Numista 站点。
+    「麦稀奇成交」的筛选 / 排序 / 分页都走服务端 query 参数；`issue` 单选，
+    每次只保留一个单版，点另一个价格即替换。
     """
     series = repository.get_coin_series(numista_id, cn=True)
     is_candidate = series is None
     if series is not None:
         issues = repository.list_coin_issues(series.id, cn=True)
         values = {v.numista_id: v for v in repository.list_coin_issue_values(numista_id)}
-        rows = [(issue, values.get(issue.numista_id)) for issue in issues]
+        rows = [(issue_row, values.get(issue_row.numista_id)) for issue_row in issues]
         currency = next((v.currency for v in values.values() if v.currency), None)
     else:
         candidate = repository.get_coin_explore_candidate(numista_id)
@@ -551,9 +563,40 @@ def series_page(request: Request, numista_id: int) -> Response:
             for item in candidate.issues
             if item.get("numista_id") is not None
         ]
-        rows = [(issue, None) for issue in issues]
+        rows = [(issue_row, None) for issue_row in issues]
         values = {}
         currency = None
+
+    issue_years = {item.numista_id: item.year for item in issues}
+    sales = _series_sales(numista_id, issue_years, currency)
+    # 中位数按「币种 + 单版」分组：同一系列内不同币种的成交价不混算
+    buckets: dict[tuple[str, int], list[float]] = {}
+    for sale in sales:
+        if sale["issue_numista_id"] is None:
+            continue
+        buckets.setdefault(
+            (sale["currency"] or "", sale["issue_numista_id"]), []
+        ).append(sale["price"])
+    issue_medians = {key[1]: statistics.median(prices) for key, prices in buckets.items()}
+
+    sort = "price" if sort == "price" else "sold"
+    order = "asc" if order == "asc" else "desc"
+    visible = [item for item in sales if item["issue_numista_id"] == issue] if issue is not None else sales
+    if sort == "price":
+        visible = sorted(visible, key=lambda item: item["price"], reverse=order != "asc")
+    else:
+        visible = sorted(visible, key=lambda item: item["sold_at"] or "", reverse=order != "asc")
+    per_page = 5
+    page_count = max(1, ceil(len(visible) / per_page))
+    current_page = min(max(page, 1), page_count)
+    page_sales = visible[(current_page - 1) * per_page: current_page * per_page]
+
+    # 链接参数：排序 / 清除筛选 / 翻页都带上当前的其他条件
+    base = {"sort": sort, "order": order}
+    if issue is not None:
+        base["issue"] = issue
+    price_order = "asc" if sort == "price" and order == "desc" else "desc"
+    sold_order = "asc" if sort == "sold" and order == "desc" else "desc"
 
     return templates.TemplateResponse(
         request,
@@ -573,8 +616,67 @@ def series_page(request: Request, numista_id: int) -> Response:
             # 图片：Numista 的图不允许跨站引用，只有本地缓存过的才能 <img>，否则给原图链接
             "has_obverse_image": coins_numista_web.cached_image(numista_id, "obverse") is not None,
             "has_reverse_image": coins_numista_web.cached_image(numista_id, "reverse") is not None,
+            # 麦稀奇成交：中位数按「币种 + 单版」分组，筛选 / 排序 / 分页全走 query 参数
+            "issue_medians": issue_medians,
+            "issue_years": issue_years,
+            "sales": page_sales,
+            "sales_total": len(visible),
+            "sales_pages": page_count,
+            "sales_page": current_page,
+            "issue_filter": issue,
+            "sale_sort": sort,
+            "sale_order": order,
+            "sort_queries": {
+                "price": urlencode({**base, "sort": "price", "order": price_order}),
+                "sold": urlencode({**base, "sort": "sold", "order": sold_order}),
+            },
+            "clear_query": urlencode({"sort": sort, "order": order}),
+            "page_queries": [
+                urlencode({**base, "page": n}) for n in range(1, page_count + 1)
+            ],
+            "prev_query": urlencode({**base, "page": max(1, current_page - 1)}),
+            "next_query": urlencode({**base, "page": min(page_count, current_page + 1)}),
         },
     )
+
+
+def _series_sales(
+    numista_id: int,
+    issue_years: dict[int, int | None],
+    series_currency: str | None,
+) -> list[dict]:
+    """已映射的麦稀奇成交 → 模板行（服务端渲染用）。
+
+    拍品名称取 `coin_lots.title`，专场名称取 `coin_sessions.title`；
+    拍品年份优先 `coin_lots.tags.发行年份`，缺失时回落单版年份。
+    """
+    rows = []
+    for row in repository.list_coin_series_sales(numista_id):
+        try:
+            images = json.loads(row["image_urls"] or "[]")
+        except (TypeError, ValueError):
+            images = []
+        try:
+            tags = json.loads(row["tags"] or "{}")
+        except (TypeError, ValueError):
+            tags = {}
+        year = str(tags.get("发行年份") or "").strip() or issue_years.get(row["issue_numista_id"])
+        rows.append(
+            {
+                "lot_id": row["lot_id"],
+                "title": row["lot_title"],
+                "session_title": row["session_title"],
+                "shop_name": row["shop_name"],
+                "issue_numista_id": row["issue_numista_id"],
+                "currency": row["currency"] or series_currency,
+                "price": float(row["price"]),
+                "sold_at": row["sold_at"],
+                "sold_at_display": (row["sold_at"] or "").replace("T", " ")[:16],
+                "year": year,
+                "images": images[:2] if isinstance(images, list) else [],
+            }
+        )
+    return rows
 
 
 @router.post("/coins/series/{numista_id}/issue-fields")

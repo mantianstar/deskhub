@@ -320,6 +320,105 @@ body {
 
 /* ---------------------------------------------------------------- 源管理 */
 
+/* ---------------------------------------------------------------- 麦稀奇成交（系列详情） */
+
+.coin-mxiqi-link {
+  color: var(--accent);
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 2px;
+}
+.coin-mxiqi-link:hover { text-decoration-style: solid; }
+
+/* 筛选条：单选，点年份表里的价格后出现 */
+.coin-mxiqi-filter {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 10px;
+  padding: 7px 12px;
+  font-size: 13px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 8px;
+}
+.coin-mxiqi-filter b { font-weight: 600; }
+.coin-mxiqi-clear {
+  margin-left: 4px;
+  font-size: 12px;
+  color: var(--text-muted);
+  text-decoration: none;
+}
+.coin-mxiqi-clear:hover { color: var(--accent); }
+
+/* 成交表：图片 2×80px 并排；长拍名限宽换行 */
+.coin-mxiqi-table th,
+.coin-mxiqi-table td { vertical-align: middle; }
+.coin-mxiqi-thumbs { display: flex; gap: 6px; }
+.coin-mxiqi-thumb { width: 80px; height: 80px; border-radius: 6px; flex: 0 0 auto; }
+img.coin-mxiqi-thumb {
+  display: block;
+  object-fit: cover;
+  background: var(--bg);
+  border: 1px solid var(--border);
+}
+.coin-mxiqi-thumb--empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  color: var(--text-muted);
+  background: var(--bg);
+  border: 1px dashed var(--border);
+}
+.coin-mxiqi-auction { max-width: 220px; overflow-wrap: anywhere; }
+.coin-mxiqi-price { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.coin-mxiqi-time { white-space: nowrap; font-variant-numeric: tabular-nums; }
+
+/* 表头排序链接：沿用表头字号与颜色 */
+.coin-mxiqi-sort {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: inherit;
+  text-decoration: none;
+}
+.coin-mxiqi-sort:hover,
+.coin-mxiqi-sort.is-active { color: var(--accent); }
+.coin-mxiqi-sort-icon { font-size: 9px; letter-spacing: -1px; }
+
+/* 底部：共 N 条 + 分页 */
+.coin-mxiqi-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 12px;
+}
+.coin-mxiqi-total { color: var(--text-muted); font-size: 13px; }
+.coin-mxiqi-foot .pager { margin-top: 0; gap: 8px; }
+.coin-mxiqi-pages { display: flex; gap: 4px; }
+.coin-mxiqi-page {
+  min-width: 28px;
+  padding: 3px 8px;
+  font-size: 12px;
+  text-align: center;
+  color: var(--text);
+  text-decoration: none;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.coin-mxiqi-page:hover { border-color: var(--accent); color: var(--accent); }
+.coin-mxiqi-page.is-current {
+  color: var(--accent);
+  font-weight: 600;
+  border-color: var(--accent);
+}
+
 .table-wrap {
   overflow-x: auto;
   background: var(--surface);
@@ -834,7 +933,8 @@ body {
 img.coin-zoom { cursor: zoom-in; }
 .coin-series-fig img.coin-zoom:hover { border-color: var(--accent); }
 .coin-thumb.coin-zoom:hover,
-.coin-lot-img.coin-zoom:hover { outline: 2px solid var(--accent); }
+.coin-lot-img.coin-zoom:hover,
+.coin-mxiqi-thumb.coin-zoom:hover { outline: 2px solid var(--accent); }
 
 /* 图片灯箱：点图放大，点遮罩 / 再点图 / Esc 关闭（无框架、无 CDN） */
 .coin-lightbox {

@@ -10,6 +10,24 @@
 
 ---
 
+## v1.128 — 2026-11-06 麦稀奇成交图放大 + 同年多版别按发行量 / 稀有度择一
+
+- 需求：系列详情页「麦稀奇成交」区块的拍品图要能点开放大；成交拍品映射已能取到系列（`series_numista_id`），但同一年对应多个单版时此前一律留空，改为先看发行量取大者，发行量都为空取稀有度高者，两者都为空才维持留空。
+- 实现：`series.html` 拍品缩略图加 `coin-zoom`（复用 `base.html` 现有灯箱，样式加悬停高亮）；`repository.list_coin_issue_years` 补 `mintage / frequency` 两列；`coinmap` 新增 `IssueFacts` 与 `_pick_issue`，`Catalogue.issue_stats` 携带择一依据（稀有度沿用 `collection._rarity` 的 Frequency 口径，值高者为「稀有度高」）。
+- 历史数据：已用 `python -m app.cli coins-map` 全量重跑，映射结果 系列 571 / 单版 540 / 拍品 88,585。
+- 验证：`pytest -q` → 552 passed, 1 skipped。
+
+受影响：app/coins/coinmap.py、app/repository.py、app/templates/coins/series.html、app/static/style.css、tests/test_coins_coinmap.py
+
+## v1.127 — 2026-11-06 系列详情：麦稀奇成交列与成交列表
+
+- 按 `data/prototypes/series-maixiqi.html` 落地：`/coins/series/{id}` 年份表新增「麦稀奇」列（该单版已映射成交价中位数，保留 1 位小数，无成交显示 —），页尾新增「麦稀奇成交」区块（图片 ≤2 张、拍品名称、专场名称、店铺名称、拍品年份、成交价格、成交时间、排序、分页）。
+- 口径确认：**拍品名称取 `coin_lots.title`、专场名称取 `coin_sessions.title`**（原型里「拍卖名称」用 session 标题的写法作废）；**中位数按「币种（`coin_issue_values.currency`）+ 单版」分组**计算；**筛选 `?issue=` 是单选**，点另一个价格即替换。
+- 实现：`repository.list_coin_series_sales`（`coin_sales.item_id` ↔ `coin_lots.mxiqi_id`，仅 `session_final`）、`series_page` 增加 `issue / sort / order / page` query 参数与 `_series_sales` 行转换；样式落在 `app/static/style.css`。
+- 验证：`pytest -q` → 549 passed, 1 skipped。
+
+受影响：app/routers/coins.py、app/repository.py、app/templates/coins/series.html、app/static/style.css
+
 ## v1.126 — 2026-11-06 日本年号推断国家
 
 **起因**：只写年号、未写国家且标签无「国家地区」的拍品（如「明治十五年龙二钱」）年号已能换算成公历年，但国家为空，映射在第一步就返回 `none`。

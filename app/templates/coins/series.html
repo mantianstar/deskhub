@@ -147,6 +147,7 @@
         <th>XF</th>
         <th>AU</th>
         <th>UNC</th>
+        <th class="nowrap">麦稀奇</th>
         <th>目录号</th>
         <th>备注</th>
         <th class="nowrap">稀有度</th>
@@ -165,6 +166,12 @@
         <td class="nowrap">{{ (value.value_xf | price) if value else '—' }}</td>
         <td class="nowrap">{{ (value.value_au | price) if value else '—' }}</td>
         <td class="nowrap">{{ (value.value_unc | price) if value else '—' }}</td>
+        <td class="nowrap">
+          {% set median = issue_medians.get(issue.numista_id) %}
+          {% if median is not none %}
+          <a class="coin-mxiqi-link" href="/coins/series/{{ series.numista_id }}?issue={{ issue.numista_id }}&amp;sort={{ sale_sort }}&amp;order={{ sale_order }}#coin-mxiqi-sales" title="查看该单版的麦稀奇成交">{{ '%.1f' | format(median) }}</a>
+          {% else %}—{% endif %}
+        </td>
         <td>{{ issue.catalog_no or '—' }}</td>
         <td class="coin-issue-comment">{{ issue.comment or '—' }}</td>
         <td class="nowrap">
@@ -191,6 +198,87 @@
 {% else %}
 <div class="empty">
   单版信息未采集。去 <a href="/coins/manage">采集管理</a> 对该系列点「② 获取年份信息」。
+</div>
+{% endif %}
+
+<h2 class="coin-section-title" id="coin-mxiqi-sales">麦稀奇成交</h2>
+
+{% if issue_filter is not none %}
+<div class="coin-mxiqi-filter">
+  筛选：<b>{{ issue_years.get(issue_filter) or '—' }} 年 · 单版 {{ issue_filter }}</b>
+  <a class="coin-mxiqi-clear" href="/coins/series/{{ series.numista_id }}?{{ clear_query }}#coin-mxiqi-sales">✕ 清除</a>
+</div>
+{% endif %}
+
+<div class="table-wrap">
+  <table class="sources-table coin-mxiqi-table">
+    <thead>
+      <tr>
+        <th>成交拍品</th>
+        <th>拍品名称</th>
+        <th>专场名称</th>
+        <th>店铺名称</th>
+        <th class="nowrap">拍品年份</th>
+        <th class="nowrap">
+          <a class="coin-mxiqi-sort{% if sale_sort == 'price' %} is-active{% endif %}" href="/coins/series/{{ series.numista_id }}?{{ sort_queries.price }}#coin-mxiqi-sales">成交价格 <span class="coin-mxiqi-sort-icon">{% if sale_sort == 'price' %}{{ '▼' if sale_order == 'desc' else '▲' }}{% else %}▲▼{% endif %}</span></a>
+        </th>
+        <th class="nowrap">
+          <a class="coin-mxiqi-sort{% if sale_sort == 'sold' %} is-active{% endif %}" href="/coins/series/{{ series.numista_id }}?{{ sort_queries.sold }}#coin-mxiqi-sales">成交时间 <span class="coin-mxiqi-sort-icon">{% if sale_sort == 'sold' %}{{ '▼' if sale_order == 'desc' else '▲' }}{% else %}▲▼{% endif %}</span></a>
+        </th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for sale in sales %}
+      <tr>
+        <td>
+          <div class="coin-mxiqi-thumbs">
+            {% if sale.images %}
+              {% for url in sale.images %}
+              <img class="coin-mxiqi-thumb coin-zoom" src="{{ url }}" alt="拍品图 {{ loop.index }}" loading="lazy">
+              {% endfor %}
+            {% else %}
+            <span class="coin-mxiqi-thumb coin-mxiqi-thumb--empty">无图</span>
+            {% endif %}
+          </div>
+        </td>
+        <td class="coin-mxiqi-auction">{{ sale.title or '—' }}</td>
+        <td>{{ sale.session_title or '—' }}</td>
+        <td>{{ sale.shop_name or '—' }}</td>
+        <td class="nowrap">{{ sale.year or '—' }}</td>
+        <td class="coin-mxiqi-price">¥ {{ '%.1f' | format(sale.price) }}</td>
+        <td class="coin-mxiqi-time">{{ sale.sold_at_display or '—' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="coin-mxiqi-foot">
+  <span class="coin-mxiqi-total">共 {{ sales_total }} 条</span>
+  {% if sales_pages > 1 %}
+  <nav class="pager" aria-label="麦稀奇成交分页">
+    {% if sales_page > 1 %}
+    <a class="btn" href="/coins/series/{{ series.numista_id }}?{{ prev_query }}#coin-mxiqi-sales">上一页</a>
+    {% else %}
+    <span class="btn btn-disabled">上一页</span>
+    {% endif %}
+    <span class="coin-mxiqi-pages">
+      {% for n in range(1, sales_pages + 1) %}
+      <a class="coin-mxiqi-page{% if n == sales_page %} is-current{% endif %}" href="/coins/series/{{ series.numista_id }}?{{ page_queries[n - 1] }}#coin-mxiqi-sales"{% if n == sales_page %} aria-current="page"{% endif %}>{{ n }}</a>
+      {% endfor %}
+    </span>
+    {% if sales_page < sales_pages %}
+    <a class="btn" href="/coins/series/{{ series.numista_id }}?{{ next_query }}#coin-mxiqi-sales">下一页</a>
+    {% else %}
+    <span class="btn btn-disabled">下一页</span>
+    {% endif %}
+  </nav>
+  {% endif %}
+</div>
+
+{% if not sales %}
+<div class="empty">
+  {% if issue_filter is not none %}该筛选下暂无已映射的麦稀奇成交。{% else %}该系列暂无已映射的麦稀奇成交（仅 session_final 来源可映射）。{% endif %}
 </div>
 {% endif %}
 {% endif %}
