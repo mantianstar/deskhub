@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>币库详情 · 铜币 · deskhub</title>
+<link rel="stylesheet" href="proto.css">
+<style>
+.sd-page-head { flex-wrap: wrap; align-items: baseline; }
+.sd-head-meta { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: flex-end; gap: 4px 10px; margin: 0; font-size: 13px; }
+.sd-head-meta .sd-numista-link { color: var(--accent); text-decoration: none; white-space: nowrap; }
+.sd-head-meta .sd-numista-link:hover { text-decoration: underline; }
+
+.sd-series-grid { display: grid; grid-template-columns: minmax(0, 420px) minmax(0, 1fr); gap: 18px; align-items: stretch; }
+.sd-imgs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-auto-rows: 1fr; gap: 12px; }
+.sd-img { display: flex; flex-direction: column; align-items: center; justify-content: center; width: 100%; aspect-ratio: 1 / 1; padding: 12px; font-family: inherit; font-size: 12px; line-height: 1.4; color: var(--text-muted); background: var(--bg); border: 1px dashed var(--border); border-radius: 10px; cursor: zoom-in; overflow: hidden; }
+.sd-img img { display: block; width: 100%; height: 100%; object-fit: cover; border-radius: 8px; }
+.sd-img:hover { border-color: var(--accent); }
+.sd-img:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.sd-coin { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; width: min(100%, 152px); aspect-ratio: 1 / 1; border: 2px dashed #c7ccd4; border-radius: 50%; background: radial-gradient(circle at 34% 28%, #ffffff, #eceff3 72%); }
+.sd-coin b { font-size: 14px; font-weight: 600; color: var(--text); }
+.sd-coin span { font-size: 11px; }
+.sd-series-side { display: flex; flex-direction: column; gap: 14px; }
+.sd-series-side .coin-facts-3col { gap: 10px 16px; }
+.sd-series-side .coin-inline-actions { margin-top: auto; }
+
+.sd-lightbox { position: fixed; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center; padding: 24px; background: rgba(17, 20, 24, .72); }
+.sd-lightbox-panel { position: relative; display: flex; flex-direction: column; align-items: center; gap: 12px; width: min(560px, 100%); max-height: 88vh; padding: 20px; background: var(--surface); border-radius: 14px; box-shadow: 0 20px 60px rgba(0, 0, 0, .28); }
+.sd-lightbox-panel .sd-coin { width: min(420px, 64vw); }
+.sd-lightbox-caption { margin: 0; color: var(--text-muted); font-size: 13px; }
+.sd-lightbox-close { position: absolute; top: 8px; right: 8px; width: 30px; height: 30px; padding: 0; font-size: 20px; line-height: 1; color: var(--text-muted); background: transparent; border: 0; border-radius: 50%; cursor: pointer; }
+.sd-lightbox-close:hover { color: var(--text); background: var(--bg); }
+
+.sd-sort { display: inline-flex; align-items: center; gap: 4px; padding: 0; font: inherit; font-weight: 600; color: inherit; background: none; border: 0; cursor: pointer; white-space: nowrap; }
+.sd-sort:hover, .sd-sort.is-active { color: var(--accent); }
+.sd-sort-icon { font-size: 10px; color: var(--text-muted); }
+.sd-sort.is-active .sd-sort-icon { color: var(--accent); }
+
+.sd-filter-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 10px; padding: 6px 10px; color: var(--text); background: #eef4ff; border: 1px solid #d6e2f5; border-radius: 8px; }
+.sd-filter-clear { padding: 0; font: inherit; font-size: 12px; color: var(--accent); background: none; border: 0; cursor: pointer; text-decoration: underline; }
+.sd-price-link { color: var(--accent); text-decoration: none; border-bottom: 1px dashed currentColor; }
+.sd-price-link:hover { border-bottom-style: solid; }
+
+@media (max-width: 900px) {
+  .sd-series-grid { grid-template-columns: minmax(0, 1fr); }
+  .sd-img { aspect-ratio: 1 / 1; }
+}
+</style>
+</head>
+<body>
+<header class="site-head">
+  <a class="brand" href="index.html">deskhub</a>
+  <nav class="nav">
+    <a class="nav-link" href="#">日报</a>
+    <a class="nav-link" href="#">历史搜索</a>
+    <a class="nav-link" href="#">源管理</a>
+    <a class="nav-link" href="#">运行控制</a>
+    <a class="nav-link" href="#">基金</a>
+    <a class="nav-link is-active" href="index.html">铜币</a>
+  </nav>
+</header>
+
+<main class="content content-wide">
+  <nav class="coin-tabs" aria-label="铜币模块导航">
+    <a href="recommend.html">今日推荐</a>
+    <a href="holdings.html">我的资产</a>
+    <a class="is-active" href="library.html" aria-current="page">币库</a>
+    <a href="index.html#moxiqi">麦稀奇数据</a>
+    <a class="btn btn-primary coin-tabs-action" href="ingest.html">采集中心</a>
+  </nav>
+
+  <p class="coin-hint"><a href="library.html">← 返回币库</a></p>
+
+  <section class="coin-page-head sd-page-head">
+    <h1>英国 乔治六世 1便士</h1>
+    <p class="coin-page-sub sd-head-meta">
+      英国 · 乔治六世 · 1 便士 · 1937–1952 · Numista #670 · KM# 845
+      <a class="sd-numista-link" href="https://en.numista.com/670" target="_blank" rel="noopener">Numista 页面</a>
+    </p>
+  </section>
+
+  <div class="coin-mode-row">
+    <span class="coin-hint">原型状态切换：</span>
+    <button class="btn btn-primary" type="button" data-state="missing">示例 A · 可补全</button>
+    <button class="btn" type="button" data-state="complete">示例 B · 已完整</button>
+  </div>
+
+  <section class="coin-panel">
+    <div class="coin-series-info">
+      <div>
+        <h2 class="coin-panel-title">系列信息</h2>
+        <p class="coin-hint">Numista #670 · 目录号 KM# 845</p>
+      </div>
+      <button class="btn coin-follow-btn" type="button" id="watch-btn">+ 观察</button>
+    </div>
+
+    <div class="sd-series-grid">
+      <div class="sd-imgs">
+        <button class="sd-img" type="button" data-side="正面" aria-label="正面 未缓存，点击放大">
+          <span class="sd-coin"><b>正面</b><span>未缓存</span></span>
+        </button>
+        <button class="sd-img" type="button" data-side="背面" aria-label="背面 未缓存，点击放大">
+          <span class="sd-coin"><b>背面</b><span>未缓存</span></span>
+        </button>
+      </div>
+
+      <div class="sd-series-side">
+        <div class="coin-facts-3col">
+          <span class="coin-fact">大类<b>流通币</b></span>
+          <span class="coin-fact">国家<b>英国</b></span>
+          <span class="coin-fact">面值<b>1 便士</b></span>
+
+          <span class="coin-fact">年份<b>1937–1952</b></span>
+          <span class="coin-fact">执政者<b>乔治六世</b></span>
+          <span class="coin-fact">原所属系列<b>乔治六世系列</b></span>
+
+          <span class="coin-fact">材质<b>青铜</b></span>
+          <span class="coin-fact">形状<b>圆形</b></span>
+          <span class="coin-fact">尺寸<b>30.8 mm</b></span>
+
+          <span class="coin-fact">重量<b>9.45 g</b></span>
+          <span class="coin-fact">厚度<b>1.5 mm</b></span>
+          <span class="coin-fact">币边<b>光边</b></span>
+
+          <span class="coin-fact">造币厂<b>皇家造币厂</b></span>
+          <span class="coin-fact">原纪念主题<b>—</b></span>
+          <span class="coin-fact"></span>
+
+          <span class="coin-fact">发行系列<b>乔治六世流通币</b></span>
+          <span class="coin-fact">发行主题<b>便士<b class="coin-muted" title="编辑发行系列 / 发行主题">✎</b></b></span>
+          <span class="coin-fact"></span>
+        </div>
+
+        <div class="coin-inline-actions coin-mt" id="fill-block">
+          <button class="btn" type="button" id="fill-btn">补全信息</button>
+          <span class="coin-hint">只补当前系列缺失的节点（年份 / 估值 / 图片），进度见采集中心</span>
+        </div>
+        <p class="coin-hint coin-mt coin-hidden" id="complete-note">本系列信息已完整，不显示「补全信息」按钮。</p>
+      </div>
+    </div>
+  </section>
+
+  <div class="coin-series-text">
+    <p><span class="coin-text-label">正面描述</span>乔治六世朝左头像，环绕拉丁文铭文；下方为年份。</p>
+    <p><span class="coin-text-label">正面铭文</span>GEORGIVS VI D · G · BR · OMN · REX · F · D</p>
+    <p><span class="coin-text-label">背面描述</span>不列颠尼亚坐像，右手持三叉戟，左手扶盾，盾上为英国国旗。</p>
+    <p><span class="coin-text-label">背面铭文</span>ONE PENNY</p>
+    <p><span class="coin-text-label">备注</span>1940–1948 年间含 1940 年双 exergue 变体，本原型不展开。</p>
+  </div>
+
+  <section class="coin-panel">
+    <div class="coin-panel-head">
+      <h2 class="coin-panel-title">各年份信息</h2>
+      <span class="coin-panel-note">6 个年份 · 7 个版别 · 估值币种 CNY</span>
+    </div>
+    <div class="table-wrap">
+      <table class="sources-table">
+        <thead>
+          <tr>
+            <th class="coin-nowrap">年份</th><th>厂标</th><th class="coin-nowrap">发行量</th>
+            <th>G</th><th>VG</th><th>F</th><th>VF</th><th>XF</th><th>AU</th><th>UNC</th>
+            <th class="coin-nowrap">麦稀奇</th><th>目录号</th><th>备注</th><th class="coin-nowrap">稀有度</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td class="coin-nowrap">1937</td><td>—</td><td class="coin-nowrap">109,000,000</td><td>¥12</td><td>¥18</td><td>¥30</td><td>¥68</td><td>¥145</td><td>¥320</td><td>¥680</td><td class="coin-nowrap"><a class="sd-price-link" href="#" data-year="1937" data-price="62.4">62.4</a></td><td>KM# 845</td><td>—</td><td class="coin-nowrap">3.10%</td></tr>
+          <tr><td class="coin-nowrap">1938</td><td>—</td><td class="coin-nowrap">121,000,000</td><td>¥12</td><td>¥18</td><td>¥32</td><td>¥72</td><td>¥150</td><td>¥330</td><td>¥700</td><td class="coin-nowrap"><a class="sd-price-link" href="#" data-year="1938" data-price="58.0">58.0</a></td><td>KM# 845</td><td>—</td><td class="coin-nowrap">2.80%</td></tr>
+          <tr><td class="coin-nowrap">1939</td><td>—</td><td class="coin-nowrap">55,000,000</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td class="coin-nowrap">—</td><td>KM# 845</td><td>缺估值</td><td class="coin-nowrap">—</td></tr>
+          <tr><td class="coin-nowrap">1940</td><td>—</td><td class="coin-nowrap">42,000,000</td><td>¥14</td><td>¥20</td><td>¥34</td><td>¥75</td><td>¥160</td><td>¥350</td><td>¥720</td><td class="coin-nowrap"><a class="sd-price-link" href="#" data-year="1940" data-price="71.2">71.2</a></td><td>KM# 845</td><td>双 exergue 变体</td><td class="coin-nowrap">4.20%</td></tr>
+          <tr><td class="coin-nowrap">1941</td><td>—</td><td class="coin-nowrap">28,000,000</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td class="coin-nowrap">—</td><td>KM# 845</td><td>缺估值与图片</td><td class="coin-nowrap">—</td></tr>
+          <tr><td class="coin-nowrap">1943</td><td>—</td><td class="coin-nowrap">33,000,000</td><td>¥14</td><td>¥22</td><td>¥36</td><td>¥80</td><td>¥175</td><td>¥380</td><td>¥760</td><td class="coin-nowrap"><a class="sd-price-link" href="#" data-year="1943" data-price="66.8">66.8</a></td><td>KM# 845</td><td>—</td><td class="coin-nowrap">3.90%</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="coin-hint coin-mt">估值来自 Numista 类型页（按访客币种渲染）；稀有度 = Frequency，即拥有该年份 / 品种的用户占比。</p>
+  </section>
+
+  <section class="coin-panel">
+    <div class="coin-panel-head">
+      <h2 class="coin-panel-title">麦稀奇成交</h2>
+      <span class="coin-panel-note">按成交时间倒序</span>
+    </div>
+    <p class="coin-hint sd-filter-bar coin-hidden" id="sd-filter-bar"><span id="sd-filter-text"></span><button class="sd-filter-clear" type="button" id="sd-filter-clear">清除筛选</button></p>
+    <div class="table-wrap">
+      <table class="sources-table">
+        <thead>
+          <tr><th>成交拍品</th><th>拍品名称</th><th>专场名称</th><th>店铺名称</th><th class="coin-nowrap">拍品年份</th><th class="coin-nowrap" aria-sort="none"><button class="sd-sort" type="button" data-sort="price">成交价格<span class="sd-sort-icon" aria-hidden="true">↕</span></button></th><th class="coin-nowrap" aria-sort="none"><button class="sd-sort" type="button" data-sort="time">成交时间<span class="sd-sort-icon" aria-hidden="true">↕</span></button></th></tr>
+        </thead>
+        <tbody id="sd-sale-body">
+          <tr class="sd-sale-row" data-year="1938" data-price="126.0" data-time="2026-11-08 21:30">
+            <td><span class="coin-mxiqi-thumb--empty">无图</span></td>
+            <td>1938年英国乔治六世一便士 铜币 PCGS AU58</td><td>华誉钱币专场</td><td>华誉拍卖</td>
+            <td class="coin-nowrap">1938</td><td class="coin-nowrap">¥ 126.0</td><td class="coin-nowrap">2026-11-08 21:30</td>
+          </tr>
+          <tr class="sd-sale-row" data-year="1940" data-price="98.0" data-time="2026-11-08 22:10">
+            <td><span class="coin-mxiqi-thumb--empty">无图</span></td>
+            <td>1940年英国1便士 青铜 原光未流通</td><td>欧洲钱币专场</td><td>聚宝源</td>
+            <td class="coin-nowrap">1940</td><td class="coin-nowrap">¥ 98.0</td><td class="coin-nowrap">2026-11-08 22:10</td>
+          </tr>
+          <tr class="coin-hidden" id="sd-sale-empty"><td colspan="7">没有匹配的成交记录</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+</main>
+
+<footer class="site-foot">本地服务 · 只有我一个人用</footer>
+
+<div class="sd-lightbox coin-hidden" id="sd-lightbox" role="dialog" aria-modal="true" aria-labelledby="sd-lightbox-title">
+  <div class="sd-lightbox-panel">
+    <button class="sd-lightbox-close" type="button" id="sd-lightbox-close" aria-label="关闭">×</button>
+    <div class="sd-coin"><b id="sd-lightbox-title">正面</b><span>未缓存</span></div>
+    <p class="sd-lightbox-caption">点击遮罩或按 Esc 关闭</p>
+  </div>
+</div>
+
+<div class="coin-toast coin-hidden" id="toast"></div>
+<script>
+(function () {
+  var watchBtn = document.getElementById('watch-btn');
+  var fillBlock = document.getElementById('fill-block');
+  var completeNote = document.getElementById('complete-note');
+
+  function toast(text) {
+    var box = document.getElementById('toast');
+    box.textContent = text;
+    box.classList.remove('coin-hidden');
+    clearTimeout(box.timer);
+    box.timer = setTimeout(function () { box.classList.add('coin-hidden'); }, 1800);
+  }
+
+  watchBtn.addEventListener('click', function () {
+    if (watchBtn.classList.contains('is-followed')) { return; }
+    watchBtn.textContent = '已观察';
+    watchBtn.classList.add('is-followed');
+    toast('已加入观察系列');
+  });
+
+  document.querySelectorAll('[data-state]').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var complete = btn.dataset.state === 'complete';
+      document.querySelectorAll('[data-state]').forEach(function (item) {
+        item.className = item === btn ? 'btn btn-primary' : 'btn';
+      });
+      fillBlock.classList.toggle('coin-hidden', complete);
+      completeNote.classList.toggle('coin-hidden', !complete);
+    });
+  });
+
+  document.getElementById('fill-btn').addEventListener('click', function () {
+    toast('补全信息（落地走采集中心流水线）');
+  });
+
+  var lightbox = document.getElementById('sd-lightbox');
+  var lightboxTitle = document.getElementById('sd-lightbox-title');
+  var lightboxClose = document.getElementById('sd-lightbox-close');
+  var lightboxTrigger = null;
+
+  function closeLightbox() {
+    if (lightbox.classList.contains('coin-hidden')) { return; }
+    lightbox.classList.add('coin-hidden');
+    document.body.style.overflow = '';
+    if (lightboxTrigger) { lightboxTrigger.focus(); }
+  }
+
+  document.querySelectorAll('.sd-img').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      lightboxTrigger = btn;
+      lightboxTitle.textContent = btn.dataset.side;
+      lightbox.classList.remove('coin-hidden');
+      document.body.style.overflow = 'hidden';
+      lightboxClose.focus();
+    });
+  });
+  lightboxClose.addEventListener('click', closeLightbox);
+  lightbox.addEventListener('click', function (event) {
+    if (event.target === lightbox) { closeLightbox(); }
+  });
+  document.addEventListener('keydown', function (event) {
+    if (event.key === 'Escape') { closeLightbox(); }
+  });
+
+  var saleBody = document.getElementById('sd-sale-body');
+  var saleEmpty = document.getElementById('sd-sale-empty');
+  var saleRows = Array.prototype.slice.call(document.querySelectorAll('.sd-sale-row'));
+  var sortButtons = Array.prototype.slice.call(document.querySelectorAll('.sd-sort'));
+  var filterBar = document.getElementById('sd-filter-bar');
+  var filterText = document.getElementById('sd-filter-text');
+  var sortKey = '';
+  var sortDir = 1;
+  var filterYear = '';
+
+  function renderSaleRows() {
+    var visible = 0;
+    saleRows.forEach(function (row) {
+      var matched = !filterYear || row.dataset.year === filterYear;
+      row.classList.toggle('coin-hidden', !matched);
+      if (matched) { visible += 1; }
+    });
+
+    var ordered = saleRows.slice();
+    if (sortKey) {
+      ordered.sort(function (a, b) {
+        var av = sortKey === 'price' ? parseFloat(a.dataset.price) : a.dataset.time;
+        var bv = sortKey === 'price' ? parseFloat(b.dataset.price) : b.dataset.time;
+        if (av === bv) { return 0; }
+        return (av > bv ? 1 : -1) * sortDir;
+      });
+    }
+    ordered.forEach(function (row) { saleBody.appendChild(row); });
+    saleBody.appendChild(saleEmpty);
+    saleEmpty.classList.toggle('coin-hidden', visible > 0);
+
+    sortButtons.forEach(function (btn) {
+      var active = btn.dataset.sort === sortKey;
+      btn.classList.toggle('is-active', active);
+      btn.querySelector('.sd-sort-icon').textContent = active ? (sortDir > 0 ? '▲' : '▼') : '↕';
+      btn.closest('th').setAttribute('aria-sort', active ? (sortDir > 0 ? 'ascending' : 'descending') : 'none');
+    });
+  }
+
+  sortButtons.forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var key = btn.dataset.sort;
+      if (sortKey === key) { sortDir = -sortDir; } else { sortKey = key; sortDir = 1; }
+      renderSaleRows();
+    });
+  });
+
+  document.querySelectorAll('.sd-price-link').forEach(function (link) {
+    link.addEventListener('click', function (event) {
+      event.preventDefault();
+      filterYear = link.dataset.year;
+      filterText.textContent = '当前筛选：' + filterYear + ' 年 · 麦稀奇 ¥' + link.dataset.price;
+      filterBar.classList.remove('coin-hidden');
+      renderSaleRows();
+    });
+  });
+
+  document.getElementById('sd-filter-clear').addEventListener('click', function () {
+    filterYear = '';
+    filterBar.classList.add('coin-hidden');
+    renderSaleRows();
+  });
+
+  renderSaleRows();
+})();
+</script>
+</body>
+</html>

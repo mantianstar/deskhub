@@ -11,18 +11,29 @@
 {% endmacro %}
 
 {% macro coin_nav(active) %}
+{# 4 tab 归并：今日推荐 / 我的资产（收藏系列 + 品相台账）/ 币库（系列库 + 候选池）/
+   麦稀奇数据（分类分析 + 店铺分析 + 拍场）；采集中心独立整页挂最右。 #}
+{% set tab = {
+  "today": "today",
+  "collection": "assets",
+  "library": "library",
+  "explore": "library",
+  "analysis": "data",
+  "auction": "data",
+  "mxiqi": "data",
+  "data": "data",
+}.get(active, "") %}
 <nav class="coin-tabs" aria-label="铜币模块导航">
   {% set items = [
     ("today", "/coins/collection", "今日推荐"),
-    ("collection", "/coins/collections", "收藏"),
+    ("assets", "/coins/grades", "我的资产"),
     ("library", "/coins/info", "币库"),
-    ("explore", "/coins/explore", "候选池"),
-    ("analysis", "/coins/analysis", "分析"),
-    ("auction", "/coins", "拍场"),
+    ("data", "/coins/mxiqi", "麦稀奇数据"),
   ] %}
   {% for key, href, label in items %}
-  <a href="{{ href }}"{% if active == key %} class="is-active" aria-current="page"{% endif %}>{{ label }}</a>
+  <a href="{{ href }}"{% if tab == key %} class="is-active" aria-current="page"{% endif %}>{{ label }}</a>
   {% endfor %}
+  <a class="coin-tabs-tool{% if active == 'ingest' %} is-active{% endif %}" href="/coins/ingest"{% if active == 'ingest' %} aria-current="page"{% endif %}>采集中心</a>
 </nav>
 {% endmacro %}
 
@@ -37,15 +48,27 @@
 {% endmacro %}
 
 {% macro coin_collection_tabs(active) %}
-<nav class="coin-subtabs" aria-label="收藏子导航">
+<nav class="coin-subtabs" aria-label="我的资产子导航">
+  <a href="/coins/grades"{% if active == "grades" %} class="is-active" aria-current="page"{% endif %}>个人收藏清单</a>
   <a href="/coins/collections"{% if active == "collections" %} class="is-active" aria-current="page"{% endif %}>收藏系列</a>
-  <a href="/coins/grades"{% if active == "grades" %} class="is-active" aria-current="page"{% endif %}>品相台账</a>
+  <a href="/coins/watchlist"{% if active == "watchlist" %} class="is-active" aria-current="page"{% endif %}>观察系列</a>
 </nav>
 {% endmacro %}
 
-{% macro coin_library_tabs(active) %}
-<nav class="coin-subtabs" aria-label="币库子导航">
-  <a href="/coins/info"{% if active == "series" %} class="is-active" aria-current="page"{% endif %}>系列库</a>
-  <a href="/coins/manage"{% if active == "ingest" %} class="is-active" aria-current="page"{% endif %}>采集中心</a>
-</nav>
+{% macro coin_series_card_meta(item, year_count, title_href="") %}
+<div class="coin-series-meta">
+  <h3 class="coin-series-title">
+    {%- if title_href %}<a href="{{ title_href }}">{% endif -%}
+    {{ item.issuer or '—' }} · {{ item.ruler or '—' }} · {{ item.denomination or '—' }}
+    {%- if item.issue_theme %} · {{ item.issue_theme }}{% endif %}
+    {%- if title_href %}</a>{% endif %}
+  </h3>
+  <p class="coin-series-line">Numista #{{ item.numista_id }} · {{ item.min_year or '?' }}–{{ item.max_year or '?' }} · {{ year_count }} 个年份</p>
+  <p class="coin-series-line">
+    {{ item.composition or '—' }}
+    {%- if item.size_mm %} · {{ item.size_mm }} mm{% endif %}
+    · {{ item.shape or '—' }}
+    {%- if item.weight_g %} · {{ item.weight_g }} g{% endif %}
+  </p>
+</div>
 {% endmacro %}

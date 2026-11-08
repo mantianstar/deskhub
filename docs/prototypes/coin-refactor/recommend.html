@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>今日推荐 · 铜币 · deskhub</title>
+<link rel="stylesheet" href="proto.css">
+<style>
+.rec-session { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-top: 1px solid var(--border); text-decoration: none; color: var(--text); font-size: 12.5px; }
+.rec-session:first-of-type { border-top: 0; }
+.rec-session-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.rec-session-shop { color: var(--text-muted); font-size: 12px; }
+.rec-session-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rec-session-meta { color: var(--text-muted); font-size: 12px; }
+.rec-session-count { flex: none; min-width: 44px; text-align: center; padding: 2px 6px; border: 1px solid var(--border); border-radius: 999px; font-size: 12px; color: var(--text-muted); }
+.rec-session-count.is-precise { color: #b45309; background: var(--year-upgrade-bg); border-color: #f2e0ae; }
+.rec-session-summary { margin: 0 0 8px; color: var(--text-muted); font-size: 12px; line-height: 1.6; }
+.rec-session-other { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 8px 0; border-top: 1px solid var(--border); font-size: 12px; color: var(--text-muted); }
+.rec-session-link { display: block; margin-top: 8px; font-size: 12px; color: var(--accent); text-decoration: none; }
+.rec-coverage { margin: 0; padding: 10px 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; }
+.rec-coverage h3 { margin: 0; font-size: 13.5px; font-weight: 700; color: var(--text); }
+.rec-coverage p { margin: 4px 0 0; font-size: 12.5px; line-height: 1.6; color: var(--text-muted); }
+</style>
+</head>
+<body>
+<header class="site-head">
+  <a class="brand" href="index.html">deskhub</a>
+  <nav class="nav">
+    <a class="nav-link" href="#">日报</a>
+    <a class="nav-link" href="#">历史搜索</a>
+    <a class="nav-link" href="#">源管理</a>
+    <a class="nav-link" href="#">运行控制</a>
+    <a class="nav-link" href="#">基金</a>
+    <a class="nav-link is-active" href="index.html">铜币</a>
+  </nav>
+</header>
+
+<main class="content content-wide">
+  <nav class="coin-tabs" aria-label="铜币模块导航">
+    <a class="is-active" href="recommend.html" aria-current="page">今日推荐</a>
+    <a href="holdings.html">我的资产</a>
+    <a href="library.html">币库</a>
+    <a href="index.html#moxiqi">麦稀奇数据</a>
+    <a class="btn btn-primary coin-tabs-action" href="ingest.html">采集中心</a>
+  </nav>
+
+  <section class="coin-page-head">
+    <div>
+      <h1>今日推荐</h1>
+      <p class="coin-page-sub">8 个收藏系列 · 23 条推荐 · 当日拍品 14 条</p>
+    </div>
+  </section>
+
+  <div class="coin-kpis">
+    <div class="coin-kpi"><span class="coin-kpi-label">精准匹配店铺</span><span class="coin-kpi-value">12</span></div>
+    <div class="coin-kpi"><span class="coin-kpi-label">精准匹配拍品</span><span class="coin-kpi-value">34</span></div>
+    <div class="coin-kpi"><span class="coin-kpi-label">缺失年份</span><span class="coin-kpi-value">37</span></div>
+    <div class="coin-kpi"><span class="coin-kpi-label">待升级年份</span><span class="coin-kpi-value">9</span></div>
+  </div>
+
+  <form class="search-form" method="get" action="#">
+    <div class="search-row search-row-labeled">
+      <label class="field">系列
+        <select>
+          <option>全部</option>
+          <option>英国 · 乔治六世 · 1 便士</option>
+          <option>法国 · 第三共和国 · 5 法郎</option>
+          <option>荷属东印度 · 威廉明娜 · 1 分</option>
+        </select>
+      </label>
+      <label class="field">推荐原因
+        <select>
+          <option>全部</option>
+          <option>稀缺年份</option>
+          <option>差品升级</option>
+        </select>
+      </label>
+      <label class="field">是否命中
+        <select>
+          <option>全部</option>
+          <option>已命中</option>
+          <option>未命中</option>
+        </select>
+      </label>
+      <button class="btn btn-primary" type="submit">查询</button>
+    </div>
+  </form>
+
+  <div class="coin-split">
+    <div>
+      <section class="coin-panel">
+        <div class="coin-panel-head">
+          <h2 class="coin-panel-title">精准推荐 <span class="coin-panel-note">9 条 · 系列收藏缺失年份、差品年份匹配</span></h2>
+        </div>
+
+        <article class="coin-rec-card is-precise">
+          <div class="coin-rec-head">
+            <div class="coin-rec-title">
+              <h3><a href="collection-detail.html">英国 · 乔治六世 · 1 便士</a></h3>
+              <p class="coin-rec-meta">1937 / 1938 / 1940 · 发行量 — · 稀有度 3.10%</p>
+            </div>
+            <span class="coin-reason is-precise">稀缺年份</span>
+          </div>
+          <div class="coin-rec-facts">
+            <span>尺寸 30.8 mm</span><span>重量 9.45 g</span><span>VF / XF ¥68 / ¥145</span><span>分数 0.812</span>
+          </div>
+          <div class="coin-rec-lots">
+            <a class="coin-rec-lot" href="#">
+              <span class="coin-rec-lot-shop">华誉拍卖</span>
+              <span class="coin-rec-lot-title">1938年英国乔治六世一便士 铜币 PCGS AU58</span>
+              <span class="coin-rec-lot-price">¥126</span>
+              <span class="coin-rec-lot-time">11-08 21:30</span>
+            </a>
+            <a class="coin-rec-lot" href="#">
+              <span class="coin-rec-lot-shop">聚宝源</span>
+              <span class="coin-rec-lot-title">1940年英国1便士 青铜 原光未流通</span>
+              <span class="coin-rec-lot-price">¥98</span>
+              <span class="coin-rec-lot-time">11-08 22:10</span>
+            </a>
+          </div>
+          <div class="coin-rec-foot"><span>搜索词 <code>george vi penny</code></span><span>缺失年份</span></div>
+        </article>
+
+        <article class="coin-rec-card is-precise">
+          <div class="coin-rec-head">
+            <div class="coin-rec-title">
+              <h3><a href="collection-detail.html">法国 · 第三共和国 · 5 法郎</a></h3>
+              <p class="coin-rec-meta">1873 / 1874 / 1875 · 发行量 — · 稀有度 1.80%</p>
+            </div>
+            <span class="coin-reason is-precise">差品升级</span>
+          </div>
+          <div class="coin-rec-facts">
+            <span>尺寸 37.0 mm</span><span>重量 25.00 g</span><span>VF / XF ¥260 / ¥480</span><span>分数 0.744</span>
+          </div>
+          <div class="coin-rec-lots">
+            <a class="coin-rec-lot" href="#">
+              <span class="coin-rec-lot-shop">欧洲钱币专场</span>
+              <span class="coin-rec-lot-title">1874年法国5法郎 大力神银币 极美品</span>
+              <span class="coin-rec-lot-price">¥420</span>
+              <span class="coin-rec-lot-time">11-08 20:00</span>
+            </a>
+          </div>
+          <div class="coin-rec-foot"><span>搜索词 <code>france 5 francs hercule</code></span><span>差品升级</span></div>
+        </article>
+      </section>
+
+      <section class="coin-panel">
+        <div class="coin-panel-head">
+          <h2 class="coin-panel-title">相似推荐 <span class="coin-panel-note">14 条 · 候选池国家年份面值、国家面值匹配</span></h2>
+        </div>
+        <article class="coin-rec-card is-similar">
+          <div class="coin-rec-head">
+            <div class="coin-rec-title">
+              <h3><a href="series-detail.html">荷属东印度 · 威廉三世 · 1 分</a></h3>
+              <p class="coin-rec-meta">1855–1912 · 发行量 — · 稀有度 2.40%</p>
+            </div>
+            <span class="coin-reason is-similar">面值探索</span>
+          </div>
+          <div class="coin-rec-facts">
+            <span>尺寸 29.0 mm</span><span>重量 9.60 g</span><span>VF / XF ¥45 / ¥110</span><span>分数 0.566</span>
+          </div>
+          <div class="coin-rec-lots">
+            <a class="coin-rec-lot" href="#">
+              <span class="coin-rec-lot-shop">荷塘钱币</span>
+              <span class="coin-rec-lot-title">1902年荷属东印度1分 铜币 原味包浆</span>
+              <span class="coin-rec-lot-price">¥36</span>
+              <span class="coin-rec-lot-time">11-09 19:30</span>
+            </a>
+            <a class="coin-rec-lot" href="#">
+              <span class="coin-rec-lot-shop">南洋集藏</span>
+              <span class="coin-rec-lot-title">1912年荷属东印度1分 近未流通</span>
+              <span class="coin-rec-lot-price">¥52</span>
+              <span class="coin-rec-lot-time">11-09 21:00</span>
+            </a>
+          </div>
+          <div class="coin-rec-foot"><span>搜索词 <code>netherlands east indies 1 cent</code></span><span>面值探索</span></div>
+        </article>
+      </section>
+    </div>
+
+    <aside>
+      <div class="coin-rail-card">
+        <h3 class="coin-rail-title">今日拍场 <span class="coin-panel-note">6 场 · 14 件</span></h3>
+        <p class="rec-session-summary">
+          精准 9 项 · 命中 7 件<br>
+          相似 14 项 · 命中 4 件
+        </p>
+        <a class="rec-session" href="#">
+          <span class="rec-session-body">
+            <span class="rec-session-shop">华誉拍卖</span>
+            <span class="rec-session-title">1938 英国铜币专场</span>
+            <span class="rec-session-meta">4 件 · 精准 3 · 相似 1 · 11-08 21:30</span>
+          </span>
+          <span class="rec-session-count is-precise">4 件</span>
+        </a>
+        <a class="rec-session" href="#">
+          <span class="rec-session-body">
+            <span class="rec-session-shop">聚宝源</span>
+            <span class="rec-session-title">欧洲老银铜币夜场</span>
+            <span class="rec-session-meta">3 件 · 精准 2 · 相似 1 · 11-08 22:10</span>
+          </span>
+          <span class="rec-session-count is-precise">3 件</span>
+        </a>
+        <a class="rec-session" href="#">
+          <span class="rec-session-body">
+            <span class="rec-session-shop">欧洲钱币专场</span>
+            <span class="rec-session-title">法国大力神银币专场</span>
+            <span class="rec-session-meta">4 件 · 精准 1 · 相似 1 · 11-08 20:00</span>
+          </span>
+          <span class="rec-session-count">2 件</span>
+        </a>
+        <a class="rec-session" href="#">
+          <span class="rec-session-body">
+            <span class="rec-session-shop">荷塘钱币</span>
+            <span class="rec-session-title">南洋铜币专场</span>
+            <span class="rec-session-meta">3 件 · 精准 1 · 相似 1 · 11-09 19:30</span>
+          </span>
+          <span class="rec-session-count">2 件</span>
+        </a>
+        <div class="rec-session-other">
+          <span><b>其他专场</b> 2 场 · 2 件命中</span>
+          <a href="index.html">查看</a>
+        </div>
+        <a class="rec-session-link" href="index.html">查看全部拍场 →</a>
+      </div>
+      <div class="rec-coverage">
+        <h3>收藏覆盖</h3>
+        <p>已覆盖 8 个系列 / 12 个年份，缺口 37 个年份</p>
+      </div>
+    </aside>
+  </div>
+</main>
+
+<footer class="site-foot">本地服务 · 只有我一个人用</footer>
+</body>
+</html>

@@ -1038,3 +1038,50 @@ CREATE TABLE IF NOT EXISTS coin_collection_series_members (
 | 3 | `24000` 是否就是「其他 / 杂项」 | 一级字典 |
 | 4 | `15000` 是否为保留空码 | 一级字典 |
 | 5 | 分析页入口放在导航哪个位置（一级菜单还是铜币子页） | 前端路由 |
+
+## 18.20 观察系列（对应 spec/coins.md §14.20；schema 33）
+
+1. 表：`app/models.py` `coin_watchlist`（`series_id UNIQUE` 外键 `coin_series` 级联删除，`created_at`）。
+2. 仓库：`add_coin_watch_item`（按 `numista_id` 解析系列，`INSERT OR IGNORE` 幂等，系列不存在 False）、
+   `remove_coin_watch_item`、`list_coin_watchlist`（LEFT JOIN `coin_series_cn` 取中文展示字段，`created_at DESC`）。
+3. 路由：`POST /coins/watchlist/add`（`numista_id` + `next`，回跳只接受 `/coins/` 内地址）。
+4. 页面：`coins/info.html` 操作区 = 加入观察 / 已观察；`coins/series.html` = `coin-panel` + `.sd-series-grid`
+   （图片左、`coin-facts-3col` 右）+ 补齐数据三按钮在右栏；Numista 链接统一 `https://en.numista.com/{series_id}`。
+5. 测试：`tests/test_coins_pages.py` 的 `test_info_page_watch_button_adds_and_is_idempotent`、
+   `test_series_page_watch_button`。
+6. 观察系列页：`GET /coins/watchlist`（`numista_ids` 过滤的 `search_coin_series` + 五条件查询 + 单个「放弃观察」）、
+   `POST /coins/watchlist/remove`（回跳 `_return_target`）、`coin_library_tabs` 加「观察系列」入口。
+
+## 18.21 收藏系列列表 / 详情 + 今日推荐收藏覆盖（对应 spec/coins.md §14.21）
+
+1. 路由：`app/routers/coins.py` 抽 `_collection_overview()`（`list_coin_collection_series` / `list_coin_collection_members` /
+   `list_coin_series` / `load_member_profiles` / `merge_profiles` 汇总成 collections / members / series_by_id / 画像与统计）；
+   `collections_page` 与新增 `collection_detail_page`（`GET /coins/collections/{collection_id}`，不存在 404）共用。
+2. 回跳：成员加入 / 移出与编辑沿用既有 POST 路由，统一回跳详情 `#member-panel`（`_return_target` 判空后回列表）。
+3. 模板：`collections.html` = `article.coin-collection-card` + `.col-row`（摘要 + 「进入管理 →」）+ `.col-body`（ID / 进度 / 年份胶囊 / 成员胶囊，行内 JS 切换）；
+   `collection_detail.html` = 概况 + 成员管理 + 编辑 + 删除。
+4. 样式：`style.css` 增 `.col-row` / `.col-summary` / `.col-meta` / `.col-link` / `.col-body` / `.coin-collection-id` / `.coin-panel*`。
+5. 今日推荐：`collection_page` 传 `covered_year_total`（各画像 `owned_entries` 求和），`collection.html` 右栏加 `.coin-coverage`。
+6. 测试：`tests/test_coins_pages.py` 的 `test_collections_page_shows_rows_and_detail_link`、
+   `test_collection_detail_page_lists_members_and_404s`；收藏覆盖断言在 `tests/test_coins_collection.py` 今日推荐用例。
+7. 删除已无引用的 `_attach_collection_names`。
+
+## 18.22 麦稀奇数据入口页（对应 spec/coins.md §14.22）
+
+1. 路由：`app/routers/coins.py` 新增 `GET /coins/mxiqi`（`mxiqi_page`，只渲染入口页，无查询）。
+2. 模板：`app/templates/coins/mxiqi.html` = `coin_nav("data")` + `coin_head` + `.coin-entry-grid` 四张卡
+   （`/coins`、`/coins/search`、`/coins/analysis`、`/coins/shops`）。
+3. 导航：`coin_nav` 的「麦稀奇数据」改指 `/coins/mxiqi`，active 映射补 `"mxiqi": "data"` / `"data": "data"`。
+4. 样式：`style.css` 增 `.coin-entry-grid` / `.coin-entry`。
+5. 测试：`tests/test_coins_pages.py` 的 `test_mxiqi_page_links_existing_pages`。
+
+## 18.23 采集中心（对应 spec/coins.md §14.23）
+
+1. 路由：`app/routers/coins.py` 的 `ingest_page`（`GET /coins/ingest`）与 `enqueue_ingest_selected`（`POST /coins/ingest/queue`）。
+   - `_ingest_result_series()`：条件段走 `repository.search_coin_series(issuer / year / denomination / composition, cn=True)`，ID 段走 `numista_ids=[id]`；`dict` 按 `numista_id` 合并去重后升序，条件与 ID 全空返回空。
+   - 队列筛选交给 `list_coin_ingest_tasks(name, status, created_from/to, finished_from/to)`；页面只收日期，仓库侧补 `T23:59` 收起当天。
+   - 结果 / 队列各按 `INGEST_RESULT_PAGE_SIZE = 20` 分页，翻页 URL 保留探索与筛选参数（`epage` / `page` 分开）。
+   - 多选入队名称取本地系列 `title`（`search_coin_series(numista_ids=..., cn=True)`），`source="explore"`；原 `POST /coins/ingest`（单系列，`source="web"`）未动。
+2. 文案：`INGEST_TASK_BADGE_LABELS`（未开始 / 进行中 / 完成 / 失败）只给表格徽标；查询下拉用 `INGEST_TASK_STATUS_LABELS`（待执行 …），不改既有断言。
+3. 模板：`app/templates/coins/ingest.html` = 页头副标题 + 条件面板 + ID 面板（`coin-query-inline`）+ 探索结果（全选 / 复选 / 加入队列 / 分页 / 内联计数）+ 任务队列（四筛选 / 节点胶囊 / 徽标 / 分页）；`style.css` 增 `.coin-node-row` / `.coin-node(.is-*)` / `.coin-badge.is-*` / `.coin-query-inline` / `.coin-field-inline` / `.coin-nowrap`。
+4. 测试：`test_ingest_condition_explore_merges_series_id`（条件 2 条、叠 ID 合并 3 条并升序）、`test_ingest_queue_enqueues_selected`（多选入队回跳 + 「未开始」徽标）。

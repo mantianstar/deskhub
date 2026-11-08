@@ -139,8 +139,11 @@ def load_candidate_profiles() -> list[CoinCollectionProfile]:
     return profiles
 
 
-def adopt_candidate(numista_id: int) -> bool:
-    """采纳：把候选详情（含年份）写入本地系列表，信息页 / 采集管理页随即可见。"""
+def adopt_candidate(numista_id: int, *, mark_adopted: bool = True) -> bool:
+    """采纳：把候选详情（含年份）写入本地系列表，信息页 / 采集管理页随即可见。
+
+    `mark_adopted=False` 时只落库、不改候选状态（采集中心入队任务复用暂存数据时用）。
+    """
     candidate = repository.get_coin_explore_candidate(numista_id)
     if candidate is None:
         return False
@@ -157,7 +160,8 @@ def adopt_candidate(numista_id: int) -> bool:
         cn_issue = translate.issue_to_zh(issue)
         cn_issue.series_id = cn_id
         repository.upsert_coin_issue_cn(translate.strip_html_texts(cn_issue))
-    repository.set_coin_explore_candidate_status(numista_id, STATUS_ADOPTED)
+    if mark_adopted:
+        repository.set_coin_explore_candidate_status(numista_id, STATUS_ADOPTED)
     return True
 
 

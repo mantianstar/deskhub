@@ -543,6 +543,20 @@ def cmd_coins_explore(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_coins_explore_adopt(args: argparse.Namespace) -> int:
+    """把候选池（候选 + 已忽略）全部采纳进本地币库。"""
+    _bootstrap()
+    candidates = repository.list_coin_explore_candidates(include_ignored=True)
+    adopted = failed = 0
+    for item in candidates:
+        if coins_explore.adopt_candidate(item.numista_id):
+            adopted += 1
+        else:
+            failed += 1
+    print(f"候选池采纳完成：成功 {adopted} 个 · 失败 {failed} 个")
+    return 0
+
+
 def cmd_coins_translate(args: argparse.Namespace) -> int:
     """用大模型重翻已入库系列的描述 / 备注 / 名称（读英文表 → 覆盖中文表）。
 
@@ -731,6 +745,11 @@ def _build_parser() -> argparse.ArgumentParser:
         "--limit", type=int, default=None, help="单轮最多取几个候选的详情（默认取配置）"
     )
     coins_explore_parser.set_defaults(func=cmd_coins_explore)
+
+    coins_explore_adopt = subparsers.add_parser(
+        "coins-explore-adopt", help="把候选池（含已忽略）全部采纳进本地币库"
+    )
+    coins_explore_adopt.set_defaults(func=cmd_coins_explore_adopt)
 
     coins_translate = subparsers.add_parser(
         "coins-translate",

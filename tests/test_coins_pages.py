@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 
 from app import config, repository
 from app.coins import grades as coins_grades
+from app.coins import ingest as coins_ingest
 from app.coins import numista as coins_numista
 from app.coins import numista_web as coins_numista_web
 from app.coins.numista import NumistaError
@@ -754,10 +755,9 @@ def _seed_uk_1904() -> None:
 
 def test_info_page_lists_and_filters(web):
     _seed_series()
-    assert "英国 · 1 便士" in web.get("/coins/info").text
-    assert "已采 2 个年份" in web.get("/coins/info").text
+    assert "英国 · George III · 1 便士" in web.get("/coins/info").text
     # 年份落在 [1808, 1860] 内 → 命中
-    assert "英国 · 1 便士" in web.get("/coins/info", params={"country": "英国", "year": "1808"}).text
+    assert "英国 · George III · 1 便士" in web.get("/coins/info", params={"country": "英国", "year": "1808"}).text
     # 区间外 → 空
     assert "本地没有符合条件的系列" in web.get(
         "/coins/info", params={"country": "英国", "year": "1900"}
@@ -766,29 +766,138 @@ def test_info_page_lists_and_filters(web):
     assert "不是整数" in web.get("/coins/info", params={"year": "abc"}).text
 
 
-def test_series_page_merges_year_info_and_values(web):
-    """年份信息 + 估值合并为一张「各年份信息」表，并带上厂标 / 目录号 / 备注。"""
+def test_info_page_filters_by_status(web):
+    """币库列表：按已收藏 / 已观察 / 未观察筛选，缺省显示全部。"""
+    _seed_series()
+    _seed_uk_1904()
+    collection_id = repository.upsert_coin_collection_series(
+        collection_key="uk-1d",
+        name="英国 半 便士",
+        country="英国",
+        ruler="Edward VII",
+        denomination="半 便士",
+    )
+    repository.upsert_coin_collection_member(collection_id, 1867, "半 便士")
+    assert repository.add_coin_watch_item(670)
+
+    all_text = web.get("/coins/info").text
+    assert "George III" in all_text and "Edward VII" in all_text
+    collected = web.get("/coins/info", params={"status": "collected"}).text
+    assert "Edward VII" in collected and "George III" not in collected
+    watched = web.get("/coins/info", params={"status": "watched"}).text
+    assert "George III" in watched and "Edward VII" not in watched
+    unwatched = web.get("/coins/info", params={"status": "unwatched"}).text
+    assert "George III" not in unwatched and "Edward VII" in unwatched
+
+
+def test_info_page_watch_button_adds_and_is_idempotent(web):
+    """币库列表：未观察显示「加入观察」，提交后变「已观察」，重复提交不重复入库。"""
+    _seed_series()
+    page = web.get("/coins/info")
+    assert "加入观察" in page.text
+    assert "coin-follow-btn is-followed" not in page.text
+    web.post("/coins/watchlist/add", data={"numista_id": "670", "next": "/coins/info"})
+    page = web.get("/coins/info")
+    assert "coin-follow-btn is-followed" in page.text
+    assert [item.numista_id for item in repository.list_coin_watchlist()] == [670]
+    web.post("/coins/watchlist/add", data={"numista_id": "670", "next": "/coins/info"})
+    assert len(repository.list_coin_watchlist()) == 1
+
+
+def test_series_page_watch_button(web):
+    """系列详情：「+ 观察」在系列信息行最右，提交后变「已观察」；未采集系列不给按钮。"""
     _seed_series()
     page = web.get("/coins/series/670")
-    assert page.status_code == 200
     assert "系列信息" in page.text
-    assert "各年份信息" in page.text
+    assert "+ 观察" in page.text
+    web.post("/coins/watchlist/add", data={"numista_id": "670", "next": "/coins/series/670"})
+    assert "已观察" in web.get("/coins/series/670").text
+
+
+def test_watchlist_page_lists_filters_and_removes(web):
+    """观察系列页：我的资产子导航有入口；列出已观察系列；条件不命中给空态；放弃后回空态。"""
+    _seed_series()
+    assert 'href="/coins/watchlist"' in web.get("/coins/grades").text
+    repository.add_coin_watch_item(670)
+    page = web.get("/coins/watchlist")
+    assert page.status_code == 200
+    assert "已观察 1 个系列" in page.text
+    assert "英国 · George III · 1 便士" in page.text
+    assert "Numista #670" in page.text
+    # 过滤条件不命中：列表空，但观察总数仍显示
+    filtered = web.get("/coins/watchlist", params={"country": "法国"})
+    assert "当前筛选条件下没有观察系列" in filtered.text
+    assert "已观察 1 个系列" in filtered.text
+    # 放弃观察：回到无观察项的空态
+    web.post(
+        "/coins/watchlist/remove",
+        data={"numista_id": "670", "next": "/coins/watchlist"},
+    )
+    assert repository.list_coin_watchlist() == []
+    assert "还没有观察的系列" in web.get("/coins/watchlist").text
+
+
+def test_watchlist_upgrade_joins_existing_collection(web):
+    """观察系列升级：选「加入已有收藏系列」→ 成为该系列成员，并从观察系列移除。"""
+    _seed_series()
+    repository.add_coin_watch_item(670)
+    collection_id = repository.upsert_coin_collection_series(
+        collection_key="英国--1 便士",
+        name="英国 · 1 便士",
+        country="英国",
+        ruler=None,
+        denomination="1 便士",
+    )
+    page = web.get("/coins/watchlist")
+    assert "加入已有收藏系列" in page.text
+    web.post(
+        "/coins/watchlist/upgrade",
+        data={
+            "numista_ids": "670",
+            "dest": "existing",
+            "collection_id": str(collection_id),
+        },
+    )
+    members = repository.list_coin_collection_members(collection_id)
+    assert [member.numista_series_id for member in members] == [670]
+    assert repository.list_coin_watchlist() == []
+
+
+def test_series_page_merges_year_info_and_values(web, monkeypatch):
+    """年份信息 + 估值合并为一张「各年份信息」表，并带上厂标 / 目录号 / 备注。"""
+    _seed_series()
+    # 未缓存正反图 → 视为未完整，按钮照常显示（不依赖本机 data/coin_images）
+    monkeypatch.setattr(coins_numista_web, "cached_image", lambda numista_id, side: None)
+    page = web.get("/coins/series/670")
+    assert page.status_code == 200
+    assert "系列基本信息" in page.text
+    assert "年份信息" in page.text
     assert "各年份估值" not in page.text  # 已合并，不再单独成表
     # 年份数 ≠ 版别数：1808 / 1809 两年，各一条单版
     assert "2 个年份 · 2 个版别" in page.text
     assert "KM#790,Sp#3961" in page.text
-    assert "Royal Mint" in page.text
-    # ②③④ 动作条 + 回跳到本系列详情
-    assert "② 获取年份信息" in page.text
-    assert "③ 获取年份估值" in page.text
-    assert "④ 下载图片" in page.text
-    assert 'name="return_to" value="/coins/series/670"' in page.text
+    # 三合一「补全信息」：入采集中心队列（只补缺失节点）
+    assert "补全信息" in page.text
+    assert "只补当前系列缺失的节点（年份 / 估值 / 图片），进度见采集中心" in page.text
+    assert 'action="/coins/ingest"' in page.text
     # 合并后的列：厂标（年份后）/ 目录号（UNC 后）/ 备注（目录号后）
     for header in ("厂标", "发行量", "UNC", "目录号", "备注", "稀有度"):
         assert header in page.text
     assert "120000" in page.text  # 发行量
     assert "0.16%" in page.text  # Frequency
     assert "CNY" in page.text
+
+
+def test_series_page_hides_fill_button_when_complete(web, monkeypatch):
+    """年份 / 估值 / 正反图都齐：不再显示「补全信息」，只提示已完整。"""
+    _seed_series()
+    monkeypatch.setattr(
+        coins_numista_web, "cached_image", lambda numista_id, side: "cached.jpg"
+    )
+    page = web.get("/coins/series/670")
+    assert page.status_code == 200
+    assert 'action="/coins/ingest"' not in page.text
+    assert "本系列信息已完整" in page.text
 
 
 def test_series_page_shows_gregorian_year_when_different(web):
@@ -995,7 +1104,7 @@ def test_series_page_issues_without_values_hint(web):
         )
     )
     page = web.get("/coins/series/670")
-    assert "各年份信息" in page.text
+    assert "年份信息" in page.text
     assert "估值未采集" in page.text
 
 
@@ -1032,7 +1141,6 @@ def test_year_stats_counts_distinct_years_not_issues(web):
     stats = repository.coin_series_issue_stats(cn=True)[670]
     assert stats.year_count == 2
     assert stats.issue_count == 3
-    assert "2 个年份 · 3 个版别" in web.get("/coins/info").text
     assert "年份 2 个 · 3 版" in web.get("/coins/manage").text
 
 
@@ -1079,6 +1187,144 @@ def test_manage_page_renders_form_and_results(web):
     assert "英国 · 1 便士" in page.text
     assert "/coins/series/670" in page.text
     assert "年份 2 个 · 2 版" in page.text
+
+
+def test_mxiqi_page_links_existing_pages(web):
+    """麦稀奇数据 tab 为分区入口页：4 tab 正常，卡片指向现有页面。"""
+    page = web.get("/coins/mxiqi")
+    assert page.status_code == 200
+    for label in ("今日推荐", "我的资产", "币库", "麦稀奇数据", "采集中心"):
+        assert label in page.text
+    for href in (
+        'href="/coins"',
+        'href="/coins/search"',
+        'href="/coins/analysis"',
+        'href="/coins/shops"',
+    ):
+        assert href in page.text
+
+
+def test_ingest_page_shows_four_tabs_and_queue(web):
+    """采集中心独立整页：4 tab + 最右入口，空队列给提示。"""
+    page = web.get("/coins/ingest")
+    assert page.status_code == 200
+    for label in ("今日推荐", "我的资产", "币库", "麦稀奇数据", "采集中心"):
+        assert label in page.text
+    assert 'class="coin-tabs-tool' in page.text
+    assert 'action="/coins/ingest"' in page.text
+    assert "队列为空" in page.text
+
+
+def test_ingest_post_enqueues_and_reuses(web, monkeypatch):
+    """入队后回本页并列出任务；同系列重复入队复用在跑任务。"""
+    starts: list[bool] = []
+    monkeypatch.setattr(coins_ingest, "start", lambda cfg: starts.append(True) or True)
+
+    first = web.post(
+        "/coins/ingest",
+        data={"series_numista_id": "670", "name": "英国 · 1 便士"},
+        follow_redirects=False,
+    )
+    assert first.status_code == 302
+    assert first.headers["location"] == "/coins/ingest"
+    assert starts == [True]
+
+    page = web.get("/coins/ingest").text
+    assert "英国 · 1 便士" in page
+    assert "待执行" in page
+
+    second = web.post(
+        "/coins/ingest", data={"series_numista_id": "670"}, follow_redirects=False
+    )
+    assert second.headers["location"] == "/coins/ingest?reused=1"
+    assert len(repository.list_coin_ingest_tasks()) == 1
+
+
+def test_ingest_post_rejects_bad_series_id(web):
+    """非数字系列 ID 不入队，带错误标记回本页。"""
+    resp = web.post(
+        "/coins/ingest", data={"series_numista_id": "abc"}, follow_redirects=False
+    )
+    assert resp.headers["location"] == "/coins/ingest?error=1"
+    assert repository.list_coin_ingest_tasks() == []
+
+
+def _stub_series(numista_id: int, denomination: str):
+    """采集中心页面渲染用的最小系列桩（字段对齐模板）。"""
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        numista_id=numista_id,
+        title=f"英国 · {denomination}",
+        issuer="英国",
+        ruler="Edward VII",
+        denomination=denomination,
+        min_year=1904,
+        max_year=1904,
+        composition="青铜",
+        size_mm=30.0,
+    )
+
+
+def test_ingest_condition_explore_merges_series_id(web, monkeypatch):
+    """条件方式与 ID 方式都走 Numista 接口；结果合并去重并按 ID 排序。"""
+
+    async def fake_explore(cfg, *, country, year, denomination, composition="", **kwargs):
+        return [_stub_series(857, "1 便士"), _stub_series(13222, "1 便士")]
+
+    async def fake_by_id(cfg, *, series_id, **kwargs):
+        return _stub_series(series_id, "半 便士")
+
+    monkeypatch.setattr(coins_numista, "explore_series", fake_explore)
+    monkeypatch.setattr(coins_numista, "explore_series_by_id", fake_by_id)
+
+    page = web.get(
+        "/coins/ingest", params={"country": "英国", "denomination": "1便士"}
+    ).text
+    assert 'class="coin-panel-note">2 条' in page
+    assert "<code>857</code>" in page and "<code>13222</code>" in page
+
+    merged = web.get(
+        "/coins/ingest",
+        params={"country": "英国", "denomination": "1便士", "series_id": "1867"},
+    ).text
+    assert 'class="coin-panel-note">3 条' in merged
+    order = [merged.index(f"<code>{numista_id}</code>") for numista_id in (857, 1867, 13222)]
+    assert order == sorted(order)
+
+
+def test_ingest_id_explore_skips_api_when_series_local(web, monkeypatch):
+    """按 ID 探索先查库：本地币库已有该系列时提示跳过，不调 Numista。"""
+    repository.upsert_coin_series(_make_series(670, "1 便士", "青铜"))
+
+    async def fail_by_id(cfg, *, series_id, **kwargs):
+        raise AssertionError("本地已有系列，不应调用 Numista")
+
+    monkeypatch.setattr(coins_numista, "explore_series_by_id", fail_by_id)
+    page = web.get("/coins/ingest", params={"series_id": "670"}).text
+    assert "系列 670 已在币库，未调用接口" in page
+
+
+def test_ingest_queue_enqueues_selected(web, monkeypatch):
+    """结果多选入队：逐个入队后回本页，任务名与「未开始」徽标可见。"""
+    _seed_uk_1904()
+    starts: list[bool] = []
+    monkeypatch.setattr(coins_ingest, "start", lambda cfg: starts.append(True) or True)
+
+    resp = web.post(
+        "/coins/ingest/queue",
+        data={"series_numista_id": ["857", "1867"]},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 302
+    assert resp.headers["location"] == "/coins/ingest?queued=2&reused=0"
+    assert starts == [True]
+
+    tasks = repository.list_coin_ingest_tasks()
+    assert {task.series_numista_id for task in tasks} == {857, 1867}
+    page = web.get("/coins/ingest").text
+    assert "1 便士" in page and "半 便士" in page
+    assert '<span class="coin-badge is-pending">未开始</span>' in page
 
 
 def test_info_page_filters_by_denomination_and_composition(web):
@@ -1578,22 +1824,24 @@ def test_grades_page_lists_combos_with_dropdown(web):
     _seed_orders()
     page = web.get("/coins/grades")
     assert page.status_code == 200
-    # 三个去重组合 → 结果表里三行（每行一个隐藏键 + 一个品相下拉 + 一个删除按钮）
-    assert page.text.count('<input type="hidden" name="denomination"') == 3
-    assert page.text.count('class="btn btn-ghost js-grade-del"') == 3
-    # 行内下拉 ×3 + 「新增」表单下拉 ×1 + 查询表单的品相筛选 ×1
-    assert page.text.count('<select name="grade"') == 5
+    # 三个去重组合 → 结果表里三行，每行一个 ⋯ 操作菜单
+    assert page.text.count('class="coin-more"') == 3
+    assert page.text.count('class="is-danger" data-delete') == 3
+    # 品相只读展示；「新增」表单下拉 ×1 + 查询表单的品相筛选 ×1
+    assert "coin-grade-value" in page.text
+    assert page.text.count('<select name="grade"') == 2
     for label in ("未录入", "好", "普通", "差"):
         assert f">{label}</option>" in page.text
     # 查询表单的品相筛选
     assert '<option value="" selected>全部</option>' in page.text
-    # 新增组合表单
+    # 新增组合面板默认收起
     assert 'action="/coins/grades/add"' in page.text
+    assert 'id="add-panel" hidden' in page.text
     # 删除走页内二次确认
     assert "'/coins/grades/delete'" in page.text
     assert "确认删除" in page.text
-    # 派生列「所属收藏系列」（不落库）
-    assert "所属收藏系列" in page.text
+    # 「所属收藏系列」列已按原型删除
+    assert "所属收藏系列" not in page.text
     # 展示的是统一后的值
     assert "<td>1 分</td>" in page.text
     assert "<td>新西兰</td>" in page.text
@@ -1620,21 +1868,6 @@ def test_grades_page_shows_gregorian_year_and_era_for_japanese_coins(web):
     page = web.get("/coins/grades")
     assert "1873" in page.text and "1917" in page.text
     assert "明治六年" in page.text and "大正六年" in page.text
-
-
-def test_grades_page_derives_collection_series(web):
-    """按国家 + 面值把组合归到收藏系列；匹配不上显示「—」。"""
-    _seed_orders()
-    repository.upsert_coin_collection_series(
-        collection_key="uk-1c",
-        name="英国 · 1 分",
-        country="英国",
-        ruler=None,
-        denomination="1分",
-    )
-    page = web.get("/coins/grades")
-    assert "英国 · 1 分" in page.text
-    assert page.text.count("coin-grade-collection") == 3
 
 
 def test_series_action_redirects_back_to_series(web, monkeypatch):
@@ -1669,8 +1902,8 @@ def test_grades_page_filters_by_grade(web):
 
     # 页面：带品相条件只出对应行
     page = web.get("/coins/grades", params={"grade": "好"})
-    assert page.text.count('<input type="hidden" name="denomination"') == 1
-    assert "本次 1 个组合 · 已录 1" in page.text
+    assert page.text.count('class="coin-more"') == 1
+    assert "本次 1 个组合 · 已录品相 1" in page.text
 
 
 def test_grades_save_upserts_and_clears(web):
@@ -1696,7 +1929,7 @@ def test_grades_save_upserts_and_clears(web):
     stored = {(g.country, g.era, g.denomination): g.grade for g in repository.list_coin_purchase_grades()}
     assert stored == {("英国", "1808", "1 分"): "好", ("印度", "1900", "半 安娜"): "差"}
     # 已录值回显
-    assert 'value="好" selected' in web.get("/coins/grades").text
+    assert '<td class="nowrap coin-grade-value">好</td>' in web.get("/coins/grades").text
 
     # 选回「未录入」（空串）→ 清除该组合，另一行保留
     web.post(
@@ -1837,8 +2070,8 @@ def test_grades_add_fragment_returns_results_only(web):
     assert '<table class="sources-table coin-grade-table">' in resp.text
     assert 'action="/coins/grades/add"' not in resp.text
     assert 'action="/coins/grades"' not in resp.text
-    # 筛选条件沿用（保存表单的隐藏字段）
-    assert 'name="filter_country" value="英国"' in resp.text
+    # 结果区不再带整页表单（筛选条件由页面表单在提交时补）
+    assert 'name="filter_country"' not in resp.text
     # 新增的组合出现在结果里，其他国家的组合被筛掉
     assert "1910" in resp.text
     assert "印度" not in resp.text
@@ -2299,3 +2532,87 @@ def test_analysis_page_links_shop_name_to_shop_ranking(web):
     page = web.get("/coins/analysis")
 
     assert f'href="/coins/shops#shop-{shop_id}"' in page.text
+
+
+def test_collections_page_shows_rows_and_detail_link(web):
+    """收藏系列列表按原型：一行摘要 + 成员数 + 「进入管理 →」。"""
+    web.post(
+        "/coins/collections/add",
+        data={
+            "collection_key": "uk-test-penny",
+            "name": "英国 · 测试 · 1 便士",
+            "country": "英国",
+            "ruler": "",
+            "denomination": "1 便士",
+            "size_mm": "",
+        },
+    )
+    collection = next(
+        item
+        for item in repository.list_coin_collection_series()
+        if item.collection_key == "uk-test-penny"
+    )
+    page = web.get("/coins/collections")
+    assert page.status_code == 200
+    assert "英国 · 测试 · 1 便士" in page.text
+    assert "进入管理 →" in page.text
+    assert f"/coins/collections/{collection.id}" in page.text
+    assert f'aria-controls="col-body-{collection.id}"' in page.text
+
+
+def test_collections_page_filters_by_country_ruler_denomination(web):
+    """收藏系列列表：国家 / 执政者 / 面值三条查询条件（原型查询条）。"""
+    for key, name, country, ruler, denomination in (
+        ("uk-filter-penny", "英国 · 乔治六世 · 1 便士", "英国", "乔治六世", "1 便士"),
+        ("fr-filter-franc", "法国 · 第三共和国 · 5 法郎", "法国", "第三共和国", "5 法郎"),
+    ):
+        web.post(
+            "/coins/collections/add",
+            data={
+                "collection_key": key,
+                "name": name,
+                "country": country,
+                "ruler": ruler,
+                "denomination": denomination,
+                "size_mm": "",
+            },
+        )
+
+    page = web.get("/coins/collections", params={"country": "法国"})
+    assert "法国 · 第三共和国 · 5 法郎" in page.text
+    assert "英国 · 乔治六世 · 1 便士" not in page.text
+
+    page = web.get("/coins/collections", params={"ruler": "乔治六世"})
+    assert "英国 · 乔治六世 · 1 便士" in page.text
+    assert "法国 · 第三共和国 · 5 法郎" not in page.text
+
+    page = web.get("/coins/collections", params={"denomination": "5 法郎"})
+    assert "法国 · 第三共和国 · 5 法郎" in page.text
+    assert "英国 · 乔治六世 · 1 便士" not in page.text
+
+
+def test_collection_detail_page_lists_members_and_404s(web):
+    """详情页：概况 / 成员管理 / 返回入口；不存在的 ID 返回 404。"""
+    web.post(
+        "/coins/collections/add",
+        data={
+            "collection_key": "fr-test-franc",
+            "name": "法国 · 测试 · 5 法郎",
+            "country": "法国",
+            "ruler": "",
+            "denomination": "5 法郎",
+            "size_mm": "",
+        },
+    )
+    collection = next(
+        item
+        for item in repository.list_coin_collection_series()
+        if item.collection_key == "fr-test-franc"
+    )
+    detail = web.get(f"/coins/collections/{collection.id}")
+    assert detail.status_code == 200
+    assert "系列概况" in detail.text
+    assert "成员管理" in detail.text
+    assert "← 返回收藏系列" in detail.text
+    assert "还没有映射任何 Numista series。" in detail.text
+    assert web.get("/coins/collections/999999").status_code == 404

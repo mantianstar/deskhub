@@ -22,6 +22,7 @@ from app.coins import analysis as coins_analysis
 from app.coins import collection as coins_collection
 from app.coins import explore as coins_explore
 from app.coins import grades as coins_grades
+from app.coins import ingest as coins_ingest
 from app.coins import numista as coins_numista
 from app.coins import numista_web as coins_numista_web
 from app.coins import recommend as coins_recommend
@@ -476,8 +477,10 @@ def info_page(
     year: str = "",
     denomination: str = "",
     composition: str = "",
+    status: str = "",
+    page: str = "",
 ) -> Response:
-    """信息查询页：按货币类型 + 国家 + 年份 + 面值 + 材质查**本地已采集**的系列（不调接口）。"""
+    """信息查询页：按货币类型 + 国家 + 年份 + 面值 + 材质 + 状态查**本地已采集**的系列（不调接口）。"""
     parsed_year, year_error = _parse_year(year)
     series_list = repository.search_coin_series(
         issuer=country or None,
@@ -486,6 +489,48 @@ def info_page(
         composition=composition or None,
         object_type=object_type or None,
         cn=True,
+    )
+    # 状态筛选与卡片角标口径一致：已收藏 > 已观察 > 未观察（互斥）。
+    watched_ids = {item.numista_id for item in repository.list_coin_watchlist()}
+    collected_ids = {
+        member.numista_series_id for member in repository.list_coin_collection_members()
+    }
+    if status == "collected":
+        series_list = [
+            item for item in series_list if item.numista_id in collected_ids
+        ]
+    elif status == "watched":
+        series_list = [
+            item
+            for item in series_list
+            if item.numista_id in watched_ids and item.numista_id not in collected_ids
+        ]
+    elif status == "unwatched":
+        series_list = [
+            item
+            for item in series_list
+            if item.numista_id not in watched_ids and item.numista_id not in collected_ids
+        ]
+    paged_series, page_no, total_pages = _paginate(
+        series_list, page, COIN_LIBRARY_PAGE_SIZE
+    )
+    filter_params = {
+        "object_type": object_type,
+        "country": country,
+        "year": year,
+        "denomination": denomination,
+        "composition": composition,
+        "status": status,
+    }
+    prev_url = (
+        _query_url("/coins/info", {**filter_params, "page": page_no - 1})
+        if page_no > 1
+        else ""
+    )
+    next_url = (
+        _query_url("/coins/info", {**filter_params, "page": page_no + 1})
+        if page_no < total_pages
+        else ""
     )
     return templates.TemplateResponse(
         request,
@@ -503,10 +548,11 @@ def info_page(
             "denominations": repository.list_coin_series_denominations(cn=True),
             "compositions": repository.list_coin_series_compositions(cn=True),
             "year_error": year_error,
-            "series_list": series_list,
+            "series_list": paged_series,
+            "series_total": len(series_list),
             "commemorative_ids": {
                 item.numista_id
-                for item in series_list
+                for item in paged_series
                 if coins_collection.is_commemorative_object(item.object_type)
             },
             # 图片与详情页同规矩（spec §14.15）：Numista 图不允许跨站引用，
@@ -516,13 +562,177 @@ def info_page(
                     side: coins_numista_web.cached_image(item.numista_id, side) is not None
                     for side in coins_numista_web.IMAGE_SIDES
                 }
-                for item in series_list
+                for item in paged_series
             },
-            "issue_stats": repository.coin_series_issue_stats(cn=True),
-            "value_counts": repository.coin_series_value_counts(),
             "total_series": repository.count_coin_series(cn=True),
+            "status": status,
+            "watched_ids": watched_ids,
+            "collected_ids": collected_ids,
+            "year_counts": repository.coin_series_issue_stats(cn=True),
+            "page": page_no,
+            "total_pages": total_pages,
+            "prev_url": prev_url,
+            "next_url": next_url,
+            "current_url": (
+                f"/coins/info?{request.url.query}"
+                if request.url.query
+                else "/coins/info"
+            ),
         },
     )
+
+
+@router.post("/coins/watchlist/add")
+def add_watch_item(
+    numista_id: int = Form(...), next: str = Form("")
+) -> Response:
+    """加入观察系列（幂等；粒度 = 单个 Numista 系列）。"""
+    repository.add_coin_watch_item(numista_id)
+    return _redirect(_return_target(next, f"/coins/series/{numista_id}"))
+
+
+@router.get("/coins/watchlist")
+def watchlist_page(
+    request: Request,
+    object_type: str = "",
+    country: str = "",
+    year: str = "",
+    denomination: str = "",
+    composition: str = "",
+    page: str = "",
+) -> Response:
+    """观察系列页：已观察系列单列卡片 + 五条件查询（只读本地，不调接口）。"""
+    parsed_year, year_error = _parse_year(year)
+    watched = repository.list_coin_watchlist()
+    watched_ids = [item.numista_id for item in watched]
+    series_list = []
+    if watched_ids:
+        found = {
+            item.numista_id: item
+            for item in repository.search_coin_series(
+                issuer=country or None,
+                year=parsed_year,
+                denomination=denomination or None,
+                composition=composition or None,
+                object_type=object_type or None,
+                numista_ids=watched_ids,
+                cn=True,
+            )
+        }
+        # 按观察时间倒序（新加入在前），而不是系列表的 issuer 顺序
+        series_list = [found[numista_id] for numista_id in watched_ids if numista_id in found]
+    paged_series, page_no, total_pages = _paginate(
+        series_list, page, COIN_WATCHLIST_PAGE_SIZE
+    )
+    filter_params = {
+        "object_type": object_type,
+        "country": country,
+        "year": year,
+        "denomination": denomination,
+        "composition": composition,
+    }
+    prev_url = (
+        _query_url("/coins/watchlist", {**filter_params, "page": page_no - 1})
+        if page_no > 1
+        else ""
+    )
+    next_url = (
+        _query_url("/coins/watchlist", {**filter_params, "page": page_no + 1})
+        if page_no < total_pages
+        else ""
+    )
+    return templates.TemplateResponse(
+        request,
+        "coins/watchlist.html",
+        {
+            "request": request,
+            "page_title": "观察系列",
+            "object_types": repository.list_coin_series_object_types(cn=True),
+            "object_type": object_type,
+            "countries": repository.list_coin_series_countries(cn=True),
+            "country": country,
+            "year": year,
+            "denomination": denomination,
+            "composition": composition,
+            "denominations": repository.list_coin_series_denominations(cn=True),
+            "compositions": repository.list_coin_series_compositions(cn=True),
+            "year_error": year_error,
+            "series_list": paged_series,
+            "series_total": len(series_list),
+            "series_images": {
+                item.numista_id: {
+                    side: coins_numista_web.cached_image(item.numista_id, side) is not None
+                    for side in coins_numista_web.IMAGE_SIDES
+                }
+                for item in paged_series
+            },
+            "watched_total": len(watched),
+            "year_counts": repository.coin_series_issue_stats(cn=True),
+            "collections": repository.list_coin_collection_series(),
+            "page": page_no,
+            "total_pages": total_pages,
+            "prev_url": prev_url,
+            "next_url": next_url,
+            "current_url": (
+                f"/coins/watchlist?{request.url.query}"
+                if request.url.query
+                else "/coins/watchlist"
+            ),
+        },
+    )
+
+
+@router.post("/coins/watchlist/remove")
+def remove_watch_item(
+    numista_id: int = Form(...), next: str = Form("")
+) -> Response:
+    """放弃观察（幂等；粒度 = 单个 Numista 系列）。"""
+    repository.remove_coin_watch_item(numista_id)
+    return _redirect(_return_target(next, "/coins/watchlist"))
+
+
+@router.post("/coins/watchlist/upgrade")
+def upgrade_watch_items(
+    numista_ids: list[int] = Form(...),
+    dest: str = Form("existing"),
+    collection_id: int = Form(0),
+    name: str = Form(""),
+    country: str = Form(""),
+    ruler: str = Form(""),
+    denomination: str = Form(""),
+) -> Response:
+    """观察系列 → 收藏系列：默认加入已有收藏系列，也可按弹窗表单新建。"""
+    target_id = collection_id
+    if dest == "new":
+        country = country.strip()
+        denomination = denomination.strip()
+        if not country or not denomination:
+            return Response(status_code=400)
+        ruler_value = ruler.strip() or None
+        target_id = repository.upsert_coin_collection_series(
+            collection_key=f"{country}-{ruler_value or '-'}-{denomination}",
+            name=name.strip()
+            or " · ".join(
+                part
+                for part in (country, ruler_value or "-", denomination)
+                if part
+            ),
+            country=country,
+            ruler=ruler_value,
+            denomination=denomination,
+        )
+    if repository.get_coin_collection_series(target_id) is None:
+        return Response(status_code=400)
+    for numista_id in dict.fromkeys(numista_ids):
+        series = repository.get_coin_series(numista_id, cn=True)
+        if series is None:
+            continue
+        member_name = " · ".join(
+            part for part in (series.issuer, series.ruler, series.denomination) if part
+        ) or series.title
+        repository.upsert_coin_collection_member(target_id, numista_id, member_name)
+        repository.remove_coin_watch_item(numista_id)
+    return _redirect(f"/coins/collections/{target_id}")
 
 
 @router.get("/coins/series/{numista_id}")
@@ -597,6 +807,11 @@ def series_page(
         base["issue"] = issue
     price_order = "asc" if sort == "price" and order == "desc" else "desc"
     sold_order = "asc" if sort == "sold" and order == "desc" else "desc"
+    # 图片：Numista 的图不允许跨站引用，只有本地缓存过的才能 <img>，否则给原图链接
+    has_obverse_image = coins_numista_web.cached_image(numista_id, "obverse") is not None
+    has_reverse_image = coins_numista_web.cached_image(numista_id, "reverse") is not None
+    # 补全信息按钮只在节点缺失时出现（与采集队列的「已有 → skip」口径一致）
+    info_complete = bool(issues) and bool(values) and has_obverse_image and has_reverse_image
 
     return templates.TemplateResponse(
         request,
@@ -607,15 +822,22 @@ def series_page(
             "series": series,
             "rows": rows,
             "is_candidate": is_candidate,
+            "is_watched": (
+                not is_candidate
+                and any(
+                    item.numista_id == numista_id
+                    for item in repository.list_coin_watchlist()
+                )
+            ),
             "return_to": f"/coins/series/{numista_id}",
             # 年份数 ≠ 版别数：一个年份可有多个版别（厂标 / 变体 / 精制），故分别给出
             "year_total": len({issue.year for issue in issues if issue.year is not None}),
             "issue_total": len(issues),
             "value_total": len(values),
             "currency": currency,
-            # 图片：Numista 的图不允许跨站引用，只有本地缓存过的才能 <img>，否则给原图链接
-            "has_obverse_image": coins_numista_web.cached_image(numista_id, "obverse") is not None,
-            "has_reverse_image": coins_numista_web.cached_image(numista_id, "reverse") is not None,
+            "has_obverse_image": has_obverse_image,
+            "has_reverse_image": has_reverse_image,
+            "info_complete": info_complete,
             # 麦稀奇成交：中位数按「币种 + 单版」分组，筛选 / 排序 / 分页全走 query 参数
             "issue_medians": issue_medians,
             "issue_years": issue_years,
@@ -848,6 +1070,237 @@ async def download_images(
 # 年份 / 面值按 Numista 口径统一（去重键与落库键都是统一后的值，见 `app.coins.grades`）。
 
 
+# ---------------------------------------------------------------- 采集中心（异步队列）
+
+INGEST_NODE_LABELS = (
+    ("系列", "node_series"),
+    ("年份", "node_years"),
+    ("估值", "node_values"),
+    ("图片", "node_images"),
+)
+
+INGEST_STATE_LABELS = {
+    "wait": "等待",
+    "running": "进行中",
+    "done": "完成",
+    "skip": "跳过",
+    "failed": "失败",
+}
+
+INGEST_TASK_STATUS_LABELS = {
+    "pending": "待执行",
+    "running": "进行中",
+    "done": "完成",
+    "failed": "失败",
+}
+
+# 队列表格的状态徽标按原型文案（查询下拉沿用 `INGEST_TASK_STATUS_LABELS`）。
+INGEST_TASK_BADGE_LABELS = {
+    "pending": "未开始",
+    "running": "进行中",
+    "done": "完成",
+    "failed": "失败",
+}
+
+INGEST_RESULT_PAGE_SIZE = 20
+
+
+async def _ingest_result_series(
+    country: str, year: str, denomination: str, composition: str, series_id: str
+) -> tuple[list, str]:
+    """条件方式与 ID 方式实时调 Numista，结果暂存候选池后合并去重、按系列 ID 排序。
+
+    ID 方式先查本地：币库已有直接提示跳过，候选池已有直接复用，均不调接口。
+    """
+    raw_id = series_id.strip()
+    parsed_year, _ = _parse_year(year) if year else (None, "")
+    found: dict[int, object] = {}
+    error = ""
+    if country.strip() or denomination.strip() or parsed_year is not None:
+        try:
+            for series in await coins_numista.explore_series(
+                config.get(),
+                country=country,
+                year=parsed_year,
+                denomination=denomination,
+                composition=composition,
+            ):
+                found[series.numista_id] = series
+        except NumistaError as exc:
+            logger.warning("采集中心条件探索失败：%s", exc)
+            error = str(exc)
+    if raw_id.isdigit():
+        numista_id = int(raw_id)
+        candidate = repository.get_coin_explore_candidate(numista_id)
+        if repository.get_coin_series(numista_id) is not None:
+            note = f"系列 {numista_id} 已在币库，未调用接口"
+        elif candidate is not None and candidate.payload_cn:
+            found.setdefault(numista_id, coins_numista.SeriesInfo(**candidate.payload_cn))
+            note = f"系列 {numista_id} 已在候选池，未调用接口"
+        else:
+            note = ""
+            try:
+                series = await coins_numista.explore_series_by_id(
+                    config.get(), series_id=numista_id
+                )
+                found.setdefault(series.numista_id, series)
+            except NumistaError as exc:
+                logger.warning("采集中心按 ID 探索失败：%s", exc)
+                error = error or str(exc)
+        if note:
+            error = f"{error}；{note}" if error else note
+    return [found[numista_id] for numista_id in sorted(found)], error
+
+
+@router.get("/coins/ingest")
+async def ingest_page(
+    request: Request,
+    country: str = "",
+    year: str = "",
+    denomination: str = "",
+    composition: str = "",
+    series_id: str = "",
+    epage: str = "",
+    page: str = "",
+    name: str = "",
+    status: str = "",
+    created: str = "",
+    finished: str = "",
+) -> Response:
+    """采集中心：条件 / ID 两种方式调 Numista 探索，结果入候选池后多选入队。"""
+    results, explore_error = await _ingest_result_series(
+        country, year, denomination, composition, series_id
+    )
+    paged_results, result_page, result_pages = _paginate(
+        results, epage, INGEST_RESULT_PAGE_SIZE
+    )
+    tasks = repository.list_coin_ingest_tasks(
+        name=name or None,
+        status=status or None,
+        created_from=created or None,
+        created_to=f"{created}T23:59" if created else None,
+        finished_from=finished or None,
+        finished_to=f"{finished}T23:59" if finished else None,
+    )
+    paged_tasks, task_page, task_pages = _paginate(tasks, page, INGEST_RESULT_PAGE_SIZE)
+    _, year_error = _parse_year(year) if year else (None, "")
+    explore_params = {
+        "country": country,
+        "year": year,
+        "denomination": denomination,
+        "composition": composition,
+        "series_id": series_id,
+    }
+    queue_params = {
+        "name": name,
+        "status": status,
+        "created": created,
+        "finished": finished,
+    }
+    keep_params = {**explore_params, **queue_params}
+    return templates.TemplateResponse(
+        request,
+        "coins/ingest.html",
+        {
+            "request": request,
+            "page_title": "采集中心",
+            "running": coins_ingest.is_running(),
+            "node_labels": INGEST_NODE_LABELS,
+            "state_labels": INGEST_STATE_LABELS,
+            "status_labels": INGEST_TASK_STATUS_LABELS,
+            "badge_labels": INGEST_TASK_BADGE_LABELS,
+            "year_error": year_error,
+            "country": country,
+            "year": year,
+            "denomination": denomination,
+            "composition": composition,
+            "series_id": series_id,
+            "explore_error": explore_error,
+            "results": paged_results,
+            "result_total": len(results),
+            "result_page": result_page,
+            "result_pages": result_pages,
+            "result_prev_url": (
+                _query_url("/coins/ingest", {**keep_params, "epage": result_page - 1})
+                if result_page > 1
+                else ""
+            ),
+            "result_next_url": (
+                _query_url("/coins/ingest", {**keep_params, "epage": result_page + 1})
+                if result_page < result_pages
+                else ""
+            ),
+            "tasks": paged_tasks,
+            "task_total": len(tasks),
+            "task_page": task_page,
+            "task_pages": task_pages,
+            "queue_name": name,
+            "queue_status": status,
+            "queue_created": created,
+            "queue_finished": finished,
+            "task_prev_url": (
+                _query_url("/coins/ingest", {**keep_params, "page": task_page - 1})
+                if task_page > 1
+                else ""
+            ),
+            "task_next_url": (
+                _query_url("/coins/ingest", {**keep_params, "page": task_page + 1})
+                if task_page < task_pages
+                else ""
+            ),
+            "queued": request.query_params.get("queued", ""),
+            "reused": request.query_params.get("reused"),
+            "error": request.query_params.get("error"),
+        },
+    )
+
+
+@router.post("/coins/ingest")
+async def enqueue_ingest(
+    series_numista_id: str = Form(""), name: str = Form("")
+) -> Response:
+    """入队一个系列并在后台起队列；同系列已在队列时复用（提示回去）。"""
+    raw = series_numista_id.strip()
+    if not raw.isdigit():
+        return _redirect("/coins/ingest?error=1")
+    series = repository.get_coin_series(int(raw), cn=True)
+    task_name = coins_ingest.series_task_name(series) or name.strip()
+    _, reused = repository.enqueue_coin_ingest_task(
+        int(raw), name=task_name, source="web"
+    )
+    coins_ingest.start(config.get())
+    return _redirect("/coins/ingest?reused=1" if reused else "/coins/ingest")
+
+
+@router.post("/coins/ingest/queue")
+async def enqueue_ingest_selected(
+    series_numista_id: list[str] = Form([]),
+) -> Response:
+    """探索结果多选入队：逐个入队（已在队列的复用），回本页带数量提示。"""
+    ids = sorted({int(raw) for raw in series_numista_id if raw.strip().isdigit()})
+    if not ids:
+        return _redirect("/coins/ingest?error=1")
+    names = {
+        series.numista_id: coins_ingest.series_task_name(series)
+        for series in repository.search_coin_series(numista_ids=ids, cn=True)
+    }
+    queued = reused = 0
+    for numista_id in ids:
+        name = names.get(numista_id, "")
+        if not name:
+            candidate = repository.get_coin_explore_candidate(numista_id)
+            if candidate is not None:
+                payload = candidate.payload_cn or candidate.payload
+                name = coins_ingest.series_task_name(payload)
+        _, exists = repository.enqueue_coin_ingest_task(
+            numista_id, name=name, source="explore"
+        )
+        reused += int(exists)
+        queued += int(not exists)
+    coins_ingest.start(config.get())
+    return _redirect(f"/coins/ingest?queued={queued}&reused={reused}")
+
+
 def _grades_url(country: str, year: str, denomination: str) -> str:
     query = urlencode({"country": country, "year": year, "denomination": denomination})
     return f"/coins/grades?{query}"
@@ -858,31 +1311,6 @@ def _normalize_grade(
 ) -> tuple[str, str, str, str, str]:
     """把「国家 / 年份 / 面值 / 主题 / 名称」统一成落库口径（与页面展示、去重键同一份实现）。"""
     return coins_grades.normalize_key(country, year, denomination, theme, coin_name)
-
-
-def _attach_collection_names(combos) -> None:
-    """给每行补「所属收藏系列」（派生展示，不落库）：按国家 + 面值宽松匹配。"""
-    collections = repository.list_coin_collection_series()
-    if not collections:
-        return
-
-    def same_identity(value: str, target: str) -> bool:
-        return bool(value and target) and (
-            textmatch.contains(value, target) or textmatch.contains(target, value)
-        )
-
-    for combo in combos:
-        country = coins_grades.normalize_country(combo.country)
-        denomination = coins_grades.normalize_denomination(combo.denomination)
-        names = [
-            collection.name
-            for collection in collections
-            if same_identity(coins_grades.normalize_country(collection.country), country)
-            and same_identity(
-                coins_grades.normalize_denomination(collection.denomination), denomination
-            )
-        ]
-        combo.collection_name = "、".join(dict.fromkeys(names))
 
 
 def _grades_context(country: str, year: str, denomination: str, grade: str) -> dict:
@@ -897,9 +1325,8 @@ def _grades_context(country: str, year: str, denomination: str, grade: str) -> d
         denomination=denomination or None,
         grade=grade or None,
     )
-    _attach_collection_names(combos)
     return {
-        "page_title": "品相台账",
+        "page_title": "个人收藏清单",
         "country": country,
         "year": year,
         "denomination": denomination,
@@ -1082,6 +1509,7 @@ def save_grades(
 # ---------------------------------------------------------------- 收藏画像与映射（spec §14.17）
 
 COIN_COLLECTION_PAGE_SIZE = 20
+COIN_LIBRARY_PAGE_SIZE = 20
 COIN_RECOMMEND_PAGE_SIZE = 20
 COIN_SIMILAR_PAGE_SIZE = 5
 COIN_PROFILE_PAGE_SIZE = 10
@@ -1093,6 +1521,7 @@ COIN_RAIL_SESSION_LIMIT = 6
 COIN_SESSION_PAGE_SIZE = 12
 COIN_SEARCH_PAGE_SIZE = 20
 COIN_OTHER_LOT_PAGE_SIZE = 20
+COIN_WATCHLIST_PAGE_SIZE = 20
 
 
 def _page_number(raw: str, total_pages: int) -> int:
@@ -1348,6 +1777,16 @@ def update_explore_status(
         repository.set_coin_explore_candidate_status(numista_id, status)
     target = next if next.startswith("/coins/") else "/coins/explore"
     return _redirect(target)
+
+
+@router.get("/coins/mxiqi")
+def mxiqi_page(request: Request) -> Response:
+    """麦稀奇数据入口页：只做分区导航，业务页面沿用现有实现。"""
+    return templates.TemplateResponse(
+        request,
+        "coins/mxiqi.html",
+        {"request": request, "page_title": "麦稀奇数据"},
+    )
 
 
 @router.get("/coins/analysis")
@@ -1694,6 +2133,7 @@ def collection_page(
     matched_shop_total = len(precise_shops)
     missing_year_total = sum(len(profile.missing_years) for profile in profiles)
     upgrade_year_total = sum(len(profile.upgrade_years) for profile in profiles)
+    covered_year_total = sum(len(profile.owned_entries) for profile in profiles)
 
     return templates.TemplateResponse(
         request,
@@ -1739,6 +2179,7 @@ def collection_page(
             "matched_shop_total": matched_shop_total,
             "missing_year_total": missing_year_total,
             "upgrade_year_total": upgrade_year_total,
+            "covered_year_total": covered_year_total,
         },
     )
 
@@ -1785,17 +2226,8 @@ def _collection_grade_entries(profiles: list, series_by_id: dict[int, object]) -
     return rows
 
 
-@router.get("/coins/collections")
-def collections_page(
-    request: Request,
-    page: str = "",
-    expand: str = "",
-    mcountry: str = "",
-    mruler: str = "",
-    mdenomination: str = "",
-    mtitle: str = "",
-) -> Response:
-    """收藏系列映射维护：新建收藏系列 + 把 Numista series 手工合并进来。"""
+def _collection_overview() -> dict:
+    """收藏系列总览：系列 / 成员 / 画像 / 统计，列表页与详情页共用。"""
     collections = repository.list_coin_collection_series()
     members = repository.list_coin_collection_members()
     series = repository.list_coin_series(cn=True)
@@ -1831,6 +2263,62 @@ def collections_page(
             "max_year": profile.max_year,
             "size_band": profile.size_band,
         }
+    return {
+        "collections": collections,
+        "members": members,
+        "series": series,
+        "series_by_id": series_by_id,
+        "members_by_collection": members_by_collection,
+        "profiles": profiles,
+        "profiles_by_collection": profiles_by_collection,
+        "grade_entries_by_collection": grade_entries_by_collection,
+        "collection_profiles": collection_profiles,
+        "collection_stats": collection_stats,
+    }
+
+
+@router.get("/coins/collections")
+def collections_page(
+    request: Request,
+    page: str = "",
+    expand: str = "",
+    country: str = "",
+    ruler: str = "",
+    denomination: str = "",
+    mcountry: str = "",
+    mruler: str = "",
+    mdenomination: str = "",
+    mtitle: str = "",
+) -> Response:
+    """收藏系列映射维护：新建收藏系列 + 把 Numista series 手工合并进来。"""
+    overview = _collection_overview()
+    collections = overview["collections"]
+    members = overview["members"]
+    all_collections = collections
+    series = overview["series"]
+    series_by_id = overview["series_by_id"]
+    members_by_collection = overview["members_by_collection"]
+    profiles = overview["profiles"]
+    profiles_by_collection = overview["profiles_by_collection"]
+    grade_entries_by_collection = overview["grade_entries_by_collection"]
+    collection_profiles = overview["collection_profiles"]
+    collection_stats = overview["collection_stats"]
+    # 列表查询条：国家 / 执政者 / 面值（原型三项，模糊匹配）
+    country_key = textmatch.normalize(country)
+    ruler_key = textmatch.normalize(ruler)
+    denomination_key = textmatch.normalize(denomination)
+    if country_key or ruler_key or denomination_key:
+        collections = [
+            item
+            for item in collections
+            if (not country_key or country_key in textmatch.normalize(item.country))
+            and (not ruler_key or ruler_key in textmatch.normalize(_collection_ruler(item)))
+            and (
+                not denomination_key
+                or denomination_key in textmatch.normalize(item.denomination)
+            )
+        ]
+
     # 映射候选不限材质（青铜 / 铜 / 银 / 镍等都可选）
     series_candidates = list(series)
 
@@ -1873,11 +2361,18 @@ def collections_page(
             mtitle if is_expanded else "",
         )
 
+    filter_params = {
+        "country": country,
+        "ruler": ruler,
+        "denomination": denomination,
+    }
     prev_url = (
-        _query_url("/coins/collections", {"page": page_no - 1}) if page_no > 1 else ""
+        _query_url("/coins/collections", {"page": page_no - 1, **filter_params})
+        if page_no > 1
+        else ""
     )
     next_url = (
-        _query_url("/coins/collections", {"page": page_no + 1})
+        _query_url("/coins/collections", {"page": page_no + 1, **filter_params})
         if page_no < total_pages
         else ""
     )
@@ -1893,10 +2388,28 @@ def collections_page(
         "coins/collections.html",
         {
             "request": request,
-            "page_title": "收藏",
+            "page_title": "收藏系列",
             "collections": paged_collections,
             "total_collections": len(collections),
-            "total_members": len(members),
+            "total_members": sum(
+                len(members_by_collection.get(item.id, [])) for item in collections
+            ),
+            "filter_country": country,
+            "filter_ruler": ruler,
+            "filter_denomination": denomination,
+            "country_options": sorted(
+                {item.country for item in all_collections if item.country}
+            ),
+            "ruler_options": sorted(
+                {
+                    value
+                    for value in (_collection_ruler(item) for item in all_collections)
+                    if value
+                }
+            ),
+            "denomination_options": sorted(
+                {item.denomination for item in all_collections if item.denomination}
+            ),
             "page": page_no,
             "total_pages": total_pages,
             "prev_url": prev_url,
@@ -1920,6 +2433,85 @@ def collections_page(
             "missing_year_total": missing_year_total,
             "upgrade_year_total": upgrade_year_total,
             "grades": COIN_PURCHASE_GRADES,
+        },
+    )
+
+
+@router.get("/coins/collections/{collection_id}")
+def collection_detail_page(
+    request: Request,
+    collection_id: int,
+    mcountry: str = "",
+    mruler: str = "",
+    mdenomination: str = "",
+    mtitle: str = "",
+) -> Response:
+    """收藏系列详情：概况（进度 / 年份 / 品相录入）+ 成员管理 + 编辑 / 删除。"""
+    collection = repository.get_coin_collection_series(collection_id)
+    if collection is None:
+        return Response(status_code=404)
+    overview = _collection_overview()
+    series = overview["series"]
+    series_by_id = overview["series_by_id"]
+    members = [
+        member
+        for member in overview["members"]
+        if member.collection_id == collection_id
+    ]
+    all_member_ids = {
+        member.numista_series_id for member in overview["members"]
+    }
+    series_by_country: dict[str, list[CoinSeries]] = {}
+    for item in series:
+        if item.issuer:
+            series_by_country.setdefault(item.issuer, []).append(item)
+    country_by_norm = {
+        textmatch.normalize(country): country for country in series_by_country
+    }
+    filters = _member_filters(
+        collection,
+        series_by_country,
+        country_by_norm,
+        all_member_ids,
+        mcountry,
+        mruler,
+        mdenomination,
+        mtitle,
+    )
+    stats = overview["collection_stats"].get(collection_id, {})
+    total_years = stats.get("years", 0)
+    coverage_pct = (
+        round(stats.get("owned", 0) * 100 / total_years) if total_years else 0
+    )
+    commemorative_ids = {
+        item.numista_id
+        for item in series
+        if coins_collection.is_commemorative_object(item.object_type)
+    }
+    member_year_counts = {
+        numista_id: issue_stats.year_count
+        for numista_id, issue_stats in repository.coin_series_issue_stats(cn=True).items()
+    }
+    has_commemorative_member = any(
+        member.numista_series_id in commemorative_ids for member in members
+    )
+    return templates.TemplateResponse(
+        request,
+        "coins/collection_detail.html",
+        {
+            "request": request,
+            "page_title": collection.name,
+            "collection": collection,
+            "members": members,
+            "total_members": len(members),
+            "series_by_id": series_by_id,
+            "profile": overview["collection_profiles"].get(collection_id),
+            "stats": stats,
+            "coverage_pct": coverage_pct,
+            "filters": filters,
+            "commemorative_ids": commemorative_ids,
+            "has_commemorative_member": has_commemorative_member,
+            "member_year_counts": member_year_counts,
         },
     )
 
@@ -1963,6 +2555,37 @@ def add_collection(
     return _collections_redirect()
 
 
+@router.post("/coins/collections/{collection_id}/edit")
+def edit_collection(
+    collection_id: int,
+    name: str = Form(""),
+    country: str = Form(...),
+    ruler: str = Form(""),
+    denomination: str = Form(...),
+) -> Response:
+    collection = repository.get_coin_collection_series(collection_id)
+    if collection is None:
+        return Response(status_code=404)
+    country = country.strip()
+    denomination = denomination.strip()
+    if not country or not denomination:
+        return Response(status_code=400)
+    ruler_value = ruler.strip() or None
+    display_name = name.strip() or " · ".join(
+        part for part in (country, ruler_value or "-", denomination) if part
+    )
+    repository.upsert_coin_collection_series(
+        collection_key=collection.collection_key,
+        name=display_name,
+        country=country,
+        ruler=ruler_value,
+        denomination=denomination,
+        size_mm=collection.size_mm,
+        size_band=collection.size_band,
+    )
+    return _redirect(f"/coins/collections/{collection_id}")
+
+
 @router.post("/coins/collections/{collection_id}/delete")
 def delete_collection(collection_id: int) -> Response:
     if not repository.delete_coin_collection_series(collection_id):
@@ -1986,18 +2609,17 @@ def add_collection_member(
         part for part in (series.issuer, series.ruler, series.denomination) if part
     ) or series.title
     repository.upsert_coin_collection_member(collection_id, numista_series_id, name)
-    # 加入后保持该收藏系列展开，并带上已选国家 / 执政者 / 面值，避免条件被重置
+    # 加入后回到该收藏系列详情，并带上已选国家 / 执政者 / 面值，避免条件被重置
     return _redirect(
         _query_url(
-            "/coins/collections",
+            f"/coins/collections/{collection_id}",
             {
-                "expand": collection_id,
                 "mcountry": mcountry,
                 "mruler": mruler,
                 "mdenomination": mdenomination,
                 "mtitle": mtitle,
             },
-            anchor=f"collection-{collection_id}",
+            anchor="member-panel",
         )
     )
 
@@ -2007,7 +2629,5 @@ def delete_collection_member(member_id: int, collection_id: int = Form(0)) -> Re
     if not repository.delete_coin_collection_member(member_id):
         return Response(status_code=404)
     if collection_id:
-        return _redirect(
-            f"/coins/collections?expand={collection_id}#collection-{collection_id}"
-        )
+        return _redirect(f"/coins/collections/{collection_id}#member-panel")
     return _collections_redirect()

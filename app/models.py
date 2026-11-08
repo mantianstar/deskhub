@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-SCHEMA_VERSION = "32"
+SCHEMA_VERSION = "34"
 
 # 所有时间列存北京时间 ISO8601 字符串（`YYYY-MM-DDTHH:MM:SS`，无时区后缀；SQLite 无原生时间类型）
 DDL = """
@@ -462,6 +462,36 @@ CREATE TABLE IF NOT EXISTS coin_explore_candidates (
 );
 CREATE INDEX IF NOT EXISTS idx_coin_explore_status
   ON coin_explore_candidates(status);
+
+-- 观察系列：粒度 = 单个 Numista 系列（币库详情「+ 观察」写入，观察系列页读取）。
+CREATE TABLE IF NOT EXISTS coin_watchlist (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  series_id  INTEGER NOT NULL UNIQUE REFERENCES coin_series(id) ON DELETE CASCADE,
+  created_at TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_coin_watchlist_created
+  ON coin_watchlist(created_at DESC);
+
+-- 异步采集任务：一个任务 = 一个 Numista 系列；4 节点各记状态（wait/running/done/skip/failed）。
+CREATE TABLE IF NOT EXISTS coin_ingest_tasks (
+  id                INTEGER PRIMARY KEY AUTOINCREMENT,
+  series_numista_id INTEGER NOT NULL,
+  name              TEXT    NOT NULL DEFAULT '',
+  status            TEXT    NOT NULL DEFAULT 'pending',  -- pending / running / done / failed
+  node_series       TEXT    NOT NULL DEFAULT 'wait',
+  node_years        TEXT    NOT NULL DEFAULT 'wait',
+  node_values       TEXT    NOT NULL DEFAULT 'wait',
+  node_images       TEXT    NOT NULL DEFAULT 'wait',
+  source            TEXT    NOT NULL DEFAULT '',         -- explore / library / watchlist / manual
+  error             TEXT,
+  created_at        TEXT    NOT NULL,
+  started_at        TEXT,
+  finished_at       TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_coin_ingest_status
+  ON coin_ingest_tasks(status, created_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_coin_ingest_active
+  ON coin_ingest_tasks(series_numista_id) WHERE status IN ('pending', 'running');
 
 -- ============ 功能开关（管理页 /control）============
 -- 控制「各类任务是否自动执行」：关掉后每天 07:00 的定时任务不再跑它。
@@ -1002,6 +1032,42 @@ class CoinCollectionMember:
     # 纪念币主题 / 名称（空串 = 未区分，日本 / 南非等旧数据均为空）
     theme: str = ""
     coin_name: str = ""
+
+
+@dataclass
+class CoinWatchItem:
+    """观察系列（粒度 = 单个 Numista 系列，字段取自系列表）。"""
+
+    id: int | None
+    series_id: int
+    numista_id: int
+    title: str | None
+    issuer: str | None
+    ruler: str | None
+    denomination: str | None
+    min_year: int | None
+    max_year: int | None
+    url: str | None
+    created_at: str
+
+
+@dataclass
+class CoinIngestTask:
+    """异步采集任务（粒度 = 一个 Numista 系列，4 节点各记状态）。"""
+
+    id: int | None
+    series_numista_id: int
+    name: str
+    status: str
+    node_series: str
+    node_years: str
+    node_values: str
+    node_images: str
+    source: str
+    error: str | None
+    created_at: str
+    started_at: str | None
+    finished_at: str | None
 
 
 @dataclass(frozen=True)

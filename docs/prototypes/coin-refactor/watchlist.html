@@ -1,0 +1,502 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>观察系列 · 铜币 · deskhub</title>
+<link rel="stylesheet" href="proto.css">
+<style>
+  /* 观察系列：正反图并排 + 图片灯箱 */
+  .wl-imgs { display: flex; align-items: flex-start; flex: 0 0 auto; gap: 6px; }
+  .wl-shot { display: flex; padding: 0; font-family: inherit; background: transparent; border: 0; border-radius: 8px; cursor: zoom-in; }
+  .wl-shot:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .wl-shot:hover .coin-series-img-empty { border-color: var(--accent); color: var(--accent); }
+  .wl-lightbox { position: fixed; inset: 0; z-index: 70; display: flex; align-items: center; justify-content: center; padding: 32px; background: rgba(31, 35, 40, .72); }
+  .wl-lightbox-box { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 18px; background: var(--surface); border-radius: 12px; box-shadow: 0 12px 40px rgba(31, 35, 40, .3); }
+  .wl-lightbox-media .coin-series-img-empty { width: 260px; height: 260px; font-size: 14px; }
+  .wl-lightbox-media .coin-series-img { width: auto; height: auto; max-width: min(80vw, 520px); max-height: 70vh; }
+  .wl-lightbox-cap { margin: 0; color: var(--text-muted); font-size: 13px; }
+  /* 升级向导：加入已有收藏系列的输入框撑满整行 */
+  .coin-radio-row label.wl-existing-option { align-items: center; }
+  .wl-existing-option .search-input { flex: 1 1 auto; width: 100%; min-width: 0; max-width: none; }
+</style>
+</head>
+<body>
+<header class="site-head">
+  <a class="brand" href="index.html">deskhub</a>
+  <nav class="nav">
+    <a class="nav-link" href="#">日报</a>
+    <a class="nav-link" href="#">历史搜索</a>
+    <a class="nav-link" href="#">源管理</a>
+    <a class="nav-link" href="#">运行控制</a>
+    <a class="nav-link" href="#">基金</a>
+    <a class="nav-link is-active" href="index.html">铜币</a>
+  </nav>
+</header>
+
+<main class="content content-wide">
+  <nav class="coin-tabs" aria-label="铜币模块导航">
+    <a href="recommend.html">今日推荐</a>
+    <a class="is-active" href="holdings.html" aria-current="page">我的资产</a>
+    <a href="library.html">币库</a>
+    <a href="index.html#moxiqi">麦稀奇数据</a>
+    <a class="btn btn-primary coin-tabs-action" href="ingest.html">采集中心</a>
+  </nav>
+
+  <nav class="coin-subtabs" aria-label="我的资产子导航">
+    <a href="holdings.html">个人收藏清单</a>
+    <a href="collections.html">收藏系列</a>
+    <a class="is-active" href="watchlist.html" aria-current="page">观察系列</a>
+  </nav>
+
+  <section class="coin-page-head">
+    <div>
+      <h1>观察系列</h1>
+      <p class="coin-page-sub">7 个 Numista 系列 · 单个系列粒度 · 单列紧凑列表 · 可多选一次升级</p>
+    </div>
+  </section>
+
+  <form class="search-form" method="get" action="#">
+    <div class="search-row search-row-labeled">
+      <label class="field">货币类型
+        <select><option>全部</option><option>流通币</option><option>纪念币</option></select>
+      </label>
+      <label class="field">国家
+        <input class="search-input" type="text" list="watch-countries" placeholder="如 英国">
+      </label>
+      <label class="field">年份
+        <input class="search-input" type="text" placeholder="如 1938（可空）">
+      </label>
+      <label class="field">面值
+        <input class="search-input" type="text" list="watch-denoms" placeholder="如 1 便士">
+      </label>
+      <label class="field">材质
+        <input class="search-input" type="text" list="watch-materials" placeholder="如 青铜">
+      </label>
+      <button class="btn btn-primary" type="submit">查询</button>
+    </div>
+  </form>
+  <datalist id="watch-countries"><option>英国</option><option>法国</option><option>荷属东印度</option><option>英属印度</option><option>日本</option><option>加拿大</option><option>德国</option></datalist>
+  <datalist id="watch-denoms"><option>1/2 便士</option><option>1 分</option><option>1 卢比</option><option>5 法郎</option><option>1 圆</option><option>5 分</option><option>3 马克</option></datalist>
+  <datalist id="watch-materials"><option>青铜</option><option>铜</option><option>银</option><option>镍</option><option>镍黄铜</option></datalist>
+
+  <div class="coin-select-bar">
+    <label class="coin-check"><input type="checkbox" id="pick-all"> 全选</label>
+    <span class="coin-select-count" id="pick-count">已选 0 / 7</span>
+    <button class="btn btn-primary" type="button" id="upgrade-picked" disabled>升级选中 (0)</button>
+  </div>
+
+  <div class="coin-list-single" id="watch-grid">
+    <article class="coin-series-card coin-watch-card">
+      <label class="coin-check"><input class="watch-pick" type="checkbox" value="671"></label>
+      <div class="coin-series-imgs wl-imgs">
+        <button class="wl-shot" type="button" data-face="正面" aria-label="放大正面图片"><span class="coin-series-img-empty">正面<br>未缓存</span></button>
+        <button class="wl-shot" type="button" data-face="背面" aria-label="放大背面图片"><span class="coin-series-img-empty">背面<br>未缓存</span></button>
+      </div>
+      <div class="coin-series-meta">
+        <h3 class="coin-series-title"><a href="series-detail.html">英国 · 乔治六世 · 半便士</a></h3>
+        <p class="coin-series-line">乔治六世 · 1937–1952 · 34 个年份</p>
+        <p class="coin-series-line">青铜 · 25.4 mm · Numista #671</p>
+        <p class="coin-series-line">圆形 · 5.7 g</p>
+      </div>
+      <details class="coin-more">
+        <summary class="coin-more-btn">⋯ 更多</summary>
+        <div class="coin-more-menu">
+          <button type="button" data-upgrade="英国 · 乔治六世 · 半便士">升级收藏</button>
+          <button type="button" class="is-danger" data-drop>放弃观察</button>
+        </div>
+      </details>
+    </article>
+
+    <article class="coin-series-card coin-watch-card">
+      <label class="coin-check"><input class="watch-pick" type="checkbox" value="2081"></label>
+      <div class="coin-series-imgs wl-imgs">
+        <button class="wl-shot" type="button" data-face="正面" aria-label="放大正面图片"><span class="coin-series-img-empty">正面<br>未缓存</span></button>
+        <button class="wl-shot" type="button" data-face="背面" aria-label="放大背面图片"><span class="coin-series-img-empty">背面<br>未缓存</span></button>
+      </div>
+      <div class="coin-series-meta">
+        <h3 class="coin-series-title"><a href="series-detail.html">荷属东印度 · 威廉明娜 · 1 分</a></h3>
+        <p class="coin-series-line">威廉明娜 · 1890–1945 · 46 个年份</p>
+        <p class="coin-series-line">铜 · 29.0 mm · Numista #2081</p>
+        <p class="coin-series-line">圆形 · 4.8 g</p>
+      </div>
+      <details class="coin-more">
+        <summary class="coin-more-btn">⋯ 更多</summary>
+        <div class="coin-more-menu">
+          <button type="button" data-upgrade="荷属东印度 · 威廉明娜 · 1 分">升级收藏</button>
+          <button type="button" class="is-danger" data-drop>放弃观察</button>
+        </div>
+      </details>
+    </article>
+
+    <article class="coin-series-card coin-watch-card">
+      <label class="coin-check"><input class="watch-pick" type="checkbox" value="1145"></label>
+      <div class="coin-series-imgs wl-imgs">
+        <button class="wl-shot" type="button" data-face="正面" aria-label="放大正面图片"><span class="coin-series-img-empty">正面<br>未缓存</span></button>
+        <button class="wl-shot" type="button" data-face="背面" aria-label="放大背面图片"><span class="coin-series-img-empty">背面<br>未缓存</span></button>
+      </div>
+      <div class="coin-series-meta">
+        <h3 class="coin-series-title"><a href="series-detail.html">英属印度 · 维多利亚 · 1 卢比</a></h3>
+        <p class="coin-series-line">维多利亚 · 1862–1901 · 29 个年份</p>
+        <p class="coin-series-line">银 · 30.8 mm · Numista #1145</p>
+        <p class="coin-series-line">圆形 · 11.7 g</p>
+      </div>
+      <details class="coin-more">
+        <summary class="coin-more-btn">⋯ 更多</summary>
+        <div class="coin-more-menu">
+          <button type="button" data-upgrade="英属印度 · 维多利亚 · 1 卢比">升级收藏</button>
+          <button type="button" class="is-danger" data-drop>放弃观察</button>
+        </div>
+      </details>
+    </article>
+
+    <article class="coin-series-card coin-watch-card">
+      <label class="coin-check"><input class="watch-pick" type="checkbox" value="1234"></label>
+      <div class="coin-series-imgs wl-imgs">
+        <button class="wl-shot" type="button" data-face="正面" aria-label="放大正面图片"><span class="coin-series-img-empty">正面<br>未缓存</span></button>
+        <button class="wl-shot" type="button" data-face="背面" aria-label="放大背面图片"><span class="coin-series-img-empty">背面<br>未缓存</span></button>
+      </div>
+      <div class="coin-series-meta">
+        <h3 class="coin-series-title"><a href="series-detail.html">法国 · 第三共和国 · 5 法郎</a></h3>
+        <p class="coin-series-line">第三共和国 · 1870–1878 · 12 个年份</p>
+        <p class="coin-series-line">银 · 37.0 mm · Numista #1234</p>
+        <p class="coin-series-line">圆形 · 25.0 g</p>
+      </div>
+      <details class="coin-more">
+        <summary class="coin-more-btn">⋯ 更多</summary>
+        <div class="coin-more-menu">
+          <button type="button" data-upgrade="法国 · 第三共和国 · 5 法郎">升级收藏</button>
+          <button type="button" class="is-danger" data-drop>放弃观察</button>
+        </div>
+      </details>
+    </article>
+
+    <article class="coin-series-card coin-watch-card">
+      <label class="coin-check"><input class="watch-pick" type="checkbox" value="3310"></label>
+      <div class="coin-series-imgs wl-imgs">
+        <button class="wl-shot" type="button" data-face="正面" aria-label="放大正面图片"><span class="coin-series-img-empty">正面<br>未缓存</span></button>
+        <button class="wl-shot" type="button" data-face="背面" aria-label="放大背面图片"><span class="coin-series-img-empty">背面<br>未缓存</span></button>
+      </div>
+      <div class="coin-series-meta">
+        <h3 class="coin-series-title"><a href="series-detail.html">日本 · 明治 · 1 圆</a></h3>
+        <p class="coin-series-line">明治 · 1870–1912 · 19 个年份</p>
+        <p class="coin-series-line">银 · 38.6 mm · Numista #3310</p>
+        <p class="coin-series-line">圆形 · 26.9 g</p>
+      </div>
+      <details class="coin-more">
+        <summary class="coin-more-btn">⋯ 更多</summary>
+        <div class="coin-more-menu">
+          <button type="button" data-upgrade="日本 · 明治 · 1 圆">升级收藏</button>
+          <button type="button" class="is-danger" data-drop>放弃观察</button>
+        </div>
+      </details>
+    </article>
+
+    <article class="coin-series-card coin-watch-card">
+      <label class="coin-check"><input class="watch-pick" type="checkbox" value="4421"></label>
+      <div class="coin-series-imgs wl-imgs">
+        <button class="wl-shot" type="button" data-face="正面" aria-label="放大正面图片"><span class="coin-series-img-empty">正面<br>未缓存</span></button>
+        <button class="wl-shot" type="button" data-face="背面" aria-label="放大背面图片"><span class="coin-series-img-empty">背面<br>未缓存</span></button>
+      </div>
+      <div class="coin-series-meta">
+        <h3 class="coin-series-title"><a href="series-detail.html">加拿大 · 乔治五世 · 5 分</a></h3>
+        <p class="coin-series-line">乔治五世 · 1922–1936 · 15 个年份</p>
+        <p class="coin-series-line">镍 · 21.2 mm · Numista #4421</p>
+        <p class="coin-series-line">圆形 · 4.5 g</p>
+      </div>
+      <details class="coin-more">
+        <summary class="coin-more-btn">⋯ 更多</summary>
+        <div class="coin-more-menu">
+          <button type="button" data-upgrade="加拿大 · 乔治五世 · 5 分">升级收藏</button>
+          <button type="button" class="is-danger" data-drop>放弃观察</button>
+        </div>
+      </details>
+    </article>
+
+    <article class="coin-series-card coin-watch-card">
+      <label class="coin-check"><input class="watch-pick" type="checkbox" value="5512"></label>
+      <div class="coin-series-imgs wl-imgs">
+        <button class="wl-shot" type="button" data-face="正面" aria-label="放大正面图片"><span class="coin-series-img-empty">正面<br>未缓存</span></button>
+        <button class="wl-shot" type="button" data-face="背面" aria-label="放大背面图片"><span class="coin-series-img-empty">背面<br>未缓存</span></button>
+      </div>
+      <div class="coin-series-meta">
+        <h3 class="coin-series-title"><a href="series-detail.html">德国 · 普鲁士 · 3 马克</a></h3>
+        <p class="coin-series-line">普鲁士 · 1871–1918 · 12 个年份</p>
+        <p class="coin-series-line">银 · 33.0 mm · Numista #5512</p>
+        <p class="coin-series-line">圆形 · 16.7 g</p>
+      </div>
+      <details class="coin-more">
+        <summary class="coin-more-btn">⋯ 更多</summary>
+        <div class="coin-more-menu">
+          <button type="button" data-upgrade="德国 · 普鲁士 · 3 马克">升级收藏</button>
+          <button type="button" class="is-danger" data-drop>放弃观察</button>
+        </div>
+      </details>
+    </article>
+  </div>
+
+  <nav class="pager">
+    <span class="btn btn-disabled">上一页</span>
+    <span class="pager-meta">第 1 / 2 页 · 共 7 条</span>
+    <a class="btn" href="#">下一页</a>
+  </nav>
+
+  <p class="coin-hint coin-mt">观察系列页不出现采集、估值补全按钮；数据补全只在采集中心与币库详情处理。</p>
+</main>
+
+<footer class="site-foot">本地服务 · 只有我一个人用</footer>
+
+<div class="coin-modal-scrim coin-hidden" id="wiz-scrim"></div>
+<div class="coin-modal coin-hidden" id="wizard" role="dialog" aria-label="升级收藏系列">
+  <div class="coin-modal-head">
+    <h2>升级为收藏系列</h2>
+    <button class="coin-close" type="button" data-wiz-close aria-label="关闭">×</button>
+  </div>
+  <div class="coin-modal-body">
+    <div class="coin-steps">
+      <span class="coin-step is-active" id="pill-1">Step 1 · 选择去向</span>
+      <span class="coin-step" id="pill-2">Step 2 · 填写信息</span>
+    </div>
+
+    <div id="wiz-step-1">
+      <p class="coin-hint" id="wiz-summary">将 2 个观察系列升级为收藏系列</p>
+      <div class="coin-radio-row">
+        <label><input type="radio" name="dest" value="new" checked> 新建收藏系列</label>
+        <label class="wl-existing-option"><input type="radio" name="dest" value="existing"> 加入已有收藏系列
+          <input class="search-input" id="existing-input" type="text" list="existing-list" placeholder="输入或选择已有收藏系列">
+        </label>
+      </div>
+      <p class="coin-hint">「加入已有」支持直接输入关键字，也可从下拉里选。</p>
+    </div>
+
+    <div id="wiz-step-2" class="coin-hidden">
+      <p class="coin-hint" id="wiz-step2-note">名称可空，默认「国家 · 执政者 · 面值」。</p>
+      <div class="coin-form-2col">
+        <label class="field">名称<input class="search-input" id="wiz-name" type="text" value="英国 · 乔治六世 · 半便士"></label>
+        <label class="field">国家<input class="search-input" id="wiz-country" type="text" value="英国"></label>
+        <label class="field">执政者<input class="search-input" id="wiz-ruler" type="text" value="乔治六世"></label>
+        <label class="field">面值<input class="search-input" id="wiz-denom" type="text" value="1/2 便士"></label>
+      </div>
+    </div>
+  </div>
+  <div class="coin-modal-foot">
+    <button class="btn btn-ghost" type="button" data-wiz-close>取消</button>
+    <button class="btn btn-ghost coin-hidden" type="button" id="wiz-back">上一步</button>
+    <button class="btn btn-primary" type="button" id="wiz-next">下一步</button>
+    <button class="btn btn-primary coin-hidden" type="button" id="wiz-confirm-btn">确认升级</button>
+  </div>
+</div>
+
+<datalist id="existing-list">
+  <option value="英国 · 乔治六世 · 1 便士"></option>
+  <option value="法国 · 第三共和国 · 5 法郎"></option>
+  <option value="荷属东印度 · 威廉明娜 · 1 分"></option>
+  <option value="日本 · 明治 · 1 圆"></option>
+  <option value="德国 · 普鲁士 · 3 马克"></option>
+</datalist>
+
+<div class="coin-toast coin-hidden" id="toast"></div>
+
+<div class="wl-lightbox coin-hidden" id="wl-lightbox" role="dialog" aria-modal="true" aria-label="图片放大">
+  <div class="wl-lightbox-box">
+    <div class="wl-lightbox-media" id="wl-lightbox-media"></div>
+    <p class="wl-lightbox-cap" id="wl-lightbox-cap"></p>
+  </div>
+</div>
+
+<script>
+(function () {
+  var picks = Array.prototype.slice.call(document.querySelectorAll('.watch-pick'));
+  var pickAll = document.getElementById('pick-all');
+  var countLabel = document.getElementById('pick-count');
+  var upgradeBtn = document.getElementById('upgrade-picked');
+  var wizard = document.getElementById('wizard');
+  var scrim = document.getElementById('wiz-scrim');
+  var step1 = document.getElementById('wiz-step-1');
+  var step2 = document.getElementById('wiz-step-2');
+  var step2Note = document.getElementById('wiz-step2-note');
+  var pill1 = document.getElementById('pill-1');
+  var pill2 = document.getElementById('pill-2');
+  var nextBtn = document.getElementById('wiz-next');
+  var backBtn = document.getElementById('wiz-back');
+  var confirmBtn = document.getElementById('wiz-confirm-btn');
+  var existingInput = document.getElementById('existing-input');
+  var step2Fields = ['wiz-name', 'wiz-country', 'wiz-ruler', 'wiz-denom'].map(function (id) {
+    return document.getElementById(id);
+  });
+  var existingMap = {
+    '英国 · 乔治六世 · 1 便士': ['英国 · 乔治六世 · 1 便士', '英国', '乔治六世', '1 便士'],
+    '法国 · 第三共和国 · 5 法郎': ['法国 · 第三共和国 · 5 法郎', '法国', '第三共和国', '5 法郎'],
+    '荷属东印度 · 威廉明娜 · 1 分': ['荷属东印度 · 威廉明娜 · 1 分', '荷属东印度', '威廉明娜', '1 分'],
+    '日本 · 明治 · 1 圆': ['日本 · 明治 · 1 圆', '日本', '明治', '1 圆'],
+    '德国 · 普鲁士 · 3 马克': ['德国 · 普鲁士 · 3 马克', '德国', '普鲁士', '3 马克']
+  };
+  var pending = [];
+
+  var lightbox = document.getElementById('wl-lightbox');
+  var lightboxMedia = document.getElementById('wl-lightbox-media');
+  var lightboxCap = document.getElementById('wl-lightbox-cap');
+
+  function openLightbox(shot) {
+    var media = shot.querySelector('.coin-series-img, .coin-series-img-empty');
+    if (!media) { return; }
+    lightboxMedia.innerHTML = '';
+    lightboxMedia.appendChild(media.cloneNode(true));
+    lightboxCap.textContent = shot.getAttribute('data-face') || '';
+    lightbox.classList.remove('coin-hidden');
+  }
+
+  function closeLightbox() {
+    lightboxMedia.innerHTML = '';
+    lightbox.classList.add('coin-hidden');
+  }
+
+  document.addEventListener('click', function (event) {
+    var shot = event.target.closest('.wl-shot');
+    if (shot) { openLightbox(shot); return; }
+    if (!lightbox.classList.contains('coin-hidden') && !event.target.closest('.wl-lightbox-box')) {
+      closeLightbox();
+    }
+  });
+
+  document.addEventListener('keydown', function (event) {
+    if (event.key === 'Escape' && !lightbox.classList.contains('coin-hidden')) { closeLightbox(); }
+  });
+
+  function toast(text) {
+    var box = document.getElementById('toast');
+    box.textContent = text;
+    box.classList.remove('coin-hidden');
+    clearTimeout(toast.timer);
+    toast.timer = setTimeout(function () { box.classList.add('coin-hidden'); }, 2200);
+  }
+
+  function selected() {
+    return picks.filter(function (box) { return box.checked; });
+  }
+
+  function refresh() {
+    var n = selected().length;
+    countLabel.textContent = '已选 ' + n + ' / ' + picks.length;
+    upgradeBtn.textContent = '升级选中 (' + n + ')';
+    upgradeBtn.disabled = n === 0;
+    picks.forEach(function (box) {
+      box.closest('.coin-watch-card').classList.toggle('is-selected', box.checked);
+    });
+    pickAll.checked = n === picks.length && n > 0;
+  }
+
+  picks.forEach(function (box) { box.addEventListener('change', refresh); });
+  pickAll.addEventListener('change', function () {
+    picks.forEach(function (box) { box.checked = pickAll.checked; });
+    refresh();
+  });
+
+  function setReadonly(on) {
+    step2Fields.forEach(function (input) { input.disabled = on; });
+    step2Note.textContent = on
+      ? '加入已有收藏系列：以下信息只读，确认后按系列合并。'
+      : '名称可空，默认「国家 · 执政者 · 面值」。';
+  }
+
+  function fillExisting(label) {
+    var row = existingMap[label];
+    if (!row) { return false; }
+    step2Fields.forEach(function (input, index) { input.value = row[index]; });
+    return true;
+  }
+
+  function showStep2(readonly) {
+    step1.classList.add('coin-hidden');
+    step2.classList.remove('coin-hidden');
+    pill1.className = 'coin-step is-done';
+    pill2.className = 'coin-step is-active';
+    nextBtn.classList.add('coin-hidden');
+    confirmBtn.classList.remove('coin-hidden');
+    backBtn.classList.remove('coin-hidden');
+    setReadonly(readonly);
+  }
+
+  function resetWizard() {
+    step1.classList.remove('coin-hidden');
+    step2.classList.add('coin-hidden');
+    backBtn.classList.add('coin-hidden');
+    nextBtn.classList.remove('coin-hidden');
+    confirmBtn.classList.add('coin-hidden');
+    pill1.className = 'coin-step is-active';
+    pill2.className = 'coin-step';
+    document.querySelector('input[name="dest"][value="new"]').checked = true;
+    existingInput.value = '';
+    setReadonly(false);
+    fillExisting('英国 · 乔治六世 · 1 便士');
+    step2Fields[0].value = '英国 · 乔治六世 · 半便士';
+    step2Fields[3].value = '1/2 便士';
+  }
+
+  function openWizard(labels) {
+    pending = labels;
+    document.getElementById('wiz-summary').textContent = '将 ' + labels.length + ' 个观察系列升级为收藏系列';
+    resetWizard();
+    scrim.classList.remove('coin-hidden');
+    wizard.classList.remove('coin-hidden');
+  }
+
+  function closeWizard() {
+    scrim.classList.add('coin-hidden');
+    wizard.classList.add('coin-hidden');
+  }
+
+  upgradeBtn.addEventListener('click', function () {
+    openWizard(selected().map(function (box) {
+      return box.closest('.coin-watch-card').querySelector('.coin-series-title a').textContent;
+    }));
+  });
+
+  document.addEventListener('click', function (event) {
+    var one = event.target.closest('[data-upgrade]');
+    if (one) {
+      one.closest('details').removeAttribute('open');
+      openWizard([one.dataset.upgrade]);
+      return;
+    }
+    if (event.target.closest('[data-drop]')) {
+      event.target.closest('details').removeAttribute('open');
+      toast('已放弃观察（原型）');
+      return;
+    }
+    if (event.target.closest('[data-wiz-close]')) { closeWizard(); return; }
+    if (event.target === scrim) { closeWizard(); return; }
+    if (!event.target.closest('.coin-more')) {
+      document.querySelectorAll('.coin-more[open]').forEach(function (el) { el.removeAttribute('open'); });
+    }
+  });
+
+  nextBtn.addEventListener('click', function () {
+    var dest = document.querySelector('input[name="dest"]:checked').value;
+    if (dest === 'existing') {
+      if (!fillExisting(existingInput.value.trim())) {
+        toast('请选择或输入已有的收藏系列');
+        existingInput.focus();
+        return;
+      }
+      showStep2(true);
+      return;
+    }
+    showStep2(false);
+  });
+
+  backBtn.addEventListener('click', resetWizard);
+
+  confirmBtn.addEventListener('click', function () {
+    closeWizard();
+    toast('已升级，正在跳转到该收藏系列详情页');
+  });
+
+  fillExisting('英国 · 乔治六世 · 1 便士');
+  step2Fields[0].value = '英国 · 乔治六世 · 半便士';
+  step2Fields[3].value = '1/2 便士';
+  refresh();
+})();
+</script>
+</body>
+</html>

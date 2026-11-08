@@ -38,7 +38,7 @@ import logging
 import re
 import time
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field, replace
+from dataclasses import asdict, dataclass, field, replace
 from typing import AsyncIterator
 
 import httpx
@@ -46,7 +46,7 @@ import httpx
 from app import llm, repository, textmatch
 from app.config import Config
 from app.coins import grades, translate, translate_llm
-from app.models import CoinIssue, CoinSeries
+from app.models import CoinExploreCandidate, CoinIssue, CoinSeries
 
 logger = logging.getLogger(__name__)
 
@@ -805,6 +805,107 @@ async def collect_series_by_id(
             await _store_series(info, repository.now_local(), llm_client=translator)
             logger.info("Numista 系列（按 ID）：%s → %s", series_id, info.title)
             return info
+    finally:
+        if owned:
+            await api.__aexit__(None, None, None)
+
+
+async def _stage_series(
+    info: SeriesInfo, llm_client: llm.LLMClient | None
+) -> SeriesInfo:
+    """系列详情 → 候选池（临时表，英文 + 中文各一份 JSON），返回中文版给页面渲染。
+
+    探索阶段只写 `coin_explore_candidates`，不写 `coin_series`；入队后第一步从
+    候选池读，省掉重复取详情。状态冲突时不改已有 status（repository 层保证）。
+    """
+    cn_info = await _cn_series_info(info, llm_client)
+    now = repository.now_local()
+    repository.upsert_coin_explore_candidate(
+        CoinExploreCandidate(
+            id=None,
+            numista_id=info.numista_id,
+            seed_key=None,
+            seed_name=None,
+            size_diff=None,
+            status="candidate",
+            payload=asdict(info),
+            payload_cn=asdict(cn_info),
+            issues=[],
+            verified_at=now,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    return cn_info
+
+
+async def explore_series(
+    config: Config,
+    *,
+    country: str,
+    year: int | None,
+    denomination: str,
+    composition: str = "",
+    client: NumistaClient | None = None,
+    limit: int | None = None,
+    llm_client: llm.LLMClient | None = None,
+) -> list[SeriesInfo]:
+    """采集中心条件方式：搜 Numista → 取详情 → 只暂存候选池（不写 `coin_series`）。
+
+    面值 / 材质过滤与 `collect_series` 同口径；`/types` 只返回系列号，
+    所以页面要展示的第一步行数据仍要逐个 `GET /types/{id}` 取，取到即入池。
+    """
+    issuer = resolve_issuer(country) if country.strip() else None
+    keyword = translate_denomination(denomination) if denomination.strip() else None
+    cap = limit if limit is not None else config.coins.numista.max_series
+    owned = client is None
+    api = client or NumistaClient(config)
+    if owned:
+        await api.__aenter__()
+    try:
+        async with _translator(config, llm_client) as translator:
+            type_ids = await api.search_type_ids(
+                issuer=issuer, year=year, denomination=keyword
+            )
+            staged: list[SeriesInfo] = []
+            for type_id in type_ids[:cap]:
+                info = await api.type_detail(type_id)
+                if not _series_matches(
+                    info,
+                    keyword=keyword or "",
+                    raw_denomination=denomination,
+                    raw_composition=composition,
+                ):
+                    continue
+                staged.append(await _stage_series(info, translator))
+            logger.info(
+                "采集中心探索：%s %s → 命中 %d 个，入候选池 %d 个",
+                country,
+                denomination,
+                len(type_ids),
+                len(staged),
+            )
+            return staged
+    finally:
+        if owned:
+            await api.__aexit__(None, None, None)
+
+
+async def explore_series_by_id(
+    config: Config,
+    *,
+    series_id: int,
+    client: NumistaClient | None = None,
+    llm_client: llm.LLMClient | None = None,
+) -> SeriesInfo:
+    """采集中心 ID 方式：取详情后只暂存候选池（不写 `coin_series`）。"""
+    owned = client is None
+    api = client or NumistaClient(config)
+    if owned:
+        await api.__aenter__()
+    try:
+        async with _translator(config, llm_client) as translator:
+            return await _stage_series(await api.type_detail(series_id), translator)
     finally:
         if owned:
             await api.__aexit__(None, None, None)

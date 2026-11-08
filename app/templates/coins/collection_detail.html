@@ -1,0 +1,215 @@
+{% extends "base.html" %}
+{% block title %}{{ page_title }} · deskhub{% endblock %}
+{% block content_class %} content-wide{% endblock %}
+{% from "coins/_macros.html" import coin_nav, coin_head, coin_collection_tabs with context %}
+
+{% block content %}
+{{ coin_nav("collection") }}
+{{ coin_collection_tabs("collections") }}
+
+<p class="coin-hint"><a href="/coins/collections">← 返回收藏系列</a></p>
+
+{% call coin_head(collection.name, collection.country ~ " · " ~ collection.denomination ~ (" · " ~ collection.ruler if collection.ruler else "") ~ " · 成员 " ~ total_members) %}
+<button class="btn btn-primary" type="button" id="add-member-top">＋ 添加成员</button>
+<button class="btn" type="button" id="edit-series">编辑收藏系列</button>
+<button class="btn btn-danger" type="button" id="delete-series">删除收藏系列</button>
+{% endcall %}
+
+<section class="coin-panel">
+  <div class="coin-panel-head">
+    <h2 class="coin-panel-title">系列概况</h2>
+    <span class="coin-panel-note">
+      {% if stats and stats.years %}按年份去重，已有 {{ stats.owned }} · 缺 {{ stats.missing }} · 升级 {{ stats.upgrade }}{% else %}还没有年份画像{% endif %}
+    </span>
+  </div>
+
+  {% if profile and profile.entries %}
+  <div class="coin-progress"><span style="width: {{ coverage_pct }}%;"></span></div>
+  <div class="coin-progress-stats">
+    <span>覆盖 {{ coverage_pct }}%</span>
+    <span>已有 {{ profile.owned_entries|length }}</span>
+    <span class="coin-danger-text">缺失 {{ profile.missing_entries|length }}</span>
+    <span>待升级 {{ profile.upgrade_entries|length }}</span>
+  </div>
+  <div class="coin-year-matrix">
+    {% for entry in profile.entries %}
+    <span class="coin-year-chip is-{{ entry.status }}">{{ entry.label }}</span>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="digest-meta">还没有年份画像：先把 Numista series 加入成员。</p>
+  {% endif %}
+</section>
+
+<section class="coin-panel" id="member-panel">
+  <div class="coin-panel-head">
+    <h2 class="coin-panel-title">成员管理 <span class="coin-panel-note">{{ total_members }} 个 Numista 系列</span></h2>
+    <span class="coin-panel-note">来源：观察系列 / 币库</span>
+  </div>
+
+  <form class="search-form" method="get" action="/coins/collections/{{ collection.id }}">
+    <div class="search-row search-row-labeled">
+      <label class="field">国家
+        <input class="search-input" type="text" name="mcountry" list="mem-countries" value="{{ filters['country'] }}" placeholder="如 英国">
+      </label>
+      <label class="field">执政者
+        <input class="search-input" type="text" name="mruler" list="mem-rulers" value="{{ filters['ruler'] }}" placeholder="如 乔治六世">
+      </label>
+      <label class="field">面值
+        <input class="search-input" type="text" name="mdenomination" list="mem-denoms" value="{{ filters['denomination'] }}" placeholder="如 1 便士">
+      </label>
+      <label class="field coin-field-grow">标题（模糊）
+        <input class="search-input" type="text" name="mtitle" value="{{ filters['title'] }}" placeholder="输入标题关键字，如 半便士">
+      </label>
+      <button class="btn btn-primary" type="submit">查询</button>
+    </div>
+  </form>
+  <datalist id="mem-countries">
+    {% for country in filters["countries"] %}<option>{{ country }}</option>{% endfor %}
+  </datalist>
+  <datalist id="mem-rulers">
+    {% for ruler in filters["rulers"] %}<option>{{ ruler }}</option>{% endfor %}
+  </datalist>
+  <datalist id="mem-denoms">
+    {% for denomination in filters["denominations"] %}<option>{{ denomination }}</option>{% endfor %}
+  </datalist>
+
+  <form class="coin-form-grid coin-mt" id="member-form" method="post" action="/coins/collections/members/add">
+    <input type="hidden" name="collection_id" value="{{ collection.id }}">
+    <input type="hidden" name="mcountry" value="{{ filters['country'] }}">
+    <input type="hidden" name="mruler" value="{{ filters['ruler'] }}">
+    <input type="hidden" name="mdenomination" value="{{ filters['denomination'] }}">
+    <input type="hidden" name="mtitle" value="{{ filters['title'] }}">
+    <label class="field coin-field-wide">从观察系列或币库选择
+      <select class="search-input" name="numista_series_id"{% if not filters["candidates"] %} disabled{% endif %}>
+        <option value="">请选择系列</option>
+        {% for series in filters["candidates"] %}
+        <option value="{{ series.numista_id }}">{{ series.title or '—' }} · {{ series.issuer or '—' }} · {{ series.ruler or '—' }} · {{ series.denomination or '—' }} · {{ series.min_year or '?' }}–{{ series.max_year or '?' }}（Numista #{{ series.numista_id }}）</option>
+        {% endfor %}
+      </select>
+    </label>
+    <button class="btn btn-primary" type="submit"{% if not filters["candidates"] %} disabled{% endif %}>添加成员</button>
+  </form>
+  {% if not filters["candidates"] %}
+  <p class="form-hint">当前国家 / 执政者 / 面值 / 标题下没有可加入的青铜 / 铜 series。</p>
+  {% elif filters["truncated"] %}
+  <p class="form-hint">匹配 {{ filters["candidate_total"] }} 条，仅显示前 50 条，请缩小国家 / 执政者 / 面值 / 标题范围。</p>
+  {% else %}
+  <p class="form-hint">已加入收藏系列的 series 不会出现在候选中。</p>
+  {% endif %}
+
+  <div class="table-wrap coin-mt">
+    <table class="sources-table">
+      <thead>
+        <tr>
+          <th>Numista ID</th>
+          <th>系列名称</th>
+          <th>国家 · 面值</th>
+          <th class="comm-only{% if not has_commemorative_member %} coin-hidden{% endif %}">发行系列</th>
+          <th class="comm-only{% if not has_commemorative_member %} coin-hidden{% endif %}">发行主题</th>
+          <th class="nowrap">年份范围</th>
+          <th>材质</th>
+          <th>尺寸</th>
+          <th>枚数</th>
+          <th class="nowrap">操作</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for member in members %}
+        {% set series = series_by_id.get(member.numista_series_id) %}
+        <tr>
+          <td><code>{{ member.numista_series_id }}</code></td>
+          <td>{{ series.title if series and series.title else (member.numista_series_name or '—') }}</td>
+          <td>{{ series.issuer if series and series.issuer else '—' }} · {{ series.denomination if series and series.denomination else '—' }}</td>
+          <td class="comm-only{% if not has_commemorative_member %} coin-hidden{% endif %}">{{ series.issue_series if series and series.issue_series else '—' }}</td>
+          <td class="comm-only{% if not has_commemorative_member %} coin-hidden{% endif %}">{{ series.issue_theme if series and series.issue_theme else '—' }}</td>
+          <td class="nowrap">{% if series %}{{ series.min_year or '?' }}–{{ series.max_year or '?' }}{% else %}—{% endif %}</td>
+          <td>{{ series.composition if series and series.composition else '—' }}</td>
+          <td>{% if series and series.size_mm %}{{ series.size_mm }} mm{% else %}—{% endif %}</td>
+          <td>{{ member_year_counts.get(member.numista_series_id) or '—' }}</td>
+          <td class="nowrap">
+            <form method="post" action="/coins/collections/members/{{ member.id }}/delete">
+              <input type="hidden" name="collection_id" value="{{ collection.id }}">
+              <button class="btn btn-ghost coin-follow-btn" type="submit">移出</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+        {% if not members %}
+        <tr><td colspan="{{ 10 if has_commemorative_member else 8 }}" class="digest-meta">还没有映射任何 Numista series。</td></tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<div class="coin-modal-scrim coin-hidden" id="edit-scrim"></div>
+<div class="coin-modal coin-hidden" id="edit-modal" role="dialog" aria-label="编辑收藏系列">
+  <div class="coin-modal-head">
+    <h2>编辑收藏系列</h2>
+    <button class="coin-close" type="button" data-close-edit aria-label="关闭">×</button>
+  </div>
+  <form class="coin-modal-body" id="edit-form" method="post" action="/coins/collections/{{ collection.id }}/edit">
+    <div class="coin-form-2col">
+      <label class="field">名称<input class="search-input" type="text" name="name" value="{{ collection.name }}"></label>
+      <label class="field">国家<input class="search-input" type="text" name="country" value="{{ collection.country }}" required></label>
+      <label class="field">执政者<input class="search-input" type="text" name="ruler" value="{{ collection.ruler or '' }}"></label>
+      <label class="field">面值<input class="search-input" type="text" name="denomination" value="{{ collection.denomination }}" required></label>
+    </div>
+    <p class="coin-hint coin-mt">与原收藏系列一致：改完保存即生效。</p>
+  </form>
+  <div class="coin-modal-foot">
+    <button class="btn btn-ghost" type="button" data-close-edit>取消</button>
+    <button class="btn btn-primary" type="submit" form="edit-form">保存</button>
+  </div>
+</div>
+
+<div class="coin-modal-scrim coin-hidden" id="delete-scrim"></div>
+<div class="coin-modal coin-hidden" id="delete-modal" role="dialog" aria-label="删除收藏系列">
+  <div class="coin-modal-head">
+    <h2>删除收藏系列</h2>
+    <button class="coin-close" type="button" data-close-delete aria-label="关闭">×</button>
+  </div>
+  <form class="coin-modal-body" id="delete-form" method="post" action="/coins/collections/{{ collection.id }}/delete">
+    <p class="coin-hint">将删除「{{ collection.name }}」及 {{ total_members }} 条成员映射，历史订单不受影响。</p>
+  </form>
+  <div class="coin-modal-foot">
+    <button class="btn btn-ghost" type="button" data-close-delete>取消</button>
+    <button class="btn btn-danger" type="submit" form="delete-form">确认删除</button>
+  </div>
+</div>
+
+<script>
+(function () {
+  var editScrim = document.getElementById('edit-scrim');
+  var editModal = document.getElementById('edit-modal');
+  var deleteScrim = document.getElementById('delete-scrim');
+  var deleteModal = document.getElementById('delete-modal');
+
+  document.getElementById('add-member-top').addEventListener('click', function () {
+    document.getElementById('member-panel').scrollIntoView({ behavior: 'smooth' });
+    document.querySelector('#member-form select').focus();
+  });
+
+  function closeAll() {
+    editScrim.classList.add('coin-hidden');
+    editModal.classList.add('coin-hidden');
+    deleteScrim.classList.add('coin-hidden');
+    deleteModal.classList.add('coin-hidden');
+  }
+
+  document.getElementById('edit-series').addEventListener('click', function () {
+    editScrim.classList.remove('coin-hidden');
+    editModal.classList.remove('coin-hidden');
+  });
+  document.getElementById('delete-series').addEventListener('click', function () {
+    deleteScrim.classList.remove('coin-hidden');
+    deleteModal.classList.remove('coin-hidden');
+  });
+  document.addEventListener('click', function (event) {
+    if (event.target.closest('[data-close-edit]') || event.target === editScrim) { closeAll(); }
+    if (event.target.closest('[data-close-delete]') || event.target === deleteScrim) { closeAll(); }
+  });
+})();
+</script>
+{% endblock %}

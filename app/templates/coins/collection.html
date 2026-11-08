@@ -170,6 +170,7 @@
     </section>
   </div>
   <aside class="coin-rec-rail">
+    <div class="coin-rail-card">
     <h3 class="coin-rail-title">今日拍场 <span class="coin-rail-count">{{ today_session_total }} 场 · {{ today_lots|length }} 件</span></h3>
     {% if today_sessions %}
     <p class="coin-rail-summary">
@@ -205,6 +206,11 @@
     {% endif %}
     <a class="coin-rail-link" href="/coins?auction_date={{ today_date }}&rec=all">查看全部拍场 →</a>
     <a class="coin-rail-link js-open-profiles" href="#profiles">收藏画像摘要 →</a>
+    </div>
+    <div class="coin-coverage">
+      <h3>收藏覆盖</h3>
+      <p>已覆盖 {{ profiles_total }} 个系列 / {{ covered_year_total }} 个年份，缺口 {{ missing_year_total }} 个年份</p>
+    </div>
   </aside>
 </div>
 

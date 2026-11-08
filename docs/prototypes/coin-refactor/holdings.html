@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>个人收藏清单 · 铜币 · deskhub</title>
+<link rel="stylesheet" href="proto.css">
+<style>
+/* hold- 修改品相弹窗：默认隐藏，点击行内「修改品相」后居中弹出（仅本页） */
+.coin-list-split { grid-template-columns: minmax(0, 1fr); }
+.hold-scrim { position: fixed; inset: 0; z-index: 40; background: rgba(31, 35, 40, .35); }
+.hold-hidden { display: none !important; }
+#grade-drawer.hold-modal { position: fixed; top: 50%; left: 50%; z-index: 41; width: 400px; max-width: calc(100vw - 32px); max-height: calc(100vh - 80px); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 20px 60px rgba(31, 35, 40, .22); transform: translate(-50%, -48%); opacity: 0; visibility: hidden; transition: opacity .18s ease, transform .18s ease, visibility .18s ease; }
+#grade-drawer.hold-modal.is-open { transform: translate(-50%, -50%); opacity: 1; visibility: visible; }
+@media (prefers-reduced-motion: reduce) { #grade-drawer.hold-modal { transition: none; } }
+</style>
+</head>
+<body>
+<header class="site-head">
+  <a class="brand" href="index.html">deskhub</a>
+  <nav class="nav">
+    <a class="nav-link" href="#">日报</a>
+    <a class="nav-link" href="#">历史搜索</a>
+    <a class="nav-link" href="#">源管理</a>
+    <a class="nav-link" href="#">运行控制</a>
+    <a class="nav-link" href="#">基金</a>
+    <a class="nav-link is-active" href="index.html">铜币</a>
+  </nav>
+</header>
+
+<main class="content content-wide">
+  <nav class="coin-tabs" aria-label="铜币模块导航">
+    <a href="recommend.html">今日推荐</a>
+    <a class="is-active" href="holdings.html" aria-current="page">我的资产</a>
+    <a href="library.html">币库</a>
+    <a href="index.html#moxiqi">麦稀奇数据</a>
+    <a class="btn btn-primary coin-tabs-action" href="ingest.html">采集中心</a>
+  </nav>
+
+  <nav class="coin-subtabs" aria-label="我的资产子导航">
+    <a class="is-active" href="holdings.html" aria-current="page">个人收藏清单</a>
+    <a href="collections.html">收藏系列</a>
+    <a href="watchlist.html">观察系列</a>
+  </nav>
+
+  <section class="coin-page-head">
+    <div>
+      <h1>个人收藏清单</h1>
+      <p class="coin-page-sub">128 条历史订单 · 本次 9 个组合 · 已录品相 8 · 单条即时保存</p>
+    </div>
+  </section>
+
+  <form class="search-form" method="get" action="#">
+    <div class="search-row search-row-labeled">
+      <label class="field">国家
+        <input class="search-input" type="text" placeholder="如 英国">
+      </label>
+      <label class="field">年份
+        <input class="search-input" type="text" placeholder="如 1938（可空）">
+      </label>
+      <label class="field">面值
+        <input class="search-input" type="text" placeholder="如 1 便士">
+      </label>
+      <label class="field">品相
+        <select><option>全部</option><option>VF</option><option>XF</option><option>AU</option><option>未录入</option></select>
+      </label>
+      <button class="btn btn-primary" type="submit">查询</button>
+    </div>
+  </form>
+
+  <div class="coin-inline-actions coin-mt">
+    <button class="btn" type="button" id="toggle-add" aria-expanded="true">＋ 新增组合</button>
+    <span class="coin-hint">（默认收起，原型展示展开态）</span>
+  </div>
+
+  <section class="coin-panel coin-mt" id="add-panel">
+    <div class="coin-panel-head">
+      <h2 class="coin-panel-title">新增组合</h2>
+      <span class="coin-panel-note">四项必填；保存后直接落库，本页没有底部总保存</span>
+    </div>
+    <form class="coin-form-grid" id="add-form">
+      <label class="field">国家<input class="search-input" type="text" placeholder="如 英国" required></label>
+      <label class="field">年份<input class="search-input" type="text" placeholder="如 1938" required></label>
+      <label class="field">年号<input class="search-input" type="text" placeholder="如 明治（可空）"></label>
+      <label class="field">面值<input class="search-input" type="text" placeholder="如 1 便士" required></label>
+      <label class="field">发行系列<input class="search-input" type="text" placeholder="如 乔治六世（可空）"></label>
+      <label class="field">发行主题<input class="search-input" type="text" placeholder="如 便士（可空）"></label>
+      <label class="field">品相
+        <select><option value="">请选择</option><option>VF</option><option>XF</option><option>AU</option><option>UNC</option></select>
+      </label>
+      <button class="btn btn-primary" type="submit">保存</button>
+    </form>
+  </section>
+
+  <div class="coin-list-split">
+    <div class="table-wrap">
+      <table class="sources-table">
+        <thead>
+          <tr>
+            <th>国家</th><th>年份</th><th>年号</th><th>面值</th><th>发行系列</th><th>发行主题</th><th>品相</th><th>操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>英国</td><td>1938</td><td>—</td><td>1 便士</td><td>乔治六世</td><td>便士</td><td>VF</td>
+            <td>
+              <details class="coin-more">
+                <summary class="coin-more-btn">⋯</summary>
+                <div class="coin-more-menu">
+                  <button type="button" data-grade="英国 · 1938 · 1 便士">修改品相</button>
+                  <button type="button" class="is-danger" data-delete>删除</button>
+                </div>
+              </details>
+            </td>
+          </tr>
+          <tr>
+            <td>英国</td><td>1940</td><td>—</td><td>1 便士</td><td>乔治六世</td><td>便士</td><td>XF</td>
+            <td>
+              <details class="coin-more">
+                <summary class="coin-more-btn">⋯</summary>
+                <div class="coin-more-menu">
+                  <button type="button" data-grade="英国 · 1940 · 1 便士">修改品相</button>
+                  <button type="button" class="is-danger" data-delete>删除</button>
+                </div>
+              </details>
+            </td>
+          </tr>
+          <tr>
+            <td>法国</td><td>1874</td><td>—</td><td>5 法郎</td><td>第三共和国</td><td>大力神</td><td>VF</td>
+            <td>
+              <details class="coin-more">
+                <summary class="coin-more-btn">⋯</summary>
+                <div class="coin-more-menu">
+                  <button type="button" data-grade="法国 · 1874 · 5 法郎">修改品相</button>
+                  <button type="button" class="is-danger" data-delete>删除</button>
+                </div>
+              </details>
+            </td>
+          </tr>
+          <tr>
+            <td>荷属东印度</td><td>1902</td><td>—</td><td>1 分</td><td>威廉明娜</td><td>分币</td><td>AU</td>
+            <td>
+              <details class="coin-more">
+                <summary class="coin-more-btn">⋯</summary>
+                <div class="coin-more-menu">
+                  <button type="button" data-grade="荷属东印度 · 1902 · 1 分">修改品相</button>
+                  <button type="button" class="is-danger" data-delete>删除</button>
+                </div>
+              </details>
+            </td>
+          </tr>
+          <tr>
+            <td>英属印度</td><td>1901</td><td>—</td><td>1 卢比</td><td>维多利亚</td><td>卢比</td><td>VF</td>
+            <td>
+              <details class="coin-more">
+                <summary class="coin-more-btn">⋯</summary>
+                <div class="coin-more-menu">
+                  <button type="button" data-grade="英属印度 · 1901 · 1 卢比">修改品相</button>
+                  <button type="button" class="is-danger" data-delete>删除</button>
+                </div>
+              </details>
+            </td>
+          </tr>
+          <tr>
+            <td>日本</td><td>1874</td><td>明治七年</td><td>1 圆</td><td>明治</td><td>龙洋</td><td>XF</td>
+            <td>
+              <details class="coin-more">
+                <summary class="coin-more-btn">⋯</summary>
+                <div class="coin-more-menu">
+                  <button type="button" data-grade="日本 · 1874 · 1 圆">修改品相</button>
+                  <button type="button" class="is-danger" data-delete>删除</button>
+                </div>
+              </details>
+            </td>
+          </tr>
+          <tr>
+            <td>德国</td><td>1913</td><td>—</td><td>3 马克</td><td>普鲁士</td><td>威廉二世</td><td>VF</td>
+            <td>
+              <details class="coin-more">
+                <summary class="coin-more-btn">⋯</summary>
+                <div class="coin-more-menu">
+                  <button type="button" data-grade="德国 · 1913 · 3 马克">修改品相</button>
+                  <button type="button" class="is-danger" data-delete>删除</button>
+                </div>
+              </details>
+            </td>
+          </tr>
+          <tr>
+            <td>加拿大</td><td>1936</td><td>—</td><td>5 分</td><td>乔治五世</td><td>分币</td><td>—</td>
+            <td>
+              <details class="coin-more">
+                <summary class="coin-more-btn">⋯</summary>
+                <div class="coin-more-menu">
+                  <button type="button" data-grade="加拿大 · 1936 · 5 分">修改品相</button>
+                  <button type="button" class="is-danger" data-delete>删除</button>
+                </div>
+              </details>
+            </td>
+          </tr>
+          <tr>
+            <td>墨西哥</td><td>1867</td><td>—</td><td>8 里亚尔</td><td>马克西米利安</td><td>鹰洋</td><td>VF</td>
+            <td>
+              <details class="coin-more">
+                <summary class="coin-more-btn">⋯</summary>
+                <div class="coin-more-menu">
+                  <button type="button" data-grade="墨西哥 · 1867 · 8 里亚尔">修改品相</button>
+                  <button type="button" class="is-danger" data-delete>删除</button>
+                </div>
+              </details>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="hold-scrim hold-hidden" id="grade-scrim"></div>
+
+    <aside class="coin-inline-drawer hold-modal" id="grade-drawer" role="dialog" aria-modal="true" aria-label="修改品相" aria-hidden="true">
+      <div class="coin-drawer-head">
+        <h2>修改品相</h2>
+        <span class="coin-panel-note">行内「修改品相」打开 · 取消 / 保存后关闭</span>
+      </div>
+      <div class="coin-drawer-body">
+        <p class="coin-hint" id="drawer-target">英国 · 1938 · 1 便士</p>
+        <label class="field">品相
+          <select id="drawer-grade">
+            <option>VF</option>
+            <option>XF</option><option>AU</option><option>UNC</option><option value="">未录入</option>
+          </select>
+        </label>
+        <p class="coin-hint coin-mt">行内「⋯ → 修改品相」切换当前行，保存即落库。</p>
+      </div>
+      <div class="coin-drawer-foot">
+        <button class="btn btn-ghost" type="button" id="drawer-cancel">取消</button>
+        <button class="btn btn-primary" type="button" id="drawer-save">保存</button>
+      </div>
+    </aside>
+  </div>
+
+  <nav class="pager">
+    <span class="btn btn-disabled">上一页</span>
+    <span class="pager-meta">第 1 / 2 页</span>
+    <a class="btn" href="#">下一页</a>
+  </nav>
+</main>
+
+<footer class="site-foot">本地服务 · 只有我一个人用</footer>
+
+<div class="coin-toast coin-hidden" id="toast"></div>
+
+<script>
+(function () {
+  var addPanel = document.getElementById('add-panel');
+  var toggleAdd = document.getElementById('toggle-add');
+  toggleAdd.addEventListener('click', function () {
+    var hidden = addPanel.classList.toggle('coin-hidden');
+    toggleAdd.setAttribute('aria-expanded', String(!hidden));
+  });
+
+  document.getElementById('add-form').addEventListener('submit', function (event) {
+    event.preventDefault();
+    toast('已保存');
+  });
+
+  var drawer = document.getElementById('grade-drawer');
+  var scrim = document.getElementById('grade-scrim');
+  var target = document.getElementById('drawer-target');
+  var gradeSelect = document.getElementById('drawer-grade');
+  var saveBtn = document.getElementById('drawer-save');
+
+  function openDrawer(row, gradeBtn) {
+    target.textContent = gradeBtn.dataset.grade;
+    var current = row ? row.cells[6].textContent.trim() : '';
+    gradeSelect.value = ['VF', 'XF', 'AU', 'UNC'].indexOf(current) >= 0 ? current : '';
+    drawer.classList.add('is-open');
+    drawer.setAttribute('aria-hidden', 'false');
+    scrim.classList.remove('hold-hidden');
+  }
+
+  function closeDrawer() {
+    drawer.classList.remove('is-open');
+    drawer.setAttribute('aria-hidden', 'true');
+    scrim.classList.add('hold-hidden');
+  }
+
+  document.addEventListener('click', function (event) {
+    var gradeBtn = event.target.closest('[data-grade]');
+    if (gradeBtn) {
+      gradeBtn.closest('details').removeAttribute('open');
+      openDrawer(gradeBtn.closest('tr'), gradeBtn);
+      return;
+    }
+    if (event.target.closest('[data-delete]')) {
+      event.target.closest('details').removeAttribute('open');
+      toast('已删除（原型）');
+      return;
+    }
+    if (!event.target.closest('.coin-more')) {
+      document.querySelectorAll('.coin-more[open]').forEach(function (el) { el.removeAttribute('open'); });
+    }
+  });
+
+  scrim.addEventListener('click', closeDrawer);
+
+  document.getElementById('drawer-cancel').addEventListener('click', function () {
+    closeDrawer();
+    toast('已取消');
+  });
+
+  saveBtn.addEventListener('click', function () {
+    closeDrawer();
+    toast('品相已更新');
+    saveBtn.textContent = '已保存';
+    setTimeout(function () { saveBtn.textContent = '保存'; }, 1200);
+  });
+
+  document.addEventListener('keydown', function (event) {
+    if (event.key === 'Escape' && drawer.classList.contains('is-open')) {
+      closeDrawer();
+    }
+  });
+
+  function toast(text) {
+    var box = document.getElementById('toast');
+    box.textContent = text;
+    box.classList.remove('coin-hidden');
+    clearTimeout(toast.timer);
+    toast.timer = setTimeout(function () { box.classList.add('coin-hidden'); }, 1800);
+  }
+})();
+</script>
+</body>
+</html>

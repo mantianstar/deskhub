@@ -1,0 +1,202 @@
+{% extends "base.html" %}
+{% block title %}{{ page_title }} · deskhub{% endblock %}
+{% block content_class %} content-wide{% endblock %}
+{% from "coins/_macros.html" import coin_nav, coin_head with context %}
+
+{% block content %}
+{{ coin_nav("ingest") }}
+{% set subtitle = "条件探索 → 结果多选 → 任务队列 · 当前队列 " ~ task_total ~ " 条 · 4 节点：系列 / 年份 / 估值 / 图片" %}
+{{ coin_head("采集中心", subtitle) }}
+
+{% if queued %}
+<p class="form-hint">已加入队列 {{ queued }} 条{% if reused %}，复用 {{ reused }} 条{% endif %}。</p>
+{% elif reused %}
+<p class="form-hint">同系列已在队列中，已复用现有任务。</p>
+{% elif error %}
+<p class="form-hint">Numista 系列 ID 需为正整数。</p>
+{% endif %}
+{% if year_error %}<p class="form-hint">{{ year_error }}</p>{% endif %}
+{% if explore_error %}<p class="form-hint">{{ explore_error }}</p>{% endif %}
+
+<section class="coin-panel">
+  <div class="coin-panel-head">
+    <h2 class="coin-panel-title">探索条件 · 条件方式</h2>
+    <span class="coin-panel-note">按国家 + 年份 + 面值 + 材质</span>
+  </div>
+  <form class="coin-form-grid" method="get" action="/coins/ingest">
+    <label class="field">国家<input class="search-input" type="text" name="country" value="{{ country }}" placeholder="如 英国" autocomplete="off"></label>
+    <label class="field">年份<input class="search-input" type="text" name="year" value="{{ year }}" placeholder="如 1808（可空）" autocomplete="off"></label>
+    <label class="field">面值<input class="search-input" type="text" name="denomination" value="{{ denomination }}" placeholder="如 1 便士" autocomplete="off"></label>
+    <label class="field">材质<input class="search-input" type="text" name="composition" value="{{ composition }}" placeholder="如 青铜" autocomplete="off"></label>
+    <button class="btn btn-primary" type="submit">探索</button>
+  </form>
+</section>
+
+<section class="coin-panel">
+  <div class="coin-panel-head">
+    <h2 class="coin-panel-title">探索条件 · ID 方式</h2>
+    <span class="coin-panel-note">已知 Numista 系列 ID，折成一行</span>
+  </div>
+  <form class="coin-query-inline" method="get" action="/coins/ingest">
+    <label class="field coin-field-inline">系列 ID
+      <input class="search-input" type="text" name="series_id" value="{{ series_id }}" inputmode="numeric" placeholder="如 670" autocomplete="off">
+    </label>
+    <button class="btn btn-primary" type="submit">按 ID 探索</button>
+    <span class="coin-hint">结果与条件方式合并进下方同一张表，去重后按系列 ID 排序。</span>
+  </form>
+</section>
+
+<section class="coin-panel">
+  <div class="coin-panel-head">
+    <h2 class="coin-panel-title">探索结果 <span class="coin-panel-note">{{ result_total }} 条</span></h2>
+    <span class="coin-panel-note">多选后一次加入队列</span>
+  </div>
+  {% if results %}
+  <form method="post" action="/coins/ingest/queue">
+    <div class="table-wrap">
+      <table class="sources-table">
+        <thead>
+          <tr>
+            <th class="coin-nowrap"><label class="coin-check"><input type="checkbox" id="pick-all"> 全选</label></th>
+            <th>ID</th><th>名称</th><th>国家</th><th>执政者</th><th>面值</th><th>年份</th><th>材质</th><th>尺寸</th>
+          </tr>
+        </thead>
+        <tbody id="result-body">
+          {% for series in results %}
+          <tr>
+            <td><input class="result-pick" type="checkbox" name="series_numista_id" value="{{ series.numista_id }}"></td>
+            <td><code>{{ series.numista_id }}</code></td>
+            <td>{{ series.title or ("Numista #" ~ series.numista_id) }}</td>
+            <td>{{ series.issuer or '—' }}</td>
+            <td>{{ series.ruler or '—' }}</td>
+            <td>{{ series.denomination or '—' }}</td>
+            <td>{{ series.min_year or '—' }}{% if series.max_year and series.max_year != series.min_year %}–{{ series.max_year }}{% endif %}</td>
+            <td>{{ series.composition or '—' }}</td>
+            <td>{% if series.size_mm is not none %}{{ series.size_mm|round(1) }} mm{% else %}—{% endif %}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="coin-select-bar coin-mt">
+      <span class="coin-select-count">已选 <span id="result-count">0</span> / {{ results|length }}</span>
+      <button class="btn btn-primary" type="submit" id="join-queue" disabled>加入队列 (0)</button>
+    </div>
+  </form>
+  <nav class="pager">
+    {% if result_prev_url %}
+    <a class="btn" href="{{ result_prev_url }}">上一页</a>
+    {% else %}
+    <span class="btn btn-disabled">上一页</span>
+    {% endif %}
+    <span class="pager-meta">第 {{ result_page }} / {{ result_pages }} 页 · 共 {{ result_total }} 条</span>
+    {% if result_next_url %}
+    <a class="btn" href="{{ result_next_url }}">下一页</a>
+    {% else %}
+    <span class="btn btn-disabled">下一页</span>
+    {% endif %}
+  </nav>
+  <script>
+  (function () {
+    var picks = Array.prototype.slice.call(document.querySelectorAll('.result-pick'));
+    var pickAll = document.getElementById('pick-all');
+    var count = document.getElementById('result-count');
+    var join = document.getElementById('join-queue');
+    if (!picks.length || !pickAll || !count || !join) { return; }
+    function refresh() {
+      var n = picks.filter(function (box) { return box.checked; }).length;
+      count.textContent = String(n);
+      join.textContent = '加入队列 (' + n + ')';
+      join.disabled = n === 0;
+      pickAll.checked = n === picks.length && n > 0;
+    }
+    picks.forEach(function (box) { box.addEventListener('change', refresh); });
+    pickAll.addEventListener('change', function () {
+      picks.forEach(function (box) { box.checked = pickAll.checked; });
+      refresh();
+    });
+    refresh();
+  })();
+  </script>
+  {% else %}
+  <p class="form-hint">还没有探索结果：填写条件或系列 ID 后点「探索」。</p>
+  {% endif %}
+</section>
+
+<section class="coin-panel">
+  <div class="coin-panel-head">
+    <h2 class="coin-panel-title">任务队列 <span class="coin-panel-note">{{ task_total }} 条</span></h2>
+    <span class="coin-panel-note">按加入时间倒序 · 跳过已有数据的节点显示「已跳过」</span>
+  </div>
+
+  <form class="search-form" method="get" action="/coins/ingest">
+    <div class="search-row search-row-labeled">
+      <label class="field">任务名称
+        <input class="search-input" type="text" name="name" value="{{ queue_name }}" placeholder="模糊匹配，如 乔治六世" autocomplete="off">
+      </label>
+      <label class="field">状态
+        <select name="status">
+          <option value="">全部</option>
+          {% for value, label in status_labels.items() %}
+          <option value="{{ value }}"{% if queue_status == value %} selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label class="field">加入时间
+        <input class="search-input" type="date" name="created" value="{{ queue_created }}">
+      </label>
+      <label class="field">完成时间
+        <input class="search-input" type="date" name="finished" value="{{ queue_finished }}">
+      </label>
+      <button class="btn btn-primary" type="submit">查询</button>
+    </div>
+  </form>
+
+  {% if tasks %}
+  <div class="table-wrap">
+    <table class="sources-table">
+      <thead>
+        <tr><th class="coin-nowrap">Series ID</th><th>任务名称</th><th>进度</th><th>状态</th><th class="coin-nowrap">加入时间</th><th class="coin-nowrap">完成时间</th></tr>
+      </thead>
+      <tbody>
+        {% for task in tasks %}
+        <tr>
+          <td><code>{{ task.series_numista_id }}</code></td>
+          <td>
+            <a href="/coins/series/{{ task.series_numista_id }}">{{ task.name or ("Numista #" ~ task.series_numista_id) }}</a>
+          </td>
+          <td>
+            <div class="coin-node-row">
+              {% for label, attr in node_labels %}
+              {% set state = task|attr(attr) %}
+              <span class="coin-node is-{{ state }}"{% if state == 'failed' and task.error %} title="{{ task.error }}"{% endif %}>{{ label }}{% if state == 'skip' %} · 已跳过{% elif state == 'failed' %} · 失败{% endif %}</span>
+              {% endfor %}
+            </div>
+          </td>
+          <td><span class="coin-badge is-{{ task.status }}">{{ badge_labels.get(task.status, task.status) }}</span></td>
+          <td class="coin-nowrap">{{ task.created_at[5:16] }}</td>
+          <td class="coin-nowrap">{{ task.finished_at[5:16] if task.finished_at else '—' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <nav class="pager">
+    {% if task_prev_url %}
+    <a class="btn" href="{{ task_prev_url }}">上一页</a>
+    {% else %}
+    <span class="btn btn-disabled">上一页</span>
+    {% endif %}
+    <span class="pager-meta">第 {{ task_page }} / {{ task_pages }} 页 · 共 {{ task_total }} 条</span>
+    {% if task_next_url %}
+    <a class="btn" href="{{ task_next_url }}">下一页</a>
+    {% else %}
+    <span class="btn btn-disabled">下一页</span>
+    {% endif %}
+  </nav>
+  <p class="coin-hint coin-mt">本页只做采集与排队，不出现加入收藏 / 加入观察等业务按钮。</p>
+  {% else %}
+  <p class="form-hint">队列为空：在探索结果里勾选系列后点「加入队列」。</p>
+  {% endif %}
+</section>
+{% endblock %}

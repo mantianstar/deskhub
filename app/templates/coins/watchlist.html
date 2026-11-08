@@ -1,0 +1,344 @@
+{% extends "base.html" %}
+{% block title %}{{ page_title }} · deskhub{% endblock %}
+{% block content_class %} content-wide{% endblock %}
+{% from "coins/_macros.html" import coin_nav, coin_head, coin_collection_tabs, coin_series_card_meta with context %}
+
+{% block content %}
+{{ coin_nav("collection") }}
+{% call coin_head("观察系列", "已观察 " ~ watched_total ~ " 个系列 · 本次命中 " ~ series_total ~ " 个 · 单个 Numista 系列粒度") %}
+  <a class="btn btn-primary" href="/coins/info">去币库挑系列</a>
+{% endcall %}
+{{ coin_collection_tabs("watchlist") }}
+
+<form class="search-form" method="get" action="/coins/watchlist">
+  <div class="search-row search-row-labeled">
+    <label class="field">货币类型
+      <select class="search-input" name="object_type">
+        <option value=""{% if not object_type %} selected{% endif %}>全部</option>
+        {% for name in object_types %}
+        <option value="{{ name }}"{% if name == object_type %} selected{% endif %}>{{ name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label class="field">国家
+      <input class="search-input" type="text" name="country" value="{{ country }}"
+             list="watch-country-options" placeholder="可输入，如 英国" autocomplete="off">
+      <datalist id="watch-country-options">
+        {% for name in countries %}<option value="{{ name }}"></option>{% endfor %}
+      </datalist>
+    </label>
+    <label class="field">年份
+      <input class="search-input" type="text" name="year" value="{{ year }}" placeholder="如 1808（可空）">
+    </label>
+    <label class="field">面值
+      <input class="search-input" type="text" name="denomination" value="{{ denomination }}"
+             list="watch-denomination-options" placeholder="可输入，如 1便士" autocomplete="off">
+      <datalist id="watch-denomination-options">
+        {% for name in denominations %}<option value="{{ name }}"></option>{% endfor %}
+      </datalist>
+    </label>
+    <label class="field">材质
+      <input class="search-input" type="text" name="composition" value="{{ composition }}"
+             list="watch-composition-options" placeholder="可输入，如 青铜" autocomplete="off">
+      <datalist id="watch-composition-options">
+        {% for name in compositions %}<option value="{{ name }}"></option>{% endfor %}
+      </datalist>
+    </label>
+    <button class="btn btn-primary" type="submit">查询</button>
+  </div>
+  {% if year_error %}<p class="form-error">{{ year_error }}</p>{% endif %}
+</form>
+
+{% if series_list %}
+<form class="coin-select-bar" id="watch-upgrade" method="post" action="/coins/watchlist/upgrade">
+  <label class="coin-check"><input type="checkbox" id="pick-all"> 全选</label>
+  <span class="coin-select-count" id="pick-count">已选 0 / {{ series_list|length }}</span>
+  <button class="btn btn-primary" type="button" id="upgrade-picked" disabled>升级选中 (0)</button>
+</form>
+
+<div class="coin-list-single" id="watch-grid">
+  {% for item in series_list %}
+  {% set imgs = series_images.get(item.numista_id, {}) %}
+  <article class="coin-series-card coin-watch-card">
+    <label class="coin-check"><input class="watch-pick" type="checkbox" name="numista_ids"
+      value="{{ item.numista_id }}" form="watch-upgrade"></label>
+    <div class="coin-series-main">
+      <div class="coin-series-imgs">
+        {% for side, label, url in [('obverse', '正面', item.obverse_picture), ('reverse', '背面', item.reverse_picture)] %}
+          {% if imgs.get(side) %}
+          <img class="coin-series-img" src="/coins/series/{{ item.numista_id }}/image/{{ side }}" alt="{{ label }}" loading="lazy">
+          {% else %}
+          <span class="coin-series-img coin-series-img-empty" title="{{ label }}{{ '图未缓存到本地' if url else '图缺失' }}">{{ label }}<br>{{ '未缓存' if url else '无图' }}</span>
+          {% endif %}
+        {% endfor %}
+      </div>
+      {{ coin_series_card_meta(item, year_counts[item.numista_id].year_count if item.numista_id in year_counts else 0, "/coins/series/" ~ item.numista_id) }}
+    </div>
+    <details class="coin-more">
+      <summary class="coin-more-btn">⋯ 更多</summary>
+      <div class="coin-more-menu">
+        <button type="button" data-upgrade>升级收藏</button>
+        <form method="post" action="/coins/watchlist/remove">
+          <input type="hidden" name="numista_id" value="{{ item.numista_id }}">
+          <input type="hidden" name="next" value="{{ current_url }}">
+          <button type="submit" class="is-danger">放弃观察</button>
+        </form>
+      </div>
+    </details>
+  </article>
+  {% endfor %}
+</div>
+
+{% if total_pages > 1 %}
+<nav class="pager">
+  {% if prev_url %}
+  <a class="btn" href="{{ prev_url }}">上一页</a>
+  {% else %}
+  <span class="btn btn-disabled">上一页</span>
+  {% endif %}
+  <span class="pager-meta">第 {{ page }} / {{ total_pages }} 页 · 共 {{ series_total }} 条</span>
+  {% if next_url %}
+  <a class="btn" href="{{ next_url }}">下一页</a>
+  {% else %}
+  <span class="btn btn-disabled">下一页</span>
+  {% endif %}
+</nav>
+{% endif %}
+
+<p class="coin-hint">观察系列页不出现采集、估值补全按钮；数据补全只在采集中心与币库详情处理。</p>
+{% elif watched_total %}
+<div class="empty">
+  当前筛选条件下没有观察系列。<a href="/coins/watchlist">清空条件</a>
+</div>
+{% else %}
+<div class="empty">
+  还没有观察的系列。<br>
+  去 <a href="/coins/info">币库</a> 点「加入观察」，或在系列详情页点「+ 观察」。
+</div>
+{% endif %}
+
+<div class="coin-modal-scrim coin-hidden" id="wiz-scrim"></div>
+<div class="coin-modal coin-hidden" id="wizard" role="dialog" aria-label="升级收藏系列">
+  <div class="coin-modal-head">
+    <h2>升级为收藏系列</h2>
+    <button class="coin-close" type="button" data-wiz-close aria-label="关闭">×</button>
+  </div>
+  <div class="coin-modal-body">
+    <div class="coin-steps">
+      <span class="coin-step is-active" id="pill-1">Step 1 · 选择去向</span>
+      <span class="coin-step" id="pill-2">Step 2 · 填写信息</span>
+    </div>
+
+    <div id="wiz-step-1">
+      <p class="coin-hint" id="wiz-summary">将 1 个观察系列升级为收藏系列</p>
+      <div class="coin-radio-row">
+        <label><input type="radio" name="dest" value="new" form="watch-upgrade"> 新建收藏系列</label>
+        <label class="wl-existing-option"><input type="radio" name="dest" value="existing" form="watch-upgrade" checked> 加入已有收藏系列
+          <input class="search-input" id="existing-input" type="text" list="existing-list"
+                 placeholder="输入或选择已有收藏系列" autocomplete="off" form="watch-upgrade">
+        </label>
+      </div>
+      <input type="hidden" name="collection_id" id="existing-id" form="watch-upgrade">
+      <p class="coin-hint">「加入已有」支持直接输入关键字，也可从下拉里选。</p>
+    </div>
+
+    <div id="wiz-step-2" class="coin-hidden">
+      <p class="coin-hint" id="wiz-step2-note">名称可空，默认「国家 · 执政者 · 面值」。</p>
+      <div class="coin-form-2col">
+        <label class="field">名称<input class="search-input" id="wiz-name" name="name" type="text" form="watch-upgrade"></label>
+        <label class="field">国家<input class="search-input" id="wiz-country" name="country" type="text" form="watch-upgrade"></label>
+        <label class="field">执政者<input class="search-input" id="wiz-ruler" name="ruler" type="text" form="watch-upgrade"></label>
+        <label class="field">面值<input class="search-input" id="wiz-denom" name="denomination" type="text" form="watch-upgrade"></label>
+      </div>
+    </div>
+  </div>
+  <div class="coin-modal-foot">
+    <button class="btn btn-ghost" type="button" data-wiz-close>取消</button>
+    <button class="btn btn-ghost coin-hidden" type="button" id="wiz-back">上一步</button>
+    <button class="btn btn-primary" type="button" id="wiz-next">下一步</button>
+    <button class="btn btn-primary coin-hidden" type="submit" form="watch-upgrade" id="wiz-confirm-btn">确认升级</button>
+  </div>
+</div>
+
+<datalist id="existing-list">
+  {% for item in collections %}
+  <option value="{{ item.name }}" data-id="{{ item.id }}" data-name="{{ item.name }}"
+          data-country="{{ item.country }}" data-ruler="{{ item.ruler or '' }}"
+          data-denomination="{{ item.denomination }}"></option>
+  {% endfor %}
+</datalist>
+
+<div class="coin-toast coin-hidden" id="toast"></div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  (function () {
+    var picks = Array.prototype.slice.call(document.querySelectorAll('.watch-pick'));
+    var pickAll = document.getElementById('pick-all');
+    var countLabel = document.getElementById('pick-count');
+    var upgradeBtn = document.getElementById('upgrade-picked');
+    var wizard = document.getElementById('wizard');
+    var scrim = document.getElementById('wiz-scrim');
+    var step1 = document.getElementById('wiz-step-1');
+    var step2 = document.getElementById('wiz-step-2');
+    var step2Note = document.getElementById('wiz-step2-note');
+    var pill1 = document.getElementById('pill-1');
+    var pill2 = document.getElementById('pill-2');
+    var nextBtn = document.getElementById('wiz-next');
+    var backBtn = document.getElementById('wiz-back');
+    var confirmBtn = document.getElementById('wiz-confirm-btn');
+    var existingInput = document.getElementById('existing-input');
+    var existingId = document.getElementById('existing-id');
+    var toastBox = document.getElementById('toast');
+    var step2Fields = ['wiz-name', 'wiz-country', 'wiz-ruler', 'wiz-denom'].map(function (id) {
+      return document.getElementById(id);
+    });
+
+    function toast(text) {
+      toastBox.textContent = text;
+      toastBox.classList.remove('coin-hidden');
+      clearTimeout(toast.timer);
+      toast.timer = setTimeout(function () { toastBox.classList.add('coin-hidden'); }, 2200);
+    }
+
+    function selected() {
+      return picks.filter(function (box) { return box.checked; });
+    }
+
+    function refresh() {
+      var n = selected().length;
+      countLabel.textContent = '已选 ' + n + ' / ' + picks.length;
+      upgradeBtn.textContent = '升级选中 (' + n + ')';
+      upgradeBtn.disabled = n === 0;
+      picks.forEach(function (box) {
+        box.closest('.coin-watch-card').classList.toggle('is-selected', box.checked);
+      });
+      pickAll.checked = n === picks.length && n > 0;
+    }
+
+    picks.forEach(function (box) { box.addEventListener('change', refresh); });
+    pickAll.addEventListener('change', function () {
+      picks.forEach(function (box) { box.checked = pickAll.checked; });
+      refresh();
+    });
+
+    function setReadonly(on) {
+      step2Fields.forEach(function (input) { input.disabled = on; });
+      step2Note.textContent = on
+        ? '加入已有收藏系列：以下信息只读，确认后按系列合并。'
+        : '名称可空，默认「国家 · 执政者 · 面值」。';
+    }
+
+    function findExistingOption() {
+      var value = existingInput.value.trim();
+      if (!value) { return null; }
+      return Array.prototype.slice.call(
+        document.querySelectorAll('#existing-list option')
+      ).filter(function (option) { return option.value === value; })[0] || null;
+    }
+
+    function fillExisting(option) {
+      step2Fields[0].value = option.getAttribute('data-name') || option.value;
+      step2Fields[1].value = option.getAttribute('data-country') || '';
+      step2Fields[2].value = option.getAttribute('data-ruler') || '';
+      step2Fields[3].value = option.getAttribute('data-denomination') || '';
+    }
+
+    function showStep2(readonly) {
+      step1.classList.add('coin-hidden');
+      step2.classList.remove('coin-hidden');
+      pill1.className = 'coin-step is-done';
+      pill2.className = 'coin-step is-active';
+      nextBtn.classList.add('coin-hidden');
+      confirmBtn.classList.remove('coin-hidden');
+      backBtn.classList.remove('coin-hidden');
+      setReadonly(readonly);
+    }
+
+    function resetWizard() {
+      step1.classList.remove('coin-hidden');
+      step2.classList.add('coin-hidden');
+      backBtn.classList.add('coin-hidden');
+      nextBtn.classList.remove('coin-hidden');
+      confirmBtn.classList.add('coin-hidden');
+      pill1.className = 'coin-step is-active';
+      pill2.className = 'coin-step';
+      document.querySelector('input[name="dest"][value="existing"]').checked = true;
+      existingInput.value = '';
+      existingId.value = '';
+      step2Fields.forEach(function (input) { input.value = ''; });
+      setReadonly(false);
+    }
+
+    function openWizard() {
+      document.getElementById('wiz-summary').textContent =
+        '将 ' + selected().length + ' 个观察系列升级为收藏系列';
+      resetWizard();
+      scrim.classList.remove('coin-hidden');
+      wizard.classList.remove('coin-hidden');
+    }
+
+    function closeWizard() {
+      scrim.classList.add('coin-hidden');
+      wizard.classList.add('coin-hidden');
+    }
+
+    upgradeBtn.addEventListener('click', openWizard);
+
+    document.addEventListener('click', function (event) {
+      var one = event.target.closest('[data-upgrade]');
+      if (one) {
+        var card = one.closest('.coin-watch-card');
+        picks.forEach(function (box) { box.checked = box === card.querySelector('.watch-pick'); });
+        refresh();
+        one.closest('details').removeAttribute('open');
+        openWizard();
+        return;
+      }
+      if (event.target.closest('[data-wiz-close]')) { closeWizard(); return; }
+      if (event.target === scrim) { closeWizard(); return; }
+      if (!event.target.closest('.coin-more')) {
+        document.querySelectorAll('.coin-more[open]').forEach(function (el) {
+          el.removeAttribute('open');
+        });
+      }
+    });
+
+    nextBtn.addEventListener('click', function () {
+      var dest = document.querySelector('input[name="dest"]:checked').value;
+      if (dest === 'existing') {
+        var option = findExistingOption();
+        if (!option) {
+          toast('请选择或输入已有的收藏系列');
+          existingInput.focus();
+          return;
+        }
+        existingId.value = option.getAttribute('data-id') || '';
+        fillExisting(option);
+        showStep2(true);
+        return;
+      }
+      existingId.value = '';
+      showStep2(false);
+    });
+
+    backBtn.addEventListener('click', resetWizard);
+
+    confirmBtn.addEventListener('click', function (event) {
+      var dest = document.querySelector('input[name="dest"]:checked').value;
+      if (dest === 'existing' && !existingId.value) {
+        event.preventDefault();
+        toast('请选择或输入已有的收藏系列');
+        return;
+      }
+      if (dest === 'new' && (!step2Fields[1].value.trim() || !step2Fields[3].value.trim())) {
+        event.preventDefault();
+        toast('新建收藏系列需要填写国家与面值');
+      }
+    });
+
+    refresh();
+  })();
+</script>
+{% endblock %}

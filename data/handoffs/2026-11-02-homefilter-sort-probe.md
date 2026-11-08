@@ -1,4 +1,4 @@
-status: pending
+status: done
 
 ## 已完成
 - 用 httpx 直连 `https://gapi.mxiqi.com/miniprogram.home.filter` 实测（cate_id_1=11000 / cate_id_2=11070 / status=2）。

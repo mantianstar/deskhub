@@ -1,14 +1,12 @@
 {% extends "base.html" %}
 {% block title %}{{ page_title }} · deskhub{% endblock %}
 {% block content_class %} content-wide{% endblock %}
-{% from "coins/_macros.html" import coin_nav, coin_head, coin_library_tabs with context %}
+{% from "coins/_macros.html" import coin_nav, coin_head, coin_series_card_meta with context %}
 
 {% block content %}
 {{ coin_nav("library") }}
-{% call coin_head("币库", "本地已采集 " ~ total_series ~ " 个系列 · 本次命中 " ~ (series_list|length) ~ " 个") %}
-  <a class="btn btn-primary" href="/coins/manage">采集新系列</a>
-{% endcall %}
-{{ coin_library_tabs("series") }}
+{% call coin_head("币库", "本地已采集 " ~ total_series ~ " 个系列 · 本次命中 " ~ series_total ~ " 个") %}{% endcall %}
+
 
 <form class="search-form" method="get" action="/coins/info">
   <div class="search-row search-row-labeled">
@@ -44,70 +42,71 @@
         {% for name in compositions %}<option value="{{ name }}"></option>{% endfor %}
       </datalist>
     </label>
+    <label class="field">状态
+      <select class="search-input" name="status">
+        <option value=""{% if not status %} selected{% endif %}>全部</option>
+        <option value="collected"{% if status == "collected" %} selected{% endif %}>已收藏</option>
+        <option value="watched"{% if status == "watched" %} selected{% endif %}>已观察</option>
+        <option value="unwatched"{% if status == "unwatched" %} selected{% endif %}>未观察</option>
+      </select>
+    </label>
     <button class="btn btn-primary" type="submit">查询</button>
   </div>
   {% if year_error %}<p class="form-error">{{ year_error }}</p>{% endif %}
 </form>
 
 {% if series_list %}
+<div class="coin-list-single">
   {% for item in series_list %}
   {% set imgs = series_images.get(item.numista_id, {}) %}
-  {% set stats = issue_stats.get(item.numista_id) %}
-  {% set value_n = value_counts.get(item.numista_id, 0) %}
-  {% set img_n = (1 if imgs.get('obverse') else 0) + (1 if imgs.get('reverse') else 0) %}
-  <div class="coin-series-card">
-    <a class="coin-series-main" href="/coins/series/{{ item.numista_id }}">
-      <div class="coin-series-imgs">
-        {% for side, label, url in [('obverse', '正面', item.obverse_picture), ('reverse', '背面', item.reverse_picture)] %}
-          {% if imgs.get(side) %}
-          <img class="coin-series-img" src="/coins/series/{{ item.numista_id }}/image/{{ side }}" alt="{{ label }}" loading="lazy">
-          {% else %}
-          <span class="coin-series-img coin-series-img-empty" title="{{ label }}{{ '图未缓存到本地' if url else '图缺失' }}">{{ label }}<br>{{ '未缓存' if url else '无图' }}</span>
-          {% endif %}
-        {% endfor %}
-      </div>
-      <div class="coin-series-meta">
-        <h2 class="coin-series-title">
-          {{ item.issuer or '—' }} · {{ item.denomination or '—' }}
-          · {{ item.min_year or '?' }}–{{ item.max_year or '?' }}
-          {%- if item.numista_id in commemorative_ids and item.issue_theme %} · {{ item.issue_theme }}{% endif %}
-        </h2>
-        <p class="coin-series-line">执政者：{{ item.ruler or '—' }} · 目录号：{{ item.catalog_no or '—' }}</p>
-        <p class="coin-series-line">
-          {{ item.composition or '—' }} · {{ item.shape or '—' }}
-          {%- if item.size_mm %} · 直径 {{ item.size_mm }}mm{% endif %}
-          {%- if item.weight_g %} · {{ item.weight_g }}g{% endif %}
-        </p>
-        <p class="coin-series-tags">
-          {% if stats and stats.issue_count %}
-          <span class="coin-series-tag">已采 {{ stats.year_count }} 个年份 · {{ stats.issue_count }} 个版别</span>
-          {% else %}
-          <span class="coin-series-tag coin-series-tag-off">年份未采</span>
-          {% endif %}
-          {% if value_n %}
-          <span class="coin-series-tag">估值 {{ value_n }} 条</span>
-          {% else %}
-          <span class="coin-series-tag coin-series-tag-off">估值未采</span>
-          {% endif %}
-          {% if img_n %}
-          <span class="coin-series-tag">图片 {{ img_n }}/2</span>
-          {% else %}
-          <span class="coin-series-tag coin-series-tag-off">图片未采</span>
-          {% endif %}
-        </p>
-      </div>
-    </a>
-    <div class="coin-series-actions">
-      <a class="btn btn-primary" href="/coins/manage" title="去采集中心补全年份 / 估值 / 图片">补全</a>
-      <a class="btn" href="/coins/series/{{ item.numista_id }}">详情</a>
+  <article class="coin-series-card">
+    <div class="coin-series-imgs">
+      {% for side, label, url in [('obverse', '正面', item.obverse_picture), ('reverse', '背面', item.reverse_picture)] %}
+        {% if imgs.get(side) %}
+        <img class="coin-series-img" src="/coins/series/{{ item.numista_id }}/image/{{ side }}" alt="{{ label }}" loading="lazy">
+        {% else %}
+        <span class="coin-series-img coin-series-img-empty" title="{{ label }}{{ '图未缓存到本地' if url else '图缺失' }}">{{ label }}<br>{{ '未缓存' if url else '无图' }}</span>
+        {% endif %}
+      {% endfor %}
     </div>
-  </div>
+    {{ coin_series_card_meta(item, year_counts[item.numista_id].year_count if item.numista_id in year_counts else 0, "/coins/series/" ~ item.numista_id) }}
+    <div class="coin-series-act">
+      {% if item.numista_id in collected_ids %}
+      <button class="btn coin-follow-btn is-collected" type="button" disabled>已收藏</button>
+      {% elif item.numista_id in watched_ids %}
+      <button class="btn coin-follow-btn is-followed" type="button" disabled>已观察</button>
+      {% else %}
+      <form method="post" action="/coins/watchlist/add">
+        <input type="hidden" name="numista_id" value="{{ item.numista_id }}">
+        <input type="hidden" name="next" value="{{ current_url }}">
+        <button class="btn coin-follow-btn" type="submit">加入观察</button>
+      </form>
+      {% endif %}
+    </div>
+  </article>
   {% endfor %}
+</div>
 {% else %}
 <div class="empty">
   本地没有符合条件的系列。<br>
   用 <a href="/coins/manage">采集中心</a> 调 Numista 采集，或跑
   <code>python -m app.cli coins-series --country 英国 --year 1808 --denomination 1便士</code>。
 </div>
+{% endif %}
+
+{% if total_pages > 1 %}
+<nav class="pager">
+  {% if prev_url %}
+  <a class="btn" href="{{ prev_url }}">上一页</a>
+  {% else %}
+  <span class="btn btn-disabled">上一页</span>
+  {% endif %}
+  <span class="pager-meta">第 {{ page }} / {{ total_pages }} 页 · 共 {{ series_total }} 条</span>
+  {% if next_url %}
+  <a class="btn" href="{{ next_url }}">下一页</a>
+  {% else %}
+  <span class="btn btn-disabled">下一页</span>
+  {% endif %}
+</nav>
 {% endif %}
 {% endblock %}

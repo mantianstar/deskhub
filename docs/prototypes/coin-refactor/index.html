@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>铜币重构原型 · deskhub</title>
+<link rel="stylesheet" href="proto.css">
+</head>
+<body>
+<header class="site-head">
+  <a class="brand" href="index.html">deskhub</a>
+  <nav class="nav">
+    <a class="nav-link" href="#">日报</a>
+    <a class="nav-link" href="#">历史搜索</a>
+    <a class="nav-link" href="#">源管理</a>
+    <a class="nav-link" href="#">运行控制</a>
+    <a class="nav-link" href="#">基金</a>
+    <a class="nav-link is-active" href="index.html">铜币</a>
+  </nav>
+</header>
+
+<main class="content content-wide">
+  <nav class="coin-tabs" aria-label="铜币模块导航">
+    <a href="recommend.html">今日推荐</a>
+    <a href="holdings.html">我的资产</a>
+    <a href="library.html">币库</a>
+    <a href="#moxiqi">麦稀奇数据</a>
+    <a class="btn btn-primary coin-tabs-action" href="ingest.html">采集中心</a>
+  </nav>
+
+  <section class="coin-page-head">
+    <div>
+      <h1>铜币模块重构 · 页面原型（第二轮）</h1>
+      <p class="coin-page-sub">9 个文件 · 静态自包含 · 双击可看，不依赖服务与构建</p>
+    </div>
+  </section>
+
+  <p class="coin-hint">采集中心按钮已移到铜币 tab 行最右侧（只在铜币模块出现）；各页查询条件、单列紧凑列表、弹窗与折叠卡片均可直接操作。</p>
+
+  <div class="coin-index-grid">
+    <a class="coin-index-card" href="recommend.html">
+      <h3>1. 今日推荐</h3>
+      <p>保留系列 / 推荐原因 / 是否命中查询区块；今日拍场下方加一行链接。</p>
+    </a>
+    <a class="coin-index-card" href="holdings.html">
+      <h3>2. 个人收藏清单</h3>
+      <p>标题统计移到子 tab 下方；修改品相改为居中弹窗（遮罩 + 取消 / 保存）。</p>
+    </a>
+    <a class="coin-index-card" href="collections.html">
+      <h3>3. 收藏系列列表</h3>
+      <p>点击整行收起 / 展开；标题加粗、次行灰色摘要，右侧只留「进入管理 →」。</p>
+    </a>
+    <a class="coin-index-card" href="collection-detail.html">
+      <h3>4. 收藏系列详情</h3>
+      <p>国家 / 执政者 / 面值 / 标题筛选；成员表去状态列改材质·尺寸，纪念币多两列；可编辑与删除系列。</p>
+    </a>
+    <a class="coin-index-card" href="watchlist.html">
+      <h3>5. 观察系列</h3>
+      <p>单列紧凑列表（正反图 / 标题 / 执政者 / 材质），上方 5 个查询条件；全选与 ⋯ 保持原方式。</p>
+    </a>
+    <a class="coin-index-card" href="library.html">
+      <h3>6. 币库列表</h3>
+      <p>单列紧凑列表，操作只保留「加入观察」，已观察置灰。</p>
+    </a>
+    <a class="coin-index-card" href="series-detail.html">
+      <h3>7. 币库详情</h3>
+      <p>图片左侧、信息 6 行 3 列在右；补全信息入口放到发行系列 / 发行主题下一行；观察按钮在系列信息行最右。</p>
+    </a>
+    <a class="coin-index-card" href="ingest.html">
+      <h3>8. 采集中心</h3>
+      <p>条件区上下堆叠、ID 方式折成一行；结果与队列分页；队列首列 Series ID 并支持四项查询。</p>
+    </a>
+  </div>
+
+  <section class="coin-panel coin-mt" id="moxiqi">
+    <div class="coin-panel-head">
+      <h2 class="coin-panel-title">麦稀奇数据 tab 落地示例</h2>
+      <span class="coin-panel-note">现有拍场与 BI 页面保持不变，只改入口归属</span>
+    </div>
+    <p class="coin-hint">一级 tab 第四个「麦稀奇数据」作为分区入口页，卡片进入现有页面，不重画拍场与数据分析；采集中心按钮挂在这一行最右侧。</p>
+    <div class="coin-grid-3">
+      <div class="coin-panel">
+        <h3 class="coin-panel-title">拍卖专场</h3>
+        <p class="coin-hint coin-mt">沿用现有拍场列表 / 专场 / 拍品详情，只把入口挂到本 tab 下。</p>
+      </div>
+      <div class="coin-panel">
+        <h3 class="coin-panel-title">数据分析 · 类目 / 店铺 / 拍品</h3>
+        <p class="coin-hint coin-mt">沿用现有三个分析子页与子导航，不做视觉改动。</p>
+      </div>
+      <div class="coin-panel">
+        <h3 class="coin-panel-title">说明</h3>
+        <p class="coin-hint coin-mt">麦稀奇相关页面本次不进入原型逐页确认，落地时仅调整导航归属。</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="coin-panel">
+    <div class="coin-panel-head">
+      <h2 class="coin-panel-title">本轮（第二轮）改动点</h2>
+    </div>
+    <ul class="coin-change-list">
+      <li><b>采集中心</b>从 header 移到铜币 tab 行最右侧，只在铜币模块出现。</li>
+      <li>今日推荐恢复查询区块（系列 / 推荐原因 / 是否命中），今日拍场下方加一行快捷链接。</li>
+      <li>个人收藏清单：标题与统计移到子 tab 下方；修改品相改为遮罩弹窗，不再用右侧抽屉。</li>
+      <li>收藏系列列表：国家 · 执政者 · 面值作为加粗大标题，次行灰色摘要；去掉展开 / 收起文字，整行点击切换；「进入管理 →」用正常文字色。</li>
+      <li>收藏系列详情：四条件筛选（标题模糊）、成员表改材质 / 尺寸、纪念币多两列、可编辑 / 删除系列。</li>
+      <li>观察系列与币库列表统一为<b>单列紧凑列表</b>，信息行与币库-系列库对齐。</li>
+      <li>升级向导 Step2 改两列栅格，间距与 Step 条一致；「加入已有收藏」改为可输入可下拉；选已有后仍显示一屏只读 Step2。</li>
+      <li>币库详情：图片左、信息 6 行 3 列右；补全信息放发行系列下一行；观察按钮在系列信息行最右。</li>
+      <li>采集中心：条件区上下堆叠、ID 方式折成一行；队列首列 Series ID；结果与队列分页；队列四条件查询。</li>
+    </ul>
+  </section>
+</main>
+
+<footer class="site-foot">本地服务 · 只有我一个人用 · 原型文件位于 docs/prototypes/coin-refactor/</footer>
+</body>
+</html>

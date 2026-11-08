@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>币库 · 铜币 · deskhub</title>
+<link rel="stylesheet" href="proto.css">
+<style>
+/* 本页专用：正背面并排缩略图 + 居中大图灯箱 */
+.lib-coin-imgs { display: flex; gap: 8px; flex: 0 0 auto; }
+.lib-coin-thumb { width: 72px; height: 72px; padding: 0; border: 0; background: none; border-radius: 50%; cursor: zoom-in; line-height: 0; }
+.lib-coin-thumb svg { display: block; width: 100%; height: 100%; }
+.lib-coin-thumb:hover svg { filter: brightness(1.08); }
+.lib-coin-thumb:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.lib-lightbox { position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center; padding: 24px; background: rgba(15, 12, 6, .74); }
+.lib-lightbox[hidden] { display: none; }
+.lib-lightbox-box { position: relative; display: flex; flex-direction: column; align-items: center; gap: 10px; }
+.lib-lightbox .lib-coin-thumb { width: min(72vw, 420px); height: min(72vw, 420px); cursor: default; }
+.lib-lightbox-caption { margin: 0; color: #f7f3e8; font-size: 13px; letter-spacing: .04em; }
+.lib-lightbox-close { position: absolute; top: -14px; right: -14px; width: 34px; height: 34px; padding: 0; border: 1px solid rgba(255, 255, 255, .45); border-radius: 50%; background: rgba(0, 0, 0, .35); color: #fff; font-size: 20px; line-height: 1; cursor: pointer; }
+.lib-lightbox-close:hover { background: rgba(0, 0, 0, .6); }
+@media (max-width: 640px) {
+  .lib-coin-thumb { width: 56px; height: 56px; }
+}
+</style>
+</head>
+<body>
+<header class="site-head">
+  <a class="brand" href="index.html">deskhub</a>
+  <nav class="nav">
+    <a class="nav-link" href="#">日报</a>
+    <a class="nav-link" href="#">历史搜索</a>
+    <a class="nav-link" href="#">源管理</a>
+    <a class="nav-link" href="#">运行控制</a>
+    <a class="nav-link" href="#">基金</a>
+    <a class="nav-link is-active" href="index.html">铜币</a>
+  </nav>
+</header>
+
+<main class="content content-wide">
+  <nav class="coin-tabs" aria-label="铜币模块导航">
+    <a href="recommend.html">今日推荐</a>
+    <a href="holdings.html">我的资产</a>
+    <a class="is-active" href="library.html" aria-current="page">币库</a>
+    <a href="index.html#moxiqi">麦稀奇数据</a>
+    <a class="btn btn-primary coin-tabs-action" href="ingest.html">采集中心</a>
+  </nav>
+
+  <section class="coin-page-head">
+    <div>
+      <h1>币库</h1>
+      <p class="coin-page-sub">本地已采集 214 个系列 · 本次命中 8 个 · 单列紧凑列表，操作只保留「加入观察」</p>
+    </div>
+  </section>
+
+  <form class="search-form" method="get" action="#">
+    <div class="search-row search-row-labeled">
+      <label class="field">货币类型
+        <select>
+          <option value="">全部</option>
+          <option value="标准流通币">标准流通币</option>
+          <option value="非流通纪念币">非流通纪念币</option>
+          <option value="非流通币">非流通币</option>
+          <option value="流通纪念币">流通纪念币</option>
+          <option value="投资币">投资币</option>
+          <option value="臆造币">臆造币</option>
+          <option value="样币">样币</option>
+          <option value="代币">代币</option>
+          <option value="纪念章">纪念章</option>
+          <option value="纸币">纸币</option>
+          <option value="硬币">硬币</option>
+        </select>
+      </label>
+      <label class="field">国家
+        <input class="search-input" type="text" list="lib-countries" placeholder="如 英国">
+      </label>
+      <label class="field">年份
+        <input class="search-input" type="text" placeholder="如 1938（可空）">
+      </label>
+      <label class="field">面值
+        <input class="search-input" type="text" list="lib-denoms" placeholder="如 1 便士">
+      </label>
+      <label class="field">材质
+        <input class="search-input" type="text" list="lib-materials" placeholder="如 青铜">
+      </label>
+      <button class="btn btn-primary" type="submit">查询</button>
+    </div>
+  </form>
+  <datalist id="lib-countries"><option>英国</option><option>法国</option><option>荷属东印度</option><option>英属印度</option><option>日本</option><option>德国</option></datalist>
+  <datalist id="lib-denoms"><option>1 便士</option><option>1/2 便士</option><option>5 法郎</option><option>1 分</option><option>1 卢比</option><option>1 圆</option><option>3 马克</option><option>5 分</option></datalist>
+  <datalist id="lib-materials"><option>青铜</option><option>铜</option><option>银</option><option>镍黄铜</option></datalist>
+
+  <div class="coin-list-single">
+    <article class="coin-series-card">
+      <div class="coin-series-imgs lib-coin-imgs">
+        <button class="lib-coin-thumb" type="button" aria-label="英国 · 1 便士 正面"><svg viewBox="0 0 120 120" role="img" aria-label="正面"><circle cx="60" cy="60" r="57" fill="#d9b45f"/><circle cx="60" cy="60" r="50" fill="none" stroke="#9a7428" stroke-width="3"/><circle cx="60" cy="60" r="42" fill="none" stroke="#b08a3e" stroke-width="1.5"/><text x="60" y="78" text-anchor="middle" font-size="50" font-family="serif" fill="#6b4c12">正</text></svg></button>
+        <button class="lib-coin-thumb" type="button" aria-label="英国 · 1 便士 背面"><svg viewBox="0 0 120 120" role="img" aria-label="背面"><circle cx="60" cy="60" r="57" fill="#c7ccd2"/><circle cx="60" cy="60" r="50" fill="none" stroke="#7d868f" stroke-width="3"/><circle cx="60" cy="60" r="42" fill="none" stroke="#98a1aa" stroke-width="1.5"/><text x="60" y="78" text-anchor="middle" font-size="50" font-family="serif" fill="#4f5761">背</text></svg></button>
+      </div>
+      <div class="coin-series-meta">
+        <h3 class="coin-series-title"><a href="series-detail.html">英国 · 1 便士 · 1937–1952</a></h3>
+        <p class="coin-series-line">执政者：乔治六世 · 目录号：KM#845</p>
+        <p class="coin-series-line">青铜 · 圆形 · 30.8 mm · 9.45 g</p>
+      </div>
+      <div class="coin-series-act">
+        <button class="btn coin-follow-btn is-followed" type="button" data-watch disabled>已观察</button>
+      </div>
+    </article>
+
+    <article class="coin-series-card">
+      <div class="coin-series-imgs lib-coin-imgs">
+        <button class="lib-coin-thumb" type="button" aria-label="英国 · 1/2 便士 正面"><svg viewBox="0 0 120 120" role="img" aria-label="正面"><circle cx="60" cy="60" r="57" fill="#d9b45f"/><circle cx="60" cy="60" r="50" fill="none" stroke="#9a7428" stroke-width="3"/><circle cx="60" cy="60" r="42" fill="none" stroke="#b08a3e" stroke-width="1.5"/><text x="60" y="78" text-anchor="middle" font-size="50" font-family="serif" fill="#6b4c12">正</text></svg></button>
+        <button class="lib-coin-thumb" type="button" aria-label="英国 · 1/2 便士 背面"><svg viewBox="0 0 120 120" role="img" aria-label="背面"><circle cx="60" cy="60" r="57" fill="#c7ccd2"/><circle cx="60" cy="60" r="50" fill="none" stroke="#7d868f" stroke-width="3"/><circle cx="60" cy="60" r="42" fill="none" stroke="#98a1aa" stroke-width="1.5"/><text x="60" y="78" text-anchor="middle" font-size="50" font-family="serif" fill="#4f5761">背</text></svg></button>
+      </div>
+      <div class="coin-series-meta">
+        <h3 class="coin-series-title"><a href="series-detail.html">英国 · 1/2 便士 · 1911–1936</a></h3>
+        <p class="coin-series-line">执政者：乔治五世 · 目录号：KM#14.2,Hern#S85-90</p>
+        <p class="coin-series-line">青铜 · 圆形 · 25.4 mm · 5.67 g</p>
+      </div>
+      <div class="coin-series-act">
+        <button class="btn coin-follow-btn" type="button" data-watch>加入观察</button>
+      </div>
+    </article>
+
+    <article class="coin-series-card">
+      <div class="coin-series-imgs lib-coin-imgs">
+        <button class="lib-coin-thumb" type="button" aria-label="法国 · 5 法郎 正面"><svg viewBox="0 0 120 120" role="img" aria-label="正面"><circle cx="60" cy="60" r="57" fill="#d9b45f"/><circle cx="60" cy="60" r="50" fill="none" stroke="#9a7428" stroke-width="3"/><circle cx="60" cy="60" r="42" fill="none" stroke="#b08a3e" stroke-width="1.5"/><text x="60" y="78" text-anchor="middle" font-size="50" font-family="serif" fill="#6b4c12">正</text></svg></button>
+        <button class="lib-coin-thumb" type="button" aria-label="法国 · 5 法郎 背面"><svg viewBox="0 0 120 120" role="img" aria-label="背面"><circle cx="60" cy="60" r="57" fill="#c7ccd2"/><circle cx="60" cy="60" r="50" fill="none" stroke="#7d868f" stroke-width="3"/><circle cx="60" cy="60" r="42" fill="none" stroke="#98a1aa" stroke-width="1.5"/><text x="60" y="78" text-anchor="middle" font-size="50" font-family="serif" fill="#4f5761">背</text></svg></button>
+      </div>
+      <div class="coin-series-meta">
+        <h3 class="coin-series-title"><a href="series-detail.html">法国 · 5 法郎 · 1870–1878</a></h3>
+        <p class="coin-series-line">执政者：第三共和国 · 目录号：F#334</p>
+        <p class="coin-series-line">银 · 圆形 · 37.0 mm · 25.0 g</p>
+      </div>
+      <div class="coin-series-act">
+        <button class="btn coin-follow-btn is-followed" type="button" data-watch disabled>已观察</button>
+      </div>
+    </article>
+
+    <article class="coin-series-card">
+      <div class="coin-series-imgs lib-coin-imgs">
+        <button class="lib-coin-thumb" type="button" aria-label="荷属东印度 · 1 分 正面"><svg viewBox="0 0 120 120" role="img" aria-label="正面"><circle cx="60" cy="60" r="57" fill="#d9b45f"/><circle cx="60" cy="60" r="50" fill="none" stroke="#9a7428" stroke-width="3"/><circle cx="60" cy="60" r="42" fill="none" stroke="#b08a3e" stroke-width="1.5"/><text x="60" y="78" text-anchor="middle" font-size="50" font-family="serif" fill="#6b4c12">正</text></svg></button>
+        <button class="lib-coin-thumb" type="button" aria-label="荷属东印度 · 1 分 背面"><svg viewBox="0 0 120 120" role="img" aria-label="背面"><circle cx="60" cy="60" r="57" fill="#c7ccd2"/><circle cx="60" cy="60" r="50" fill="none" stroke="#7d868f" stroke-width="3"/><circle cx="60" cy="60" r="42" fill="none" stroke="#98a1aa" stroke-width="1.5"/><text x="60" y="78" text-anchor="middle" font-size="50" font-family="serif" fill="#4f5761">背</text></svg></button>
+      </div>
+      <div class="coin-series-meta">
+        <h3 class="coin-series-title"><a href="series-detail.html">荷属东印度 · 1 分 · 1890–1945</a></h3>
+        <p class="coin-series-line">执政者：威廉明娜 · 目录号：KM#315</p>
+        <p class="coin-series-line">铜 · 圆形 · 29.0 mm · 9.6 g</p>
+      </div>
+      <div class="coin-series-act">
+        <button class="btn coin-follow-btn" type="button" data-watch>加入观察</button>
+      </div>
+    </article>
+
+    <article class="coin-series-card">
+      <div class="coin-series-imgs lib-coin-imgs">
+        <button class="lib-coin-thumb" type="button" aria-label="英属印度 · 1 卢比 正面"><svg viewBox="0 0 120 120" role="img" aria-label="正面"><circle cx="60" cy="60" r="57" fill="#d9b45f"/><circle cx="60" cy="60" r="50" fill="none" stroke="#9a7428" stroke-width="3"/><circle cx="60" cy="60" r="42" fill="none" stroke="#b08a3e" stroke-width="1.5"/><text x="60" y="78" text-anchor="middle" font-size="50" font-family="serif" fill="#6b4c12">正</text></svg></button>
+        <button class="lib-coin-thumb" type="button" aria-label="英属印度 · 1 卢比 背面"><svg viewBox="0 0 120 120" role="img" aria-label="背面"><circle cx="60" cy="60" r="57" fill="#c7ccd2"/><circle cx="60" cy="60" r="50" fill="none" stroke="#7d868f" stroke-width="3"/><circle cx="60" cy="60" r="42" fill="none" stroke="#98a1aa" stroke-width="1.5"/><text x="60" y="78" text-anchor="middle" font-size="50" font-family="serif" fill="#4f5761">背</text></svg></button>
+      </div>
+      <div class="coin-series-meta">
+        <h3 class="coin-series-title"><a href="series-detail.html">英属印度 · 1 卢比 · 1862–1901</a></h3>
+        <p class="coin-series-line">执政者：维多利亚 · 目录号：KM#492</p>
+        <p class="coin-series-line">银 · 圆形 · 30.8 mm · 11.66 g</p>
+      </div>
+      <div class="coin-series-act">
+        <button class="btn coin-follow-btn" type="button" data-watch>加入观察</button>
+      </div>
+    </article>
+
+    <article class="coin-series-card">
+      <div class="coin-series-imgs lib-coin-imgs">
+        <button class="lib-coin-thumb" type="button" aria-label="日本 · 1 圆 正面"><svg viewBox="0 0 120 120" role="img" aria-label="正面"><circle cx="60" cy="60" r="57" fill="#d9b45f"/><circle cx="60" cy="60" r="50" fill="none" stroke="#9a7428" stroke-width="3"/><circle cx="60" cy="60" r="42" fill="none" stroke="#b08a3e" stroke-width="1.5"/><text x="60" y="78" text-anchor="middle" font-size="50" font-family="serif" fill="#6b4c12">正</text></svg></button>
+        <button class="lib-coin-thumb" type="button" aria-label="日本 · 1 圆 背面"><svg viewBox="0 0 120 120" role="img" aria-label="背面"><circle cx="60" cy="60" r="57" fill="#c7ccd2"/><circle cx="60" cy="60" r="50" fill="none" stroke="#7d868f" stroke-width="3"/><circle cx="60" cy="60" r="42" fill="none" stroke="#98a1aa" stroke-width="1.5"/><text x="60" y="78" text-anchor="middle" font-size="50" font-family="serif" fill="#4f5761">背</text></svg></button>
+      </div>
+      <div class="coin-series-meta">
+        <h3 class="coin-series-title"><a href="series-detail.html">日本 · 1 圆 · 1870–1912</a></h3>
+        <p class="coin-series-line">执政者：明治 · 目录号：JNDA#01-10</p>
+        <p class="coin-series-line">银 · 圆形 · 38.6 mm · 26.96 g</p>
+      </div>
+      <div class="coin-series-act">
+        <button class="btn coin-follow-btn" type="button" data-watch>加入观察</button>
+      </div>
+    </article>
+
+    <article class="coin-series-card">
+      <div class="coin-series-imgs lib-coin-imgs">
+        <button class="lib-coin-thumb" type="button" aria-label="德国 · 3 马克 正面"><svg viewBox="0 0 120 120" role="img" aria-label="正面"><circle cx="60" cy="60" r="57" fill="#d9b45f"/><circle cx="60" cy="60" r="50" fill="none" stroke="#9a7428" stroke-width="3"/><circle cx="60" cy="60" r="42" fill="none" stroke="#b08a3e" stroke-width="1.5"/><text x="60" y="78" text-anchor="middle" font-size="50" font-family="serif" fill="#6b4c12">正</text></svg></button>
+        <button class="lib-coin-thumb" type="button" aria-label="德国 · 3 马克 背面"><svg viewBox="0 0 120 120" role="img" aria-label="背面"><circle cx="60" cy="60" r="57" fill="#c7ccd2"/><circle cx="60" cy="60" r="50" fill="none" stroke="#7d868f" stroke-width="3"/><circle cx="60" cy="60" r="42" fill="none" stroke="#98a1aa" stroke-width="1.5"/><text x="60" y="78" text-anchor="middle" font-size="50" font-family="serif" fill="#4f5761">背</text></svg></button>
+      </div>
+      <div class="coin-series-meta">
+        <h3 class="coin-series-title"><a href="series-detail.html">德国 · 3 马克 · 1913 · 莱比锡会战百年</a></h3>
+        <p class="coin-series-line">执政者：威廉二世 · 目录号：KM#635</p>
+        <p class="coin-series-line">银 · 圆形 · 33.0 mm · 16.67 g</p>
+      </div>
+      <div class="coin-series-act">
+        <button class="btn coin-follow-btn" type="button" data-watch>加入观察</button>
+      </div>
+    </article>
+
+    <article class="coin-series-card">
+      <div class="coin-series-imgs lib-coin-imgs">
+        <button class="lib-coin-thumb" type="button" aria-label="加拿大 · 1 元 正面"><svg viewBox="0 0 120 120" role="img" aria-label="正面"><circle cx="60" cy="60" r="57" fill="#d9b45f"/><circle cx="60" cy="60" r="50" fill="none" stroke="#9a7428" stroke-width="3"/><circle cx="60" cy="60" r="42" fill="none" stroke="#b08a3e" stroke-width="1.5"/><text x="60" y="78" text-anchor="middle" font-size="50" font-family="serif" fill="#6b4c12">正</text></svg></button>
+        <button class="lib-coin-thumb" type="button" aria-label="加拿大 · 1 元 背面"><svg viewBox="0 0 120 120" role="img" aria-label="背面"><circle cx="60" cy="60" r="57" fill="#c7ccd2"/><circle cx="60" cy="60" r="50" fill="none" stroke="#7d868f" stroke-width="3"/><circle cx="60" cy="60" r="42" fill="none" stroke="#98a1aa" stroke-width="1.5"/><text x="60" y="78" text-anchor="middle" font-size="50" font-family="serif" fill="#4f5761">背</text></svg></button>
+      </div>
+      <div class="coin-series-meta">
+        <h3 class="coin-series-title"><a href="series-detail.html">加拿大 · 1 元 · 1935 · 乔治五世登基25周年</a></h3>
+        <p class="coin-series-line">执政者：乔治五世 · 目录号：KM#30</p>
+        <p class="coin-series-line">银 · 圆形 · 36.0 mm · 23.33 g</p>
+      </div>
+      <div class="coin-series-act">
+        <button class="btn coin-follow-btn" type="button" data-watch>加入观察</button>
+      </div>
+    </article>
+  </div>
+
+  <p class="coin-hint coin-mt">已取消「采集新系列 / 补全 / 详情」按钮：采集走右上角采集中心，详情点系列标题进入。</p>
+
+  <nav class="pager">
+    <span class="btn btn-disabled">上一页</span>
+    <span class="pager-meta">第 1 / 11 页</span>
+    <a class="btn" href="#">下一页</a>
+  </nav>
+</main>
+
+<footer class="site-foot">本地服务 · 只有我一个人用</footer>
+
+<div class="lib-lightbox" id="lib-lightbox" hidden>
+  <div class="lib-lightbox-box" role="dialog" aria-modal="true" aria-label="硬币大图">
+    <button class="lib-lightbox-close" type="button" aria-label="关闭">×</button>
+    <div class="lib-lightbox-img" id="lib-lightbox-img"></div>
+    <p class="lib-lightbox-caption" id="lib-lightbox-caption"></p>
+  </div>
+</div>
+
+<div class="coin-toast coin-hidden" id="toast"></div>
+<script>
+(function () {
+  document.querySelectorAll('[data-watch]').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      btn.textContent = '已观察';
+      btn.classList.add('is-followed');
+      btn.disabled = true;
+      var box = document.getElementById('toast');
+      box.textContent = '已加入观察系列';
+      box.classList.remove('coin-hidden');
+      clearTimeout(box.timer);
+      box.timer = setTimeout(function () { box.classList.add('coin-hidden'); }, 1800);
+    });
+  });
+})();
+
+(function () {
+  var box = document.getElementById('lib-lightbox');
+  var slot = document.getElementById('lib-lightbox-img');
+  var caption = document.getElementById('lib-lightbox-caption');
+  var closeBtn = box.querySelector('.lib-lightbox-close');
+
+  function close() {
+    box.hidden = true;
+    slot.innerHTML = '';
+  }
+
+  document.querySelectorAll('.lib-coin-thumb').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      slot.innerHTML = '';
+      var copy = btn.cloneNode(true);
+      copy.setAttribute('tabindex', '-1');
+      slot.appendChild(copy);
+      caption.textContent = btn.getAttribute('aria-label') || '';
+      box.hidden = false;
+      closeBtn.focus();
+    });
+  });
+
+  closeBtn.addEventListener('click', close);
+  box.addEventListener('click', function (e) {
+    if (e.target === box) close();
+  });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && !box.hidden) close();
+  });
+})();
+</script>
+</body>
+</html>

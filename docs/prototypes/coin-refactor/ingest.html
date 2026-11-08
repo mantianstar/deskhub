@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>采集中心 · 铜币 · deskhub</title>
+<link rel="stylesheet" href="proto.css">
+</head>
+<body>
+<header class="site-head">
+  <a class="brand" href="index.html">deskhub</a>
+  <nav class="nav">
+    <a class="nav-link" href="#">日报</a>
+    <a class="nav-link" href="#">历史搜索</a>
+    <a class="nav-link" href="#">源管理</a>
+    <a class="nav-link" href="#">运行控制</a>
+    <a class="nav-link" href="#">基金</a>
+    <a class="nav-link is-active" href="index.html">铜币</a>
+  </nav>
+</header>
+
+<main class="content content-wide">
+  <nav class="coin-tabs" aria-label="铜币模块导航">
+    <a href="recommend.html">今日推荐</a>
+    <a href="holdings.html">我的资产</a>
+    <a href="library.html">币库</a>
+    <a href="index.html#moxiqi">麦稀奇数据</a>
+    <a class="btn btn-primary coin-tabs-action" href="ingest.html">采集中心</a>
+  </nav>
+
+  <section class="coin-page-head">
+    <div>
+      <h1>采集中心</h1>
+      <p class="coin-page-sub">条件探索 → 结果多选 → 任务队列 · 当前队列 5 条 · 4 节点：系列 / 年份 / 估值 / 图片</p>
+    </div>
+  </section>
+
+  <section class="coin-panel">
+    <div class="coin-panel-head">
+      <h2 class="coin-panel-title">探索条件 · 条件方式</h2>
+      <span class="coin-panel-note">按国家 + 年份 + 面值 + 材质</span>
+    </div>
+    <form class="coin-form-grid" id="cond-form">
+      <label class="field">国家<input class="search-input" type="text" value="英国" placeholder="如 英国"></label>
+      <label class="field">年份<input class="search-input" type="text" value="1938" placeholder="如 1808（可空）"></label>
+      <label class="field">面值<input class="search-input" type="text" value="1 便士" placeholder="如 1 便士"></label>
+      <label class="field">材质<input class="search-input" type="text" value="青铜" placeholder="如 青铜"></label>
+      <button class="btn btn-primary" type="submit">探索</button>
+    </form>
+  </section>
+
+  <section class="coin-panel">
+    <div class="coin-panel-head">
+      <h2 class="coin-panel-title">探索条件 · ID 方式</h2>
+      <span class="coin-panel-note">已知 Numista 系列 ID，折成一行</span>
+    </div>
+    <form class="coin-query-inline" id="id-form">
+      <label class="field coin-field-inline">系列 ID
+        <input class="search-input" type="text" value="670" inputmode="numeric" placeholder="如 670">
+      </label>
+      <button class="btn btn-primary" type="submit">按 ID 探索</button>
+      <span class="coin-hint">结果与条件方式合并进下方同一张表，去重后按系列 ID 排序。</span>
+    </form>
+  </section>
+
+  <section class="coin-panel">
+    <div class="coin-panel-head">
+      <h2 class="coin-panel-title">探索结果 <span class="coin-panel-note">6 条</span></h2>
+      <span class="coin-panel-note">多选后一次加入队列</span>
+    </div>
+    <div class="table-wrap">
+      <table class="sources-table">
+        <thead>
+          <tr>
+            <th class="coin-nowrap"><label class="coin-check"><input type="checkbox" id="pick-all"> 全选</label></th>
+            <th>ID</th><th>名称</th><th>国家</th><th>执政者</th><th>面值</th><th>年份</th><th>材质</th><th>尺寸</th>
+          </tr>
+        </thead>
+        <tbody id="result-body">
+          <tr><td><input class="result-pick" type="checkbox" value="670"></td><td><code>670</code></td><td>英国 乔治六世 1便士</td><td>英国</td><td>乔治六世</td><td>1 便士</td><td>1937–1952</td><td>青铜</td><td>30.8 mm</td></tr>
+          <tr><td><input class="result-pick" type="checkbox" value="671"></td><td><code>671</code></td><td>英国 乔治六世 半便士</td><td>英国</td><td>乔治六世</td><td>1/2 便士</td><td>1937–1952</td><td>青铜</td><td>25.4 mm</td></tr>
+          <tr><td><input class="result-pick" type="checkbox" value="672"></td><td><code>672</code></td><td>英国 乔治六世 3便士</td><td>英国</td><td>乔治六世</td><td>3 便士</td><td>1937–1952</td><td>镍黄铜</td><td>21.0 mm</td></tr>
+          <tr><td><input class="result-pick" type="checkbox" value="1234"></td><td><code>1234</code></td><td>法国 第三共和国 5法郎</td><td>法国</td><td>第三共和国</td><td>5 法郎</td><td>1870–1878</td><td>银</td><td>37.0 mm</td></tr>
+          <tr><td><input class="result-pick" type="checkbox" value="2081"></td><td><code>2081</code></td><td>荷属东印度 威廉明娜 1分</td><td>荷属东印度</td><td>威廉明娜</td><td>1 分</td><td>1890–1945</td><td>铜</td><td>29.0 mm</td></tr>
+          <tr><td><input class="result-pick" type="checkbox" value="3310"></td><td><code>3310</code></td><td>日本 明治 1圆</td><td>日本</td><td>明治</td><td>1 圆</td><td>1870–1912</td><td>银</td><td>38.6 mm</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="coin-select-bar coin-mt">
+      <span class="coin-select-count" id="result-count">已选 0 / 6</span>
+      <button class="btn btn-primary" type="button" id="join-queue" disabled>加入队列 (0)</button>
+    </div>
+    <nav class="pager">
+      <span class="btn btn-disabled">上一页</span>
+      <span class="pager-meta">第 1 / 3 页 · 共 6 条</span>
+      <a class="btn" href="#">下一页</a>
+    </nav>
+  </section>
+
+  <section class="coin-panel">
+    <div class="coin-panel-head">
+      <h2 class="coin-panel-title">任务队列 <span class="coin-panel-note">5 条</span></h2>
+      <span class="coin-panel-note">按加入时间倒序 · 跳过已有数据的节点显示「已跳过」</span>
+    </div>
+
+    <form class="search-form" method="get" action="#">
+      <div class="search-row search-row-labeled">
+        <label class="field">任务名称
+          <input class="search-input" type="text" placeholder="模糊匹配，如 乔治六世">
+        </label>
+        <label class="field">状态
+          <select><option>全部</option><option>未开始</option><option>进行中</option><option>完成</option></select>
+        </label>
+        <label class="field">加入时间
+          <input class="search-input" type="date">
+        </label>
+        <label class="field">完成时间
+          <input class="search-input" type="date">
+        </label>
+        <button class="btn btn-primary" type="submit">查询</button>
+      </div>
+    </form>
+
+    <div class="table-wrap">
+      <table class="sources-table">
+        <thead>
+          <tr><th class="coin-nowrap">Series ID</th><th>任务名称</th><th>进度</th><th>状态</th><th class="coin-nowrap">加入时间</th><th class="coin-nowrap">完成时间</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>3310</code></td>
+            <td>日本 · 明治 · 1 圆 · 1874 · 38.6 mm · 银</td>
+            <td>
+              <div class="coin-node-row">
+                <span class="coin-node is-done">系列</span>
+                <span class="coin-node is-skip">年份 · 已跳过</span>
+                <span class="coin-node is-wait">估值</span>
+                <span class="coin-node is-wait">图片</span>
+              </div>
+            </td>
+            <td><span class="coin-badge">未开始</span></td>
+            <td class="coin-nowrap">11-08 10:24</td>
+            <td class="coin-nowrap">—</td>
+          </tr>
+          <tr>
+            <td><code>1145</code></td>
+            <td>英属印度 · 维多利亚 · 1 卢比 · 1901 · 30.8 mm · 银</td>
+            <td>
+              <div class="coin-node-row">
+                <span class="coin-node is-done">系列</span>
+                <span class="coin-node is-wait">年份</span>
+                <span class="coin-node is-wait">估值</span>
+                <span class="coin-node is-wait">图片</span>
+              </div>
+            </td>
+            <td><span class="coin-badge">未开始</span></td>
+            <td class="coin-nowrap">11-08 10:20</td>
+            <td class="coin-nowrap">—</td>
+          </tr>
+          <tr>
+            <td><code>2081</code></td>
+            <td>荷属东印度 · 威廉明娜 · 1 分 · 1902 · 29.0 mm · 铜</td>
+            <td>
+              <div class="coin-node-row">
+                <span class="coin-node is-done">系列</span>
+                <span class="coin-node is-skip">年份 · 已跳过</span>
+                <span class="coin-node is-skip">估值 · 已跳过</span>
+                <span class="coin-node is-running">图片</span>
+              </div>
+            </td>
+            <td><span class="coin-badge is-running">进行中</span></td>
+            <td class="coin-nowrap">11-08 10:15</td>
+            <td class="coin-nowrap">—</td>
+          </tr>
+          <tr>
+            <td><code>1234</code></td>
+            <td>法国 · 第三共和国 · 5 法郎 · 1874 · 37.0 mm · 银</td>
+            <td>
+              <div class="coin-node-row">
+                <span class="coin-node is-done">系列</span>
+                <span class="coin-node is-done">年份</span>
+                <span class="coin-node is-running">估值</span>
+                <span class="coin-node is-wait">图片</span>
+              </div>
+            </td>
+            <td><span class="coin-badge is-running">进行中</span></td>
+            <td class="coin-nowrap">11-08 10:02</td>
+            <td class="coin-nowrap">—</td>
+          </tr>
+          <tr>
+            <td><code>670</code></td>
+            <td>英国 · 乔治六世 · 1 便士 · 1938 · 30.8 mm · 青铜</td>
+            <td>
+              <div class="coin-node-row">
+                <span class="coin-node is-done">系列</span>
+                <span class="coin-node is-done">年份</span>
+                <span class="coin-node is-done">估值</span>
+                <span class="coin-node is-done">图片</span>
+              </div>
+            </td>
+            <td><span class="coin-badge is-done">完成</span></td>
+            <td class="coin-nowrap">11-08 09:12</td>
+            <td class="coin-nowrap">11-08 09:18</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <nav class="pager">
+      <span class="btn btn-disabled">上一页</span>
+      <span class="pager-meta">第 1 / 2 页 · 共 5 条</span>
+      <a class="btn" href="#">下一页</a>
+    </nav>
+    <p class="coin-hint coin-mt">本页只做采集与排队，不出现加入收藏 / 加入观察等业务按钮。</p>
+  </section>
+</main>
+
+<footer class="site-foot">本地服务 · 只有我一个人用</footer>
+
+<div class="coin-toast coin-hidden" id="toast"></div>
+<script>
+(function () {
+  var picks = Array.prototype.slice.call(document.querySelectorAll('.result-pick'));
+  var pickAll = document.getElementById('pick-all');
+  var count = document.getElementById('result-count');
+  var join = document.getElementById('join-queue');
+
+  function toast(text) {
+    var box = document.getElementById('toast');
+    box.textContent = text;
+    box.classList.remove('coin-hidden');
+    clearTimeout(box.timer);
+    box.timer = setTimeout(function () { box.classList.add('coin-hidden'); }, 1800);
+  }
+
+  function refresh() {
+    var n = picks.filter(function (box) { return box.checked; }).length;
+    count.textContent = '已选 ' + n + ' / ' + picks.length;
+    join.textContent = '加入队列 (' + n + ')';
+    join.disabled = n === 0;
+    pickAll.checked = n === picks.length && n > 0;
+  }
+
+  picks.forEach(function (box) { box.addEventListener('change', refresh); });
+  pickAll.addEventListener('change', function () {
+    picks.forEach(function (box) { box.checked = pickAll.checked; });
+    refresh();
+  });
+
+  join.addEventListener('click', function () {
+    var n = picks.filter(function (box) { return box.checked; }).length;
+    toast('已加入队列：' + n + ' 条（原型）');
+  });
+
+  document.getElementById('cond-form').addEventListener('submit', function (event) {
+    event.preventDefault();
+    toast('已按条件探索（原型）');
+  });
+  document.getElementById('id-form').addEventListener('submit', function (event) {
+    event.preventDefault();
+    toast('已按系列 ID 探索（原型）');
+  });
+
+  refresh();
+})();
+</script>
+</body>
+</html>

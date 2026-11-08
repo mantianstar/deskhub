@@ -10,6 +10,134 @@
 
 ---
 
+## v1.145 — 2026-11-08 采集中心两种探索改为调 Numista 接口 + 候选池暂存
+
+- 条件方式 / ID 方式不再查本地库：`explore_series` + `explore_series_by_id` 实时调 `/types` 与 `/types/{id}`，命中即写入 `coin_explore_candidates`（临时表），失败在页面就地提示。
+- 入队后第一步（系列）优先读候选池暂存数据，不重复调接口；候选状态保持不变（`adopt_candidate(mark_adopted=False)`）。
+
+## v1.144 — 2026-11-08 币库列表增加收藏 / 观察状态筛选
+
+- 起因：币库列表只能在卡片上逐个看是否已收藏 / 已观察，无法按状态筛。
+- 改了什么：`/coins/info` 新增 `status` 参数（`collected` 已收藏 / `watched` 已观察 / `unwatched` 未观察，缺省全部），口径与卡片角标一致（已收藏优先）；`coins/info.html` 增加状态下拉，翻页链接保留该条件。
+- 验证：`tests/test_coins_pages.py` 新增 1 例（四种状态）。
+- 受影响：无（仅查询条件与界面展示）。
+
+## v1.143 — 2026-11-08 币库 / 观察系列卡片年份数与系列详情页排版微调
+
+- 起因：列表卡片年份处显示的是统计对象整串内容，不是年份数；详情页编辑入口是大按钮、长文本未成卡片。
+- 改了什么：`coins/info.html`、`coins/watchlist.html` 传 `year_counts[].year_count`（缺省 0），卡片改为「N 个年份」；`coins/series.html` 编辑图标改为 `.coin-edit-icon` 小图标并紧跟发行主题文字，「系列信息」→「系列基本信息」、「各年份信息」→「年份信息」，正反面描述 / 铭文 / 备注包进「系列详细信息」卡片；`style.css` 补 `.coin-edit-icon`。
+- 验证：全量 `pytest -q` → 571 passed, 1 skipped。
+- 受影响：无（仅界面展示，spec / plan 正文未改）。
+
+## v1.142 — 2026-11-08 收藏系列详情页套用基础布局 + 补全按钮按完整性显示
+
+- 起因：收藏系列详情页缺样式；币库系列详情页不论是否齐全都显示「补全信息」按钮。
+- 改了什么：`coins/collection_detail.html` 补 `{% extends "base.html" %}`（原先漏了，页面未套基础布局）；`series_page` 新增 `info_complete`（年份 / 估值 / 正反图都齐），`coins/series.html` 仅在未完整时显示「补全信息」，完整时改提示文案。
+- 验证：`tests/test_coins_pages.py` 新增 1 例（完整系列隐藏按钮）。
+- 受影响：`spec/coins.md`、`plan/coins.md`（仅行为细节，正文未改）。
+
+## v1.141 — 2026-11-08 采集中心按原型重写（条件 / ID 探索 + 多选入队 + 队列筛选分页）
+
+- 起因：交接第 9 项——采集中心按 `docs/prototypes/coin-refactor/ingest.html` 全量重写，代码已落，测试与文档欠账。
+- 改了什么：`app/routers/coins.py` 重写 `ingest_page`（两种探索合并去重、结果与队列各 20 条分页、队列四筛选）、新增 `POST /coins/ingest/queue`（多选入队）、新增 `INGEST_TASK_BADGE_LABELS` 与 `_ingest_result_series()`；`app/templates/coins/ingest.html` 按原型重写；`style.css` 补节点胶囊 / 内联查询样式。
+- 验证：新增 `test_ingest_condition_explore_merges_series_id`、`test_ingest_queue_enqueues_selected`；全量 `pytest -q` → 570 passed, 1 skipped。
+- 受影响：`spec/coins.md` §14.23、`plan/coins.md` §18.23。
+
+## v1.140 — 2026-11-08 麦稀奇数据入口页（`/coins/mxiqi`）
+
+- 起因：交接未完成最后一项「麦稀奇数据入口整合」；原型 `index.html` 第四 tab 定为分区入口页，现有页面不改视觉。
+- 改了什么：`app/routers/coins.py` 新增 `GET /coins/mxiqi`（`mxiqi_page`）；新增 `app/templates/coins/mxiqi.html`（`coin_nav("data")` + 四张入口卡：拍卖专场 `/coins`、拍品搜索 `/coins/search`、分类分析 `/coins/analysis`、店铺分析 `/coins/shops`）；`coins/_macros.html` 的「麦稀奇数据」改指 `/coins/mxiqi`，active 映射补 `mxiqi` / `data`；`style.css` 补 `.coin-entry-grid` / `.coin-entry`。
+- 验证：`tests/test_coins_pages.py` 新增 `test_mxiqi_page_links_existing_pages`。
+- 受影响：`spec/coins.md` §14.22、`plan/coins.md` §18.22。
+
+## v1.139 — 2026-11-08 补齐收藏系列文档（§14.21 / §18.21）
+
+- 起因：v1.137 / v1.138 代码已落，spec §14.2x、plan §18.2x 正文欠账。
+- 改了什么：`spec/coins.md` 新增 §14.21（列表总览 / 详情页 / 收藏覆盖口径 / 验收）；`plan/coins.md` 新增 §18.21（`_collection_overview` 共用、详情路由、回跳锚点、模板与样式、测试落点）。
+- 验证：仅文档；代码与测试未动。
+- 受影响：`spec/coins.md` §14.21、`plan/coins.md` §18.21。
+
+## v1.138 — 2026-11-08 今日推荐右栏补「收藏覆盖」区块
+
+- 起因：交接未完成项「今日推荐查询区块」——原型 `recommend.html` 右栏底部有收藏覆盖汇总，落地页缺。
+- 改了什么：`app/routers/coins.py` `collection_page` 新增 `covered_year_total`（各画像 `owned_entries` 求和）并传入模板；`app/templates/coins/collection.html` 在右栏链接后加 `.coin-coverage`（标题「收藏覆盖」+ 次行灰字「已覆盖 X 个系列 / Y 个年份，缺口 Z 个年份」）；`app/static/style.css` 补 `.coin-coverage` 三行。
+- 顺手：`data/handoffs/2026-11-06-coinmap-era-inference.md`、`2026-11-02-homefilter-sort-probe.md` 首行置 `status: done`。
+- 验证：`tests/test_coins_collection.py` 今日推荐用例补两条断言。
+
+## v1.137 — 2026-11-08 收藏系列改卡片 + 收藏系列详情页
+
+- 起因：交接未完成第 1、2 项——列表按原型收成「一行摘要」，管理动作拆到详情页。
+- 改了什么：`app/routers/coins.py` 抽 `_collection_overview()`（列表 / 详情共用），新增 `GET /coins/collections/{collection_id}`（`collection_detail_page`，不存在返回 404）；成员加入 / 移出回跳改到详情页 `#member-panel`；`app/templates/coins/collections.html` 改 `article.coin-collection-card` + `.col-row`（名称 / 年份 / 成员数 + 「进入管理 →」）+ `.col-body`（ID、进度、年份胶囊、成员胶囊，默认收起）；新增 `app/templates/coins/collection_detail.html`（系列概况 + 保存品相 + 成员管理 + 编辑 / 删除）；`app/static/style.css` 补 `.col-*` 与 `.coin-panel*`。
+- 顺手：删除已无引用的 `_attach_collection_names`。
+- 验证：`tests/test_coins_pages.py` 新增 `test_collections_page_shows_rows_and_detail_link`、`test_collection_detail_page_lists_members_and_404s`；该文件 96 passed。
+- 未做：`spec/coins.md` §14.2x、`plan/coins.md` §18.2x 正文未补；浏览器实测未跑。
+- 受影响：`spec/coins.md`、`plan/coins.md`（待补）。
+
+## v1.136 — 2026-11-08 观察系列页（币库 / 观察系列）
+
+- 起因：观察写入（v1.135）已落但没有「可看、可退」的列表页；交接下一步 2。
+- 改了什么：新增 `GET /coins/watchlist`（`list_coin_watchlist` 取观察顺序 + `search_coin_series(numista_ids=…)` 做五条件过滤）与 `POST /coins/watchlist/remove`（回跳走 `_return_target`，限 `/coins/`）；新模板 `app/templates/coins/watchlist.html`（单列卡片、正反图、货币类型 / 国家 / 年份 / 面值 / 材质查询、单个「放弃观察」）；`coin_library_tabs` 加「观察系列」；`search_coin_series` 增可选 `numista_ids`（空列表直接返回空）；plan §18.20 落盘。
+- 本轮不做：全选 + 「升级选中」（升级到收藏的口径未定）。
+- 验证：`tests/test_coins_pages.py` 新增 `test_watchlist_page_lists_filters_and_removes`；该文件 95 passed。
+- 受影响：`spec/coins.md` §14.20、`plan/coins.md` §18.20。
+
+## v1.136 — 2026-11-08 观察系列页（币库 / 观察系列）
+
+- 需求：交接第 2 步——币库列表操作只保留「加入观察」；系列详情把观察按钮放「系列信息」行最右，图片在左、信息 3 列在右，补齐数据三按钮移入右栏。
+- 实现：`app/routers/coins.py` 新增 `POST /coins/watchlist/add`（`add_coin_watch_item`，幂等；回跳只接受 `/coins/` 内地址）；`info_page` 传 `watched_ids` / `next_url`，`series_page` 传 `is_watched`。
+- 模板：`coins/info.html` 操作区改「加入观察 / 已观察（置灰）」；`coins/series.html` 改 `coin-panel` + `.sd-series-grid`（左图右信息），Numista 链接统一 `https://en.numista.com/{series_id}`。
+- 样式：`style.css` 增 `.coin-series-info` / `.sd-series-grid` / `.coin-facts-3col`，900px 以下单列。
+- 验证：`tests/test_coins_pages.py` 新增 2 个用例（加入观察幂等 / 详情观察按钮），该文件 94 passed；全量 563 passed, 1 skipped。
+- 影响：spec §14.20（已补）/ plan §18.20（待补，内容见 `data/handoffs/2026-11-08-coin-watchlist.md`）。
+
+## v1.134 — 2026-11-08 铜币 4 tab 归并 + 采集中心独立整页
+
+- 需求：交接两点拍板落地——① 今日推荐 = `/coins/collection`；我的资产 = `/coins/grades`；麦稀奇数据 = 分类分析 / 店铺分析 / 拍场页。② 采集中心 = 独立整页 `GET /coins/ingest`。
+- 实现：`coins/_macros.html` 的 `coin_nav` 改 4 tab（今日推荐 / 我的资产 / 币库 / 麦稀奇数据），最右挂「采集中心」；旧 active key（today / collection / library / explore / analysis / auction）在宏内映射到新 tab，模板调用点不动。`coin_library_tabs` 增「候选池」、采集中心改指 `/coins/ingest`。
+- 采集中心：`app/routers/coins.py` 新增 `GET /coins/ingest`（`list_coin_ingest_tasks` + 4 节点状态）与 `POST /coins/ingest`（`enqueue_coin_ingest_task` 后 `ingest.start`）；新模板 `coins/ingest.html` 只有入队、刷新与队列列表，无业务按钮。`.coin-tabs .coin-tabs-tool` 右对齐。
+- 验证：`tests/test_coins_pages.py` 新增 3 个用例（4 tab / 入队与复用 / 非法 ID），该文件定向跑通。
+- 影响：spec §14.18 / plan 铜币重构段（下一段：币库「+ 观察」与详情补全）。
+
+## v1.133 — 2026-11-08 采集队列执行器（4 节点串行）
+
+- 需求：交接单第 3 步续做——任务表与读写层已落，补齐后台执行器，采集中心才能「入队 → 自动采」。
+- 实现：新增 `app/coins/ingest.py`：`NODES` 四节点（series / years / values / images），每节点先判「本地已有 → `skip`」；节点异常 → 该节点 `failed` + `error`、任务收尾 `failed`、后续节点保持 `wait`；图片节点调用成功但无图仍记 `done`（与用户确认口径一致）。`run_queue` 循环 claim → 跑 → 直到队列空；`start` 用 `asyncio.create_task` 后台跑一轮（已在跑返回 `False`）。
+- 验证：`tests/test_coins_collection.py` 新增 3 个用例（全节点 done / 已有数据全 skip 且不重复采集 / 节点失败只推进到该节点），该文件 52 passed；全量 558 passed, 1 skipped。
+- 影响：spec §14.18 / plan 铜币重构段（下一段：4 tab 导航与采集中心入口）。
+
+## v1.132 — 2026-11-08 采集任务读写（coin_ingest_tasks CRUD）
+
+- 需求：交接单第 3 步——任务表已落（v34），补齐读写层，供采集中心排队与队列执行器使用。
+- 实现：`app/models.py` 新增 `CoinIngestTask`；`app/repository.py` 新增 `enqueue_coin_ingest_task`（同系列命中 pending / running 时复用现有任务并返回 `reused=True`）、`list_coin_ingest_tasks`（任务名 / 状态 / 加入时间 / 完成时间四组条件可组合）、`set_coin_ingest_node`（节点名与状态白名单校验，带 `error` 时同步记到任务）、`claim_next_coin_ingest_task`（最早 pending → running + started_at）、`finish_coin_ingest_task`（done / failed + finished_at）。
+- 验证：`pytest -q tests/test_coins_collection.py` → 49 passed（新增 2 例：复用 / 先入先出 / 节点推进 / 收尾后可再入队；四条件过滤）。
+
+受影响：app/models.py、app/repository.py、tests/test_coins_collection.py
+
+## v1.131 — 2026-11-08 异步采集任务表（coin_ingest_tasks，schema v34）
+
+- 需求：采集中心要「条件探索 → 结果多选 → 任务队列」，队列每行 4 节点（系列 / 年份 / 估值 / 图片）各记状态；与用户确认三点：同系列已在队列时复用现有任务并提示、节点保留独立 `failed` + `error`、图片采完仍为空记 `done`（不算缺失）。
+- 实现：`app/models.py` 新增 `coin_ingest_tasks`（`series_numista_id` / `name` / `status` / `node_series|years|values|images` / `source` / `error` / 三个时间列）+ `idx_coin_ingest_status`（status, created_at DESC）+ 局部唯一索引 `idx_coin_ingest_active`（同系列只允许一条 pending/running），`SCHEMA_VERSION` 升到 34；`app/migrations/__init__.py` 登记 ("33","34") 直升级（只建表，沿用 v33 加列与回填）。
+- 节点取值：`wait` / `running` / `done` / `skip` / `failed`；任务级 `status` 为派生值 `pending` / `running` / `done` / `failed`。
+- 验证：`pytest -q tests/test_coins_categories.py tests/test_coins_analysis.py tests/test_coins_collection.py` → 80 passed（8 处 schema 版本断言 33→34 同步）。
+
+受影响：app/models.py、app/migrations/__init__.py、tests/test_coins_categories.py、tests/test_coins_analysis.py
+
+## v1.130 — 2026-11-08 观察系列读写（watchlist CRUD）
+
+- 需求：交接单第 2 步——观察系列表已落（v33），补齐读写：加入 / 取消 / 列表（带系列字段），供「币库 + 观察」与「观察系列页」使用。
+- 实现：`app/models.py` 新增 `CoinWatchItem`（id / series_id / numista_id / 标题 / 发行方 / 执政者 / 面值 / 年起止 / url / created_at）；`app/repository.py` 新增 `add_coin_watch_item`（按 `numista_id` 解析 `coin_series.id`，`INSERT OR IGNORE` 幂等，系列不存在返回 False）、`remove_coin_watch_item`、`list_coin_watchlist`（`left join coin_series_cn` 取中文展示字段，新加入在前）。
+- 验证：`pytest -q tests/test_coins_collection.py` → 47 passed；全量 `pytest -q` → 552 passed, 1 skipped（改动前基线）。
+
+受影响：app/models.py、app/repository.py、tests/test_coins_collection.py
+
+## v1.129 — 2026-11-08 铜币观察系列表（coin_watchlist，schema v33）
+
+- 需求：币库详情页新增「+ 观察」，观察粒度 = 单个 Numista 系列，供「我的资产 · 观察系列」页读取与批量升级。
+- 实现：`app/models.py` 新增 `coin_watchlist`（`series_id` 唯一 + 外键 `coin_series` 级联删除、`created_at`），`SCHEMA_VERSION` 升到 33；`app/migrations/__init__.py` 登记 v33 的跨版本升级（只建表，沿用 v32 的加列与回填）。
+- 验证：`pytest -q tests/test_coins_categories.py tests/test_coins_analysis.py` 通过；临时库 `init_db` 建表成功。
+
+受影响：app/models.py、app/migrations/__init__.py
+
 ## v1.128 — 2026-11-06 麦稀奇成交图放大 + 同年多版别按发行量 / 稀有度择一
 
 - 需求：系列详情页「麦稀奇成交」区块的拍品图要能点开放大；成交拍品映射已能取到系列（`series_numista_id`），但同一年对应多个单版时此前一律留空，改为先看发行量取大者，发行量都为空取稀有度高者，两者都为空才维持留空。

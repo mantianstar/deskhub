@@ -1,4 +1,4 @@
-status: pending
+status: done
 
 # 2026-11-06 映射：标题面值归一 + 日本年号推断
 

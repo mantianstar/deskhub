@@ -263,6 +263,49 @@ for _from in (
         else _then_steps(_previous, v32.normalize_grade_keys)
     )
 
+# 跨版本直升级到 v33：只新增观察系列表（DDL 已建），沿用 v32 的加列与回填
+COLUMN_MIGRATIONS[("32", "33")] = {}
+for _from in (
+    "20",
+    "21",
+    "22",
+    "23",
+    "24",
+    "25",
+    "26",
+    "27",
+    "28",
+    "29",
+    "30",
+    "31",
+):
+    COLUMN_MIGRATIONS[(_from, "33")] = COLUMN_MIGRATIONS[(_from, "32")]
+    _previous = DATA_MIGRATIONS.get((_from, "32"))
+    if _previous is not None:
+        DATA_MIGRATIONS[(_from, "33")] = _previous
+
+# 跨版本直升级到 v34：只新增异步采集任务表（DDL 已建），沿用 v33 的加列与回填
+COLUMN_MIGRATIONS[("33", "34")] = {}
+for _from in (
+    "20",
+    "21",
+    "22",
+    "23",
+    "24",
+    "25",
+    "26",
+    "27",
+    "28",
+    "29",
+    "30",
+    "31",
+    "32",
+):
+    COLUMN_MIGRATIONS[(_from, "34")] = COLUMN_MIGRATIONS[(_from, "33")]
+    _previous = DATA_MIGRATIONS.get((_from, "33"))
+    if _previous is not None:
+        DATA_MIGRATIONS[(_from, "34")] = _previous
+
 
 def apply_columns(conn: sqlite3.Connection, tables: dict[str, dict[str, str]]) -> list[str]:
     """给老表补列（已存在的列跳过）。返回实际新增的 `表.列` 列表。"""

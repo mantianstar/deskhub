@@ -32,11 +32,30 @@
     {%- if series.min_year or series.max_year %} · {{ series.min_year or '?' }}–{{ series.max_year or '?' }}{% endif %}
     · Numista #{{ series.numista_id }}
     {%- if series.catalog_no %} · {{ series.catalog_no }}{% endif %}
-    {%- if series.url %} · <a href="{{ series.url }}" target="_blank" rel="noreferrer">Numista 页面</a>{% endif %}
+    · <a href="https://en.numista.com/{{ series.numista_id }}" target="_blank" rel="noreferrer">Numista 页面</a>
   </p>
 </section>
 
-<h2 class="coin-section-title">系列信息</h2>
+<section class="coin-panel">
+  <div class="coin-series-info">
+    <div>
+      <h2 class="coin-panel-title">系列基本信息</h2>
+    </div>
+    {% if not is_candidate %}
+    {% if is_watched %}
+    <button class="btn coin-follow-btn is-followed" type="button" disabled>已观察</button>
+    {% else %}
+    <form method="post" action="/coins/watchlist/add">
+      <input type="hidden" name="numista_id" value="{{ series.numista_id }}">
+      <input type="hidden" name="next" value="{{ return_to }}">
+      <button class="btn coin-follow-btn" type="submit">+ 观察</button>
+    </form>
+    {% endif %}
+    {% endif %}
+  </div>
+
+  <div class="sd-series-grid">
+    <div class="sd-imgs">
 
 {% if has_obverse_image or has_reverse_image %}
 <div class="coin-series-imgs-lg">
@@ -64,7 +83,10 @@
 </p>
 {% endif %}
 
-<div class="coin-facts">
+    </div>
+
+    <div class="sd-series-side">
+<div class="coin-facts-3col">
   <span class="coin-fact">大类 <b>{{ series.object_type or '—' }}</b></span>
   <span class="coin-fact">国家 <b>{{ series.issuer or '—' }}</b></span>
   <span class="coin-fact">面值 <b>{{ series.denomination or '—' }}</b></span>
@@ -76,62 +98,59 @@
   <span class="coin-fact">重量 <b>{{ (series.weight_g ~ ' g') if series.weight_g else '—' }}</b></span>
   <span class="coin-fact">厚度 <b>{{ (series.thickness_mm ~ ' mm') if series.thickness_mm else '—' }}</b></span>
   <span class="coin-fact">币边 <b>{{ series.edge or '—' }}</b></span>
-  <span class="coin-fact">造币厂 <b>{{ (series.mints | join('、')) if series.mints else '—' }}</b></span>
   <span class="coin-fact">原所属系列 <b>{{ (series.series | join('、')) if series.series else '—' }}</b></span>
   <span class="coin-fact">原纪念主题 <b>{{ series.commemorated_topic or '—' }}</b></span>
   <span class="coin-fact">发行系列 <b>{{ series.issue_series or '—' }}</b></span>
-  <span class="coin-fact">发行主题 <b>{{ series.issue_theme or '—' }}</b>
-    {% if not is_candidate %}
-    <details class="coin-issue-edit">
-      <summary title="编辑发行系列 / 发行主题">✎</summary>
-      <form class="coin-member-meta" method="post" action="/coins/series/{{ series.numista_id }}/issue-fields">
-        <input type="hidden" name="return_to" value="{{ return_to }}">
-        <input class="search-input" type="text" name="issue_series" value="{{ series.issue_series }}" placeholder="发行系列">
-        <input class="search-input" type="text" name="issue_theme" value="{{ series.issue_theme }}" placeholder="发行主题">
-        <button class="btn btn-ghost" type="submit">保存</button>
-      </form>
-    </details>
-    {% endif %}
+  <span class="coin-fact">
+    <span class="coin-fact-label">发行主题
+      {% if not is_candidate %}
+      <button class="coin-edit-icon" type="button" data-open-issue-edit title="编辑发行系列 / 发行主题" aria-label="编辑发行系列 / 发行主题">✎</button>
+      {% endif %}
+    </span>
+    <b>{{ series.issue_theme or '—' }}</b>
   </span>
+  <span class="coin-fact"></span>
+  <span class="coin-fact"></span>
 </div>
-
-{% if series.obverse_desc or series.obverse_lettering or series.reverse_desc or series.reverse_lettering or series.comments %}
-<div class="coin-series-text">
-  {% if series.obverse_desc %}<p><span class="coin-text-label">正面描述</span>{{ series.obverse_desc }}</p>{% endif %}
-  {% if series.obverse_lettering %}<p><span class="coin-text-label">正面铭文</span>{{ series.obverse_lettering }}</p>{% endif %}
-  {% if series.reverse_desc %}<p><span class="coin-text-label">背面描述</span>{{ series.reverse_desc }}</p>{% endif %}
-  {% if series.reverse_lettering %}<p><span class="coin-text-label">背面铭文</span>{{ series.reverse_lettering }}</p>{% endif %}
-  {% if series.comments %}<p><span class="coin-text-label">备注</span>{{ series.comments }}</p>{% endif %}
-</div>
-{% endif %}
 
 {% if not is_candidate %}
-<div class="coin-series-actions" aria-label="补齐数据">
-  <span class="coin-series-actions-label">补齐数据</span>
-  <form method="post" action="/coins/manage/fetch-issues">
-    <input type="hidden" name="series_id" value="{{ series.numista_id }}">
-    <input type="hidden" name="return_to" value="{{ return_to }}">
-    <button class="btn btn-ghost" type="submit">② 获取年份信息</button>
+<div class="coin-inline-actions coin-mt">
+  {% if info_complete %}
+  <span class="coin-hint">本系列信息已完整，不显示「补全信息」按钮。</span>
+  {% else %}
+  <form method="post" action="/coins/ingest">
+    <input type="hidden" name="series_numista_id" value="{{ series.numista_id }}">
+    <input type="hidden" name="name" value="{{ series.title or '' }}">
+    <button class="btn" type="submit">补全信息</button>
   </form>
-  <form method="post" action="/coins/manage/fetch-values">
-    <input type="hidden" name="series_id" value="{{ series.numista_id }}">
-    <input type="hidden" name="return_to" value="{{ return_to }}">
-    <button class="btn btn-ghost" type="submit">③ 获取年份估值</button>
-  </form>
-  <form method="post" action="/coins/manage/download-images">
-    <input type="hidden" name="series_id" value="{{ series.numista_id }}">
-    <input type="hidden" name="return_to" value="{{ return_to }}">
-    <button class="btn btn-ghost" type="submit">④ 下载图片</button>
-  </form>
+  <span class="coin-hint">只补当前系列缺失的节点（年份 / 估值 / 图片），进度见采集中心</span>
+  {% endif %}
 </div>
 {% endif %}
+    </div>
+  </div>
+</section>
 
-<h2 class="coin-section-title">
-  各年份信息
-  <span class="coin-section-count">
-    {{ year_total }} 个年份 · {{ issue_total }} 个版别{% if currency %} · 估值币种 {{ currency }}{% endif %}
-  </span>
-</h2>
+{% if series.obverse_desc or series.obverse_lettering or series.reverse_desc or series.reverse_lettering or series.comments %}
+<section class="coin-panel">
+  <div class="coin-panel-head">
+    <h2 class="coin-panel-title">系列详细信息</h2>
+  </div>
+  <div class="coin-series-text">
+    {% if series.obverse_desc %}<p><span class="coin-text-label">正面描述</span>{{ series.obverse_desc }}</p>{% endif %}
+    {% if series.obverse_lettering %}<p><span class="coin-text-label">正面铭文</span>{{ series.obverse_lettering }}</p>{% endif %}
+    {% if series.reverse_desc %}<p><span class="coin-text-label">背面描述</span>{{ series.reverse_desc }}</p>{% endif %}
+    {% if series.reverse_lettering %}<p><span class="coin-text-label">背面铭文</span>{{ series.reverse_lettering }}</p>{% endif %}
+    {% if series.comments %}<p><span class="coin-text-label">备注</span>{{ series.comments }}</p>{% endif %}
+  </div>
+</section>
+{% endif %}
+
+<section class="coin-panel">
+  <div class="coin-panel-head">
+    <h2 class="coin-panel-title">年份信息</h2>
+    <span class="coin-panel-note">{{ year_total }} 个年份 · {{ issue_total }} 个版别{% if currency %} · 估值币种 {{ currency }}{% endif %}</span>
+  </div>
 {% if issue_total %}
 <div class="table-wrap">
   <table class="sources-table coin-series-table">
@@ -200,8 +219,13 @@
   单版信息未采集。去 <a href="/coins/manage">采集管理</a> 对该系列点「② 获取年份信息」。
 </div>
 {% endif %}
+</section>
 
-<h2 class="coin-section-title" id="coin-mxiqi-sales">麦稀奇成交</h2>
+<section class="coin-panel" id="coin-mxiqi-sales">
+  <div class="coin-panel-head">
+    <h2 class="coin-panel-title">麦稀奇成交</h2>
+    <span class="coin-panel-note">{{ '按成交价格' if sale_sort == 'price' else '按成交时间' }}{{ '升序' if sale_order == 'asc' else '倒序' }}</span>
+  </div>
 
 {% if issue_filter is not none %}
 <div class="coin-mxiqi-filter">
@@ -280,6 +304,46 @@
 <div class="empty">
   {% if issue_filter is not none %}该筛选下暂无已映射的麦稀奇成交。{% else %}该系列暂无已映射的麦稀奇成交（仅 session_final 来源可映射）。{% endif %}
 </div>
+{% endif %}
+</section>
+
+{% if not is_candidate %}
+<div class="coin-modal-scrim coin-hidden" id="issue-edit-scrim"></div>
+<div class="coin-modal coin-hidden" id="issue-edit-modal" role="dialog" aria-label="编辑发行系列 / 发行主题">
+  <div class="coin-modal-head">
+    <h2>编辑发行系列 / 发行主题</h2>
+    <button class="coin-close" type="button" data-close-issue-edit aria-label="关闭">×</button>
+  </div>
+  <form class="coin-modal-body" id="issue-edit-form" method="post" action="/coins/series/{{ series.numista_id }}/issue-fields">
+    <input type="hidden" name="return_to" value="{{ return_to }}">
+    <label class="field">发行系列<input class="search-input" type="text" name="issue_series" value="{{ series.issue_series }}" placeholder="发行系列"></label>
+    <label class="field">发行主题<input class="search-input" type="text" name="issue_theme" value="{{ series.issue_theme }}" placeholder="发行主题"></label>
+  </form>
+  <div class="coin-modal-foot">
+    <button class="btn btn-ghost" type="button" data-close-issue-edit>取消</button>
+    <button class="btn btn-primary" type="submit" form="issue-edit-form">保存</button>
+  </div>
+</div>
+<script>
+(function () {
+  var scrim = document.getElementById('issue-edit-scrim');
+  var modal = document.getElementById('issue-edit-modal');
+  var opener = document.querySelector('[data-open-issue-edit]');
+  function close() {
+    scrim.classList.add('coin-hidden');
+    modal.classList.add('coin-hidden');
+  }
+  if (opener) {
+    opener.addEventListener('click', function () {
+      scrim.classList.remove('coin-hidden');
+      modal.classList.remove('coin-hidden');
+    });
+  }
+  document.addEventListener('click', function (event) {
+    if (event.target.closest('[data-close-issue-edit]') || event.target === scrim) { close(); }
+  });
+})();
+</script>
 {% endif %}
 {% endif %}
 {% endblock %}

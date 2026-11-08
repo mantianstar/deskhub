@@ -5,25 +5,8 @@
 
 {% block content %}
 {{ coin_nav("collection") }}
-{{ coin_head("品相台账", "来自 " ~ order_total ~ " 条历史订单 · 本次 " ~ (combos|length) ~ " 个组合 · 已录 " ~ graded_total) }}
+{{ coin_head("个人收藏清单", order_total ~ " 条历史订单 · 本次 " ~ (combos|length) ~ " 个组合 · 已录品相 " ~ graded_total ~ " · 单条即时保存") }}
 {{ coin_collection_tabs("grades") }}
-
-<details class="coin-disclosure">
-  <summary>录入说明</summary>
-  <p class="form-hint">
-    历史订单先按「国家 + 年份 + 面值」<strong>去重</strong>（三者缺一的不列出），
-    每行选一档<strong>品相</strong>后点底部<strong>保存</strong>写库；
-    选<strong>未录入</strong>则清除该行的记录。品相决定画像的<strong>已有年份</strong>；
-    未录入 = 有订单但实物缺失，计入缺失年份。<br>
-    国家 / 年份 / 面值统一成 <strong>Numista 口径</strong>：<code>英属新西兰</code> → <code>新西兰</code>、
-    <code>1910年</code> → <code>1910</code>、<code>1便士</code> → <code>1 便士</code>、<code>一分</code> → <code>1 分</code>；
-    年号纪年：日本 / 民国年号按<strong>公历年</strong>关联（<code>明治十五年</code> → <code>1882</code>、
-    <code>民国七十年</code> → <code>1981</code>），其余年号取年份数字（<code>康德四年</code> → <code>4</code>），
-    只有年号没有数字的原样保留。<br>
-    行尾<strong>删除</strong>用于清掉错误数据：<strong>连该组合的历史订单一起删</strong>（需二次确认）；
-    重跑 <code>coins-parse-orders</code> 会把 <code>orders.xlsx</code> 里的订单重新导回来。
-  </p>
-</details>
 
 <form class="search-form coin-filter-sticky" method="get" action="/coins/grades">
   <div class="search-row search-row-labeled">
@@ -56,9 +39,16 @@
   </div>
 </form>
 
-<h2 class="coin-section-title">新增组合 <span class="coin-section-count">历史订单里没有的，在这里补一条</span></h2>
-<form class="search-form" method="post" action="/coins/grades/add">
-  <div class="search-row search-row-labeled">
+<div class="coin-inline-actions coin-mt">
+  <button class="btn" type="button" id="toggle-add" aria-expanded="false">＋ 新增组合</button>
+</div>
+
+<section class="hold-add-panel" id="add-panel" hidden>
+  <div class="hold-add-head">
+    <h2>新增组合</h2>
+    <span class="coin-hint">四项必填；保存后直接落库，本页没有底部总保存</span>
+  </div>
+  <form class="hold-form-grid" id="add-form" method="post" action="/coins/grades/add">
     <label class="field">国家
       <input class="search-input" type="text" name="country" required
              list="coin-order-country-options" placeholder="如 英国" autocomplete="off">
@@ -74,10 +64,10 @@
              list="coin-order-denomination-options" placeholder="如 1 便士" autocomplete="off">
     </label>
     <label class="field">发行系列
-      <input class="search-input" type="text" name="theme" placeholder="如 亚运会（可空）">
+      <input class="search-input" type="text" name="theme" placeholder="如 乔治六世（可空）">
     </label>
     <label class="field">发行主题
-      <input class="search-input" type="text" name="coin_name" placeholder="如 女排（可空）">
+      <input class="search-input" type="text" name="coin_name" placeholder="如 便士（可空）">
     </label>
     <label class="field">品相
       <select name="grade" required>
@@ -85,79 +75,162 @@
         {% for grade in grades %}<option value="{{ grade }}">{{ grade }}</option>{% endfor %}
       </select>
     </label>
-    <button class="btn btn-primary" type="submit">新增</button>
-  </div>
-  <p class="form-hint">四项都必填；年份 / 面值同样按上面的 Numista 口径统一后入库。</p>
-</form>
+    <button class="btn btn-primary" type="submit">保存</button>
+  </form>
+</section>
 
 <div id="grades-results">
 {% include "coins/_grades_results.html" %}
 </div>
+
+<div class="hold-scrim" id="grade-scrim" hidden></div>
+
+<aside class="hold-modal" id="grade-drawer" role="dialog" aria-modal="true" aria-label="修改品相" aria-hidden="true">
+  <div class="hold-modal-head">
+    <h2>修改品相</h2>
+    <span class="coin-hint">保存后立即落库</span>
+  </div>
+  <div class="hold-modal-body">
+    <p class="coin-hint" id="drawer-target"></p>
+    <label class="field">品相
+      <select id="drawer-grade">
+        <option value="">未录入</option>
+        {% for grade in grades %}<option value="{{ grade }}">{{ grade }}</option>{% endfor %}
+      </select>
+    </label>
+  </div>
+  <div class="hold-modal-foot">
+    <button class="btn btn-ghost" type="button" id="drawer-cancel">取消</button>
+    <button class="btn btn-primary" type="button" id="drawer-save">保存</button>
+  </div>
+</aside>
 {% endblock %}
 
 {% block scripts %}
 <script>
-// 「删除整行」的页内二次确认：第一次点变「确认删除」（旁边给「取消」），再点才真提交。
-// 行在「保存」大表单里，删不了嵌套 form，所以确认后动态建一个隐藏表单再提交。
+// 「⋯」菜单：修改品相（遮罩弹窗单条保存）/ 删除（页内二次确认后提交）。
 (function () {
   var results = document.getElementById('grades-results');
-  var addForm = document.querySelector('form[action="/coins/grades/add"]');
+  var addForm = document.getElementById('add-form');
   var filterForm = document.querySelector('form[action="/coins/grades"]');
+  var addPanel = document.getElementById('add-panel');
+  var toggleAdd = document.getElementById('toggle-add');
+  var drawer = document.getElementById('grade-drawer');
+  var scrim = document.getElementById('grade-scrim');
+  var drawerTarget = document.getElementById('drawer-target');
+  var drawerGrade = document.getElementById('drawer-grade');
+  var current = null;
 
-  function resetAll() {
-    document.querySelectorAll('button.js-grade-del').forEach(function (btn) {
-      delete btn.dataset.confirming;
-      btn.classList.remove('btn-danger');
-      btn.textContent = '删除';
-      var cancel = btn.parentNode.querySelector('.js-grade-del-cancel');
-      if (cancel) { cancel.remove(); }
+  if (toggleAdd && addPanel) {
+    toggleAdd.addEventListener('click', function () {
+      addPanel.hidden = !addPanel.hidden;
+      toggleAdd.setAttribute('aria-expanded', String(!addPanel.hidden));
     });
   }
 
-  function submitDelete(btn) {
+  // 当前筛选条件：单条保存 / 删除后回到同一批结果
+  function filterValues() {
+    var out = {};
+    if (!filterForm) { return out; }
+    ['country', 'year', 'denomination'].forEach(function (name) {
+      var input = filterForm.querySelector('[name="' + name + '"]');
+      out['filter_' + name] = input ? input.value : '';
+    });
+    return out;
+  }
+
+  function postForm(action, fields) {
     var form = document.createElement('form');
     form.method = 'post';
-    form.action = '/coins/grades/delete';
-    var fields = {
-      country: btn.dataset.country,
-      era: btn.dataset.era,
-      denomination: btn.dataset.denomination,
-      theme: btn.dataset.theme || '',
-      coin_name: btn.dataset.coinName || ''
-    };
-    // 带上当前筛选条件，删完回到同一批结果
-    ['country', 'year', 'denomination'].forEach(function (name) {
-      var src = document.querySelector('form[action="/coins/grades/save"] input[name="filter_' + name + '"]');
-      if (src) { fields['filter_' + name] = src.value; }
-    });
+    form.action = action;
     Object.keys(fields).forEach(function (name) {
       var input = document.createElement('input');
       input.type = 'hidden';
       input.name = name;
-      input.value = fields[name];
+      input.value = fields[name] || '';
       form.appendChild(input);
     });
     document.body.appendChild(form);
     form.submit();
   }
 
-  // 结果区会被局部替换，替换后需要重新绑一次删除按钮
-  function bindDeleteButtons() {
+  function openDrawer(btn) {
+    current = btn;
+    document.querySelectorAll('.coin-more[open]').forEach(function (el) { el.removeAttribute('open'); });
+    drawerTarget.textContent = btn.dataset.grade;
+    drawerGrade.value = btn.dataset.current || '';
+    drawer.classList.add('is-open');
+    drawer.setAttribute('aria-hidden', 'false');
+    scrim.hidden = false;
+  }
+
+  function closeDrawer() {
+    drawer.classList.remove('is-open');
+    drawer.setAttribute('aria-hidden', 'true');
+    scrim.hidden = true;
+    current = null;
+  }
+
+  if (drawer) {
+    document.getElementById('drawer-cancel').addEventListener('click', closeDrawer);
+    scrim.addEventListener('click', closeDrawer);
+    document.getElementById('drawer-save').addEventListener('click', function () {
+      if (!current) { return; }
+      var fields = {
+        country: current.dataset.country,
+        era: current.dataset.era,
+        denomination: current.dataset.denomination,
+        theme: current.dataset.theme,
+        coin_name: current.dataset.coinName,
+        grade: drawerGrade.value
+      };
+      var filters = filterValues();
+      Object.keys(filters).forEach(function (key) { fields[key] = filters[key]; });
+      postForm('/coins/grades/save', fields);
+    });
+  }
+
+  function resetDeletes() {
     if (!results) { return; }
-    results.querySelectorAll('button.js-grade-del').forEach(function (btn) {
+    results.querySelectorAll('button[data-delete]').forEach(function (btn) {
+      delete btn.dataset.confirming;
+      btn.textContent = '删除';
+      var cancel = btn.parentNode.querySelector('.js-grade-del-cancel');
+      if (cancel) { cancel.remove(); }
+    });
+  }
+
+  // 结果区会被局部替换，替换后需要重新绑一次
+  function bindResults() {
+    if (!results) { return; }
+    results.querySelectorAll('button[data-delete]').forEach(function (btn) {
       btn.addEventListener('click', function () {
-        if (btn.dataset.confirming === '1') { submitDelete(btn); return; }
-        resetAll();
+        if (btn.dataset.confirming === '1') {
+          var fields = {
+            country: btn.dataset.country,
+            era: btn.dataset.era,
+            denomination: btn.dataset.denomination,
+            theme: btn.dataset.theme,
+            coin_name: btn.dataset.coinName
+          };
+          var filters = filterValues();
+          Object.keys(filters).forEach(function (key) { fields[key] = filters[key]; });
+          postForm('/coins/grades/delete', fields);
+          return;
+        }
+        resetDeletes();
         btn.dataset.confirming = '1';
-        btn.classList.add('btn-danger');
         btn.textContent = '确认删除';
         var cancel = document.createElement('button');
         cancel.type = 'button';
-        cancel.className = 'btn btn-ghost js-grade-del-cancel';
+        cancel.className = 'js-grade-del-cancel';
         cancel.textContent = '取消';
-        cancel.addEventListener('click', resetAll);
+        cancel.addEventListener('click', resetDeletes);
         btn.after(cancel);
       });
+    });
+    results.querySelectorAll('button[data-grade]').forEach(function (btn) {
+      btn.addEventListener('click', function () { openDrawer(btn); });
     });
   }
 
@@ -166,10 +239,10 @@
     addForm.addEventListener('submit', function (event) {
       event.preventDefault();
       var data = new FormData(addForm);
-      ['country', 'year', 'denomination', 'grade'].forEach(function (name) {
-        var src = filterForm && filterForm.querySelector('[name="' + name + '"]');
-        data.set('filter_' + name, src ? src.value : '');
-      });
+      var filters = filterValues();
+      Object.keys(filters).forEach(function (key) { data.set(key, filters[key]); });
+      var gradeInput = filterForm && filterForm.querySelector('[name="grade"]');
+      data.set('filter_grade', gradeInput ? gradeInput.value : '');
       data.set('fragment', '1');
       fetch('/coins/grades/add', { method: 'POST', body: data })
         .then(function (resp) {
@@ -178,13 +251,13 @@
         })
         .then(function (html) {
           results.innerHTML = html;
-          bindDeleteButtons();
+          bindResults();
         })
         .catch(function () { addForm.submit(); });  // 局部刷新失败 → 退回整页提交
     });
   }
 
-  bindDeleteButtons();
+  bindResults();
 })();
 </script>
 {% endblock %}

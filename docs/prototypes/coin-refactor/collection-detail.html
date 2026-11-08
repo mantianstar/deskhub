@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>收藏系列详情 · 铜币 · deskhub</title>
+<link rel="stylesheet" href="proto.css">
+</head>
+<body>
+<header class="site-head">
+  <a class="brand" href="index.html">deskhub</a>
+  <nav class="nav">
+    <a class="nav-link" href="#">日报</a>
+    <a class="nav-link" href="#">历史搜索</a>
+    <a class="nav-link" href="#">源管理</a>
+    <a class="nav-link" href="#">运行控制</a>
+    <a class="nav-link" href="#">基金</a>
+    <a class="nav-link is-active" href="index.html">铜币</a>
+  </nav>
+</header>
+
+<main class="content content-wide">
+  <nav class="coin-tabs" aria-label="铜币模块导航">
+    <a href="recommend.html">今日推荐</a>
+    <a class="is-active" href="holdings.html" aria-current="page">我的资产</a>
+    <a href="library.html">币库</a>
+    <a href="index.html#moxiqi">麦稀奇数据</a>
+    <a class="btn btn-primary coin-tabs-action" href="ingest.html">采集中心</a>
+  </nav>
+
+  <nav class="coin-subtabs" aria-label="我的资产子导航">
+    <a href="holdings.html">个人收藏清单</a>
+    <a class="is-active" href="collections.html" aria-current="page">收藏系列</a>
+    <a href="watchlist.html">观察系列</a>
+  </nav>
+
+  <p class="coin-hint"><a href="collections.html">← 返回收藏系列</a></p>
+
+  <section class="coin-page-head">
+    <div>
+      <h1>英国 · 乔治六世 · 1 便士</h1>
+      <p class="coin-page-sub">英国 · 乔治六世 · 1 便士 · 1937–1952 · 6 个 Numista 系列 · 成员 6</p>
+    </div>
+    <div class="coin-page-actions">
+      <button class="btn btn-primary" type="button" id="add-member-top">＋ 添加成员</button>
+      <button class="btn" type="button" id="edit-series">编辑收藏系列</button>
+      <button class="btn btn-danger" type="button" id="delete-series">删除收藏系列</button>
+    </div>
+  </section>
+
+  <section class="coin-panel">
+    <div class="coin-panel-head">
+      <h2 class="coin-panel-title">系列概况</h2>
+      <span class="coin-panel-note">按年份去重，已有 23 · 缺 16 · 升级 3</span>
+    </div>
+    <div class="coin-progress"><span class="coin-bar-62"></span></div>
+    <div class="coin-progress-stats">
+      <span>覆盖 62%</span><span>已有 23</span><span class="coin-danger-text">缺失 16</span><span>待升级 3</span>
+    </div>
+    <div class="coin-year-matrix">
+      <span class="coin-year-chip is-owned">1937</span>
+      <span class="coin-year-chip is-owned">1938</span>
+      <span class="coin-year-chip is-missing">1939</span>
+      <span class="coin-year-chip is-owned">1940</span>
+      <span class="coin-year-chip is-missing">1941</span>
+      <span class="coin-year-chip is-missing">1942</span>
+      <span class="coin-year-chip is-upgrade">1943</span>
+      <span class="coin-year-chip is-owned">1944</span>
+      <span class="coin-year-chip is-missing">1945</span>
+      <span class="coin-year-chip is-owned">1946</span>
+      <span class="coin-year-chip is-missing">1947</span>
+      <span class="coin-year-chip is-owned">1948</span>
+      <span class="coin-year-chip is-upgrade">1949</span>
+      <span class="coin-year-chip is-missing">1950</span>
+      <span class="coin-year-chip is-owned">1951</span>
+      <span class="coin-year-chip is-missing">1952</span>
+    </div>
+  </section>
+
+  <section class="coin-panel" id="member-panel">
+    <div class="coin-panel-head">
+      <h2 class="coin-panel-title">成员管理 <span class="coin-panel-note">6 个 Numista 系列</span></h2>
+      <span class="coin-panel-note">来源：观察系列 / 币库</span>
+    </div>
+
+    <form class="search-form" method="get" action="#">
+      <div class="search-row search-row-labeled">
+        <label class="field">国家
+          <input class="search-input" type="text" list="mem-countries" placeholder="如 英国">
+        </label>
+        <label class="field">执政者
+          <input class="search-input" type="text" list="mem-rulers" placeholder="如 乔治六世">
+        </label>
+        <label class="field">面值
+          <input class="search-input" type="text" list="mem-denoms" placeholder="如 1 便士">
+        </label>
+        <label class="field coin-field-grow">标题（模糊）
+          <input class="search-input" type="text" placeholder="输入标题关键字，如 半便士">
+        </label>
+        <button class="btn btn-primary" type="submit">查询</button>
+      </div>
+    </form>
+    <datalist id="mem-countries"><option>英国</option><option>法国</option><option>荷属东印度</option></datalist>
+    <datalist id="mem-rulers"><option>乔治六世</option><option>第三共和国</option><option>威廉明娜</option></datalist>
+    <datalist id="mem-denoms"><option>1 便士</option><option>1/2 便士</option><option>3 便士</option><option>6 便士</option><option>1 先令</option></datalist>
+
+    <form class="coin-form-grid coin-mt" id="member-form">
+      <label class="field coin-field-wide">从观察系列或币库选择
+        <select class="search-input">
+          <option value="">请选择系列</option>
+          <option>观察系列 · 法国 · 第三共和国 · 5 法郎（Numista #1234）</option>
+          <option>观察系列 · 荷属东印度 · 威廉明娜 · 1 分（Numista #2081）</option>
+          <option>币库 · 英国 · 乔治六世 · 半便士（Numista #670）</option>
+          <option>币库 · 英属印度 · 维多利亚 · 1 卢比（Numista #1145）</option>
+        </select>
+      </label>
+      <button class="btn btn-primary" type="submit">添加成员</button>
+    </form>
+
+    <div class="coin-inline-actions coin-mt">
+      <span class="coin-hint">原型状态切换（纪念币成员会自动多出两列）：</span>
+      <button class="btn btn-primary" type="button" data-member-mode="normal">流通币成员</button>
+      <button class="btn" type="button" data-member-mode="commemorative">纪念币成员</button>
+    </div>
+
+    <div class="table-wrap coin-mt">
+      <table class="sources-table">
+        <thead>
+          <tr>
+            <th>Numista ID</th><th>系列名称</th><th>国家 · 面值</th>
+            <th class="comm-only coin-hidden">发行系列</th><th class="comm-only coin-hidden">发行主题</th>
+            <th>年份范围</th><th>材质</th><th>尺寸</th><th>枚数</th><th>操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>670</code></td><td>英国 乔治六世 1便士</td><td>英国 · 1 便士</td>
+            <td class="comm-only coin-hidden">—</td><td class="comm-only coin-hidden">—</td>
+            <td>1937–1952</td><td>青铜</td><td>30.8 mm</td><td>16</td>
+            <td><button class="btn btn-ghost coin-follow-btn" type="button" data-remove>移出</button></td>
+          </tr>
+          <tr>
+            <td><code>671</code></td><td>英国 乔治六世 半便士</td><td>英国 · 1/2 便士</td>
+            <td class="comm-only coin-hidden">—</td><td class="comm-only coin-hidden">—</td>
+            <td>1937–1952</td><td>青铜</td><td>25.4 mm</td><td>9</td>
+            <td><button class="btn btn-ghost coin-follow-btn" type="button" data-remove>移出</button></td>
+          </tr>
+          <tr>
+            <td><code>672</code></td><td>英国 乔治六世 3便士</td><td>英国 · 3 便士</td>
+            <td class="comm-only coin-hidden">—</td><td class="comm-only coin-hidden">—</td>
+            <td>1937–1952</td><td>镍黄铜</td><td>21.0 mm</td><td>7</td>
+            <td><button class="btn btn-ghost coin-follow-btn" type="button" data-remove>移出</button></td>
+          </tr>
+          <tr>
+            <td><code>673</code></td><td>英国 乔治六世 6便士</td><td>英国 · 6 便士</td>
+            <td class="comm-only coin-hidden">—</td><td class="comm-only coin-hidden">—</td>
+            <td>1937–1952</td><td>镍黄铜</td><td>19.4 mm</td><td>6</td>
+            <td><button class="btn btn-ghost coin-follow-btn" type="button" data-remove>移出</button></td>
+          </tr>
+          <tr>
+            <td><code>674</code></td><td>英国 乔治六世 先令</td><td>英国 · 1 先令</td>
+            <td class="comm-only coin-hidden">—</td><td class="comm-only coin-hidden">—</td>
+            <td>1937–1952</td><td>镍黄铜</td><td>23.6 mm</td><td>5</td>
+            <td><button class="btn btn-ghost coin-follow-btn" type="button" data-remove>移出</button></td>
+          </tr>
+          <tr>
+            <td><code>675</code></td><td>英国 乔治六世 弗罗林</td><td>英国 · 2 先令</td>
+            <td class="comm-only coin-hidden">—</td><td class="comm-only coin-hidden">—</td>
+            <td>1937–1952</td><td>银</td><td>28.5 mm</td><td>4</td>
+            <td><button class="btn btn-ghost coin-follow-btn" type="button" data-remove>移出</button></td>
+          </tr>
+          <tr>
+            <td><code>2765</code></td><td>英国 乔治六世 加冕纪念</td><td>英国 · 1 克朗</td>
+            <td class="comm-only coin-hidden">乔治六世加冕</td><td class="comm-only coin-hidden">加冕纪念</td>
+            <td>1937</td><td>银</td><td>38.6 mm</td><td>1</td>
+            <td><button class="btn btn-ghost coin-follow-btn" type="button" data-remove>移出</button></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="coin-hint coin-mt">已去掉状态列，改为材质 / 尺寸；纪念币成员在年份范围前多出「发行系列 / 发行主题」两列。</p>
+  </section>
+</main>
+
+<footer class="site-foot">本地服务 · 只有我一个人用</footer>
+
+<div class="coin-modal-scrim coin-hidden" id="edit-scrim"></div>
+<div class="coin-modal coin-hidden" id="edit-modal" role="dialog" aria-label="编辑收藏系列">
+  <div class="coin-modal-head">
+    <h2>编辑收藏系列</h2>
+    <button class="coin-close" type="button" data-close-edit aria-label="关闭">×</button>
+  </div>
+  <div class="coin-modal-body">
+    <div class="coin-form-2col">
+      <label class="field">名称<input class="search-input" type="text" value="英国 · 乔治六世 · 1 便士"></label>
+      <label class="field">国家<input class="search-input" type="text" value="英国"></label>
+      <label class="field">执政者<input class="search-input" type="text" value="乔治六世"></label>
+      <label class="field">面值<input class="search-input" type="text" value="1 便士"></label>
+    </div>
+    <p class="coin-hint coin-mt">与原收藏系列一致：改完保存即生效。</p>
+  </div>
+  <div class="coin-modal-foot">
+    <button class="btn btn-ghost" type="button" data-close-edit>取消</button>
+    <button class="btn btn-primary" type="button" id="save-series">保存</button>
+  </div>
+</div>
+
+<div class="coin-modal-scrim coin-hidden" id="delete-scrim"></div>
+<div class="coin-modal coin-hidden" id="delete-modal" role="dialog" aria-label="删除收藏系列">
+  <div class="coin-modal-head">
+    <h2>删除收藏系列</h2>
+    <button class="coin-close" type="button" data-close-delete aria-label="关闭">×</button>
+  </div>
+  <div class="coin-modal-body">
+    <p class="coin-hint">将删除「英国 · 乔治六世 · 1 便士」及 6 条成员映射，历史订单不受影响。</p>
+  </div>
+  <div class="coin-modal-foot">
+    <button class="btn btn-ghost" type="button" data-close-delete>取消</button>
+    <button class="btn btn-danger" type="button" id="confirm-delete">确认删除</button>
+  </div>
+</div>
+
+<div class="coin-toast coin-hidden" id="toast"></div>
+<script>
+(function () {
+  function toast(text) {
+    var box = document.getElementById('toast');
+    box.textContent = text;
+    box.classList.remove('coin-hidden');
+    clearTimeout(toast.timer);
+    toast.timer = setTimeout(function () { box.classList.add('coin-hidden'); }, 1800);
+  }
+
+  document.getElementById('member-form').addEventListener('submit', function (event) {
+    event.preventDefault();
+    toast('已添加成员');
+  });
+  document.getElementById('add-member-top').addEventListener('click', function () {
+    document.getElementById('member-panel').scrollIntoView({ behavior: 'smooth' });
+    document.querySelector('#member-form select').focus();
+  });
+  document.querySelectorAll('[data-remove]').forEach(function (btn) {
+    btn.addEventListener('click', function () { toast('已移出成员（原型）'); });
+  });
+
+  document.querySelectorAll('[data-member-mode]').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var commemorative = btn.dataset.memberMode === 'commemorative';
+      document.querySelectorAll('[data-member-mode]').forEach(function (item) {
+        item.className = item === btn ? 'btn btn-primary' : 'btn';
+      });
+      document.querySelectorAll('.comm-only').forEach(function (cell) {
+        cell.classList.toggle('coin-hidden', !commemorative);
+      });
+    });
+  });
+
+  var editScrim = document.getElementById('edit-scrim');
+  var editModal = document.getElementById('edit-modal');
+  var deleteScrim = document.getElementById('delete-scrim');
+  var deleteModal = document.getElementById('delete-modal');
+
+  function closeAll() {
+    editScrim.classList.add('coin-hidden');
+    editModal.classList.add('coin-hidden');
+    deleteScrim.classList.add('coin-hidden');
+    deleteModal.classList.add('coin-hidden');
+  }
+
+  document.getElementById('edit-series').addEventListener('click', function () {
+    editScrim.classList.remove('coin-hidden');
+    editModal.classList.remove('coin-hidden');
+  });
+  document.getElementById('delete-series').addEventListener('click', function () {
+    deleteScrim.classList.remove('coin-hidden');
+    deleteModal.classList.remove('coin-hidden');
+  });
+  document.getElementById('save-series').addEventListener('click', function () {
+    closeAll();
+    toast('收藏系列已更新');
+  });
+  document.getElementById('confirm-delete').addEventListener('click', function () {
+    closeAll();
+    toast('已删除收藏系列（原型）');
+  });
+  document.addEventListener('click', function (event) {
+    if (event.target.closest('[data-close-edit]') || event.target === editScrim) { closeAll(); }
+    if (event.target.closest('[data-close-delete]') || event.target === deleteScrim) { closeAll(); }
+  });
+})();
+</script>
+</body>
+</html>

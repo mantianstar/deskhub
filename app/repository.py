@@ -20,6 +20,7 @@ from app.models import (
     CoinCollectionSeries,
     CoinExploreCandidate,
     CoinFetchRun,
+    CoinIngestTask,
     CoinIssue,
     CoinIssueValues,
     CoinLot,
@@ -37,6 +38,7 @@ from app.models import (
     CoinSessionDetail,
     CoinShop,
     CoinTodayLot,
+    CoinWatchItem,
     DigestItem,
     FetchRun,
     FetchStatus,
@@ -983,6 +985,221 @@ def delete_coin_collection_member(member_id: int) -> bool:
     with db.connect() as conn, conn:
         cursor = conn.execute(
             "DELETE FROM coin_collection_series_members WHERE id = ?", (member_id,)
+        )
+    return cursor.rowcount > 0
+
+
+# ---------------------------------------------------------------- 观察系列（spec §14.18）
+
+
+def _row_to_watch_item(row: sqlite3.Row) -> CoinWatchItem:
+    return CoinWatchItem(
+        id=row["id"],
+        series_id=row["series_id"],
+        numista_id=row["numista_id"],
+        title=row["title"],
+        issuer=row["issuer"],
+        ruler=row["ruler"],
+        denomination=row["denomination"],
+        min_year=row["min_year"],
+        max_year=row["max_year"],
+        url=row["url"],
+        created_at=row["created_at"],
+    )
+
+
+def add_coin_watch_item(numista_id: int) -> bool:
+    """加入观察（幂等）。系列不存在或已在观察返回 False。"""
+    now = now_local()
+    with db.connect() as conn, conn:
+        row = conn.execute(
+            "SELECT id FROM coin_series WHERE numista_id = ?", (numista_id,)
+        ).fetchone()
+        if row is None:
+            return False
+        cursor = conn.execute(
+            "INSERT OR IGNORE INTO coin_watchlist (series_id, created_at) VALUES (?, ?)",
+            (row["id"], now),
+        )
+    return cursor.rowcount > 0
+
+
+def remove_coin_watch_item(numista_id: int) -> bool:
+    with db.connect() as conn, conn:
+        cursor = conn.execute(
+            """
+            DELETE FROM coin_watchlist
+             WHERE series_id IN (SELECT id FROM coin_series WHERE numista_id = ?)
+            """,
+            (numista_id,),
+        )
+    return cursor.rowcount > 0
+
+
+def list_coin_watchlist() -> list[CoinWatchItem]:
+    """全部观察项（新加入在前）；展示字段优先取中文表。"""
+    with db.connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT w.id, w.series_id, s.numista_id,
+                   COALESCE(c.title, s.title)               AS title,
+                   COALESCE(c.issuer, s.issuer)             AS issuer,
+                   COALESCE(c.ruler, s.ruler)               AS ruler,
+                   COALESCE(c.denomination, s.denomination) AS denomination,
+                   COALESCE(c.min_year, s.min_year)         AS min_year,
+                   COALESCE(c.max_year, s.max_year)         AS max_year,
+                   COALESCE(c.url, s.url)                   AS url,
+                   w.created_at
+              FROM coin_watchlist AS w
+              JOIN coin_series AS s ON s.id = w.series_id
+              LEFT JOIN coin_series_cn AS c ON c.numista_id = s.numista_id
+             ORDER BY w.created_at DESC, w.id DESC
+            """
+        ).fetchall()
+    return [_row_to_watch_item(row) for row in rows]
+
+
+# ---------------------------------------------------------------- 异步采集任务
+
+INGEST_NODES = ("series", "years", "values", "images")
+INGEST_NODE_STATES = ("wait", "running", "done", "skip", "failed")
+
+
+def _row_to_ingest_task(row: sqlite3.Row) -> CoinIngestTask:
+    return CoinIngestTask(
+        id=row["id"],
+        series_numista_id=row["series_numista_id"],
+        name=row["name"],
+        status=row["status"],
+        node_series=row["node_series"],
+        node_years=row["node_years"],
+        node_values=row["node_values"],
+        node_images=row["node_images"],
+        source=row["source"],
+        error=row["error"],
+        created_at=row["created_at"],
+        started_at=row["started_at"],
+        finished_at=row["finished_at"],
+    )
+
+
+def enqueue_coin_ingest_task(
+    series_numista_id: int, name: str = "", source: str = ""
+) -> tuple[CoinIngestTask, bool]:
+    """入队一个系列的采集任务；同系列已在 pending / running 时复用（reused=True）。"""
+    now = now_local()
+    with db.connect() as conn, conn:
+        row = conn.execute(
+            """
+            SELECT * FROM coin_ingest_tasks
+             WHERE series_numista_id = ? AND status IN ('pending', 'running')
+             ORDER BY id LIMIT 1
+            """,
+            (series_numista_id,),
+        ).fetchone()
+        if row is not None:
+            return _row_to_ingest_task(row), True
+        cursor = conn.execute(
+            """
+            INSERT INTO coin_ingest_tasks (series_numista_id, name, source, created_at)
+            VALUES (?, ?, ?, ?)
+            """,
+            (series_numista_id, name, source, now),
+        )
+        row = conn.execute(
+            "SELECT * FROM coin_ingest_tasks WHERE id = ?", (cursor.lastrowid,)
+        ).fetchone()
+    return _row_to_ingest_task(row), False
+
+
+def list_coin_ingest_tasks(
+    name: str | None = None,
+    status: str | None = None,
+    created_from: str | None = None,
+    created_to: str | None = None,
+    finished_from: str | None = None,
+    finished_to: str | None = None,
+) -> list[CoinIngestTask]:
+    """任务列表（新入队在前）；四组条件可组合：任务名 / 状态 / 加入时间 / 完成时间。"""
+    where: list[str] = []
+    params: list[object] = []
+    if name:
+        where.append("name LIKE ?")
+        params.append(f"%{name}%")
+    if status:
+        where.append("status = ?")
+        params.append(status)
+    if created_from:
+        where.append("created_at >= ?")
+        params.append(created_from)
+    if created_to:
+        where.append("created_at <= ?")
+        params.append(created_to)
+    if finished_from:
+        where.append("finished_at >= ?")
+        params.append(finished_from)
+    if finished_to:
+        where.append("finished_at <= ?")
+        params.append(finished_to)
+    sql = "SELECT * FROM coin_ingest_tasks"
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    sql += " ORDER BY created_at DESC, id DESC"
+    with db.connect() as conn:
+        rows = conn.execute(sql, params).fetchall()
+    return [_row_to_ingest_task(row) for row in rows]
+
+
+def set_coin_ingest_node(
+    task_id: int, node: str, state: str, error: str | None = None
+) -> bool:
+    """推进单个节点状态；带 error 时同步记到任务（节点级 failed 的详情）。"""
+    if node not in INGEST_NODES:
+        raise ValueError(f"未知采集节点：{node}")
+    if state not in INGEST_NODE_STATES:
+        raise ValueError(f"未知节点状态：{state}")
+    with db.connect() as conn, conn:
+        cursor = conn.execute(
+            f"UPDATE coin_ingest_tasks SET node_{node} = ?, error = COALESCE(?, error) WHERE id = ?",
+            (state, error, task_id),
+        )
+    return cursor.rowcount > 0
+
+
+def claim_next_coin_ingest_task() -> CoinIngestTask | None:
+    """取最早入队的 pending 任务并置为 running（无任务返回 None）。"""
+    now = now_local()
+    with db.connect() as conn, conn:
+        row = conn.execute(
+            """
+            SELECT id FROM coin_ingest_tasks
+             WHERE status = 'pending'
+             ORDER BY created_at, id LIMIT 1
+            """
+        ).fetchone()
+        if row is None:
+            return None
+        conn.execute(
+            "UPDATE coin_ingest_tasks SET status = 'running', started_at = ? WHERE id = ?",
+            (now, row["id"]),
+        )
+        row = conn.execute(
+            "SELECT * FROM coin_ingest_tasks WHERE id = ?", (row["id"],)
+        ).fetchone()
+    return _row_to_ingest_task(row)
+
+
+def finish_coin_ingest_task(
+    task_id: int, status: str, error: str | None = None
+) -> bool:
+    """收尾任务：done / failed + 完成时间。"""
+    if status not in ("done", "failed"):
+        raise ValueError(f"未知任务状态：{status}")
+    now = now_local()
+    with db.connect() as conn, conn:
+        cursor = conn.execute(
+            "UPDATE coin_ingest_tasks SET status = ?, error = ?, finished_at = ? WHERE id = ?",
+            (status, error, now, task_id),
         )
     return cursor.rowcount > 0
 
@@ -2782,12 +2999,14 @@ def search_coin_series(
     denomination: str | None = None,
     composition: str | None = None,
     object_type: str | None = None,
+    numista_ids: Sequence[int] | None = None,
     cn: bool = False,
 ) -> list[CoinSeries]:
     """按国家 / 年份 / 面值 / 材质 / 货币类型查已采集的系列（年份落在 `[min_year, max_year]` 即命中）。
 
     参数均可选：全空时返回全部系列。国家 / 货币类型走参数化 SQL（精确匹配）；
     面值 / 材质在取回后做归一化宽松匹配（要处理库值里的空格与数字边界，见 `_text_hit`）。
+    `numista_ids` 给定时只在这些系列里查（观察系列页用；空列表直接返回空）。
     """
     table = "coin_series_cn" if cn else "coin_series"
     clauses: list[str] = []
@@ -2798,6 +3017,12 @@ def search_coin_series(
     if object_type:
         clauses.append("object_type = ?")
         params.append(object_type)
+    if numista_ids is not None:
+        ids = list(numista_ids)
+        if not ids:
+            return []
+        clauses.append(f"numista_id IN ({','.join('?' * len(ids))})")
+        params.extend(ids)
     if year is not None:
         clauses.append("(min_year IS NULL OR min_year <= ?) AND (max_year IS NULL OR max_year >= ?)")
         params.extend([year, year])

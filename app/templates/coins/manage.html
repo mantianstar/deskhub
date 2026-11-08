@@ -1,12 +1,12 @@
 {% extends "base.html" %}
 {% block title %}{{ page_title }} · deskhub{% endblock %}
 {% block content_class %} content-wide{% endblock %}
-{% from "coins/_macros.html" import coin_nav, coin_head, coin_library_tabs with context %}
+{% from "coins/_macros.html" import coin_nav, coin_head with context %}
 
 {% block content %}
 {{ coin_nav("library") }}
 {{ coin_head("采集中心", "4 步流水线 · 本次 " ~ (series_list|length) ~ " 个系列") }}
-{{ coin_library_tabs("ingest") }}
+
 
 <details class="coin-new-collection">
   <summary class="btn btn-primary">＋ 采集新系列</summary>

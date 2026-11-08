@@ -5,10 +5,30 @@
 
 {% block content %}
 {{ coin_nav("collection") }}
-{{ coin_head("收藏", total_collections ~ " 个收藏系列 · " ~ total_members ~ " 条 Numista 映射") }}
+{{ coin_collection_tabs("collections") }}
+{% call coin_head(page_title, total_collections ~ " 个收藏系列 · " ~ total_members ~ " 条 Numista 映射 · 卡片默认收起") %}
+<button class="btn btn-primary" type="button" data-new-collection>＋ 新建收藏系列</button>
+{% endcall %}
 
-<details class="coin-new-collection">
-  <summary class="btn btn-primary">＋ 新建收藏系列</summary>
+<form class="search-form" method="get" action="/coins/collections">
+  <div class="search-row search-row-labeled">
+    <label class="field">国家
+      <input class="search-input" type="text" name="country" list="col-countries" value="{{ filter_country }}" placeholder="如 英国">
+    </label>
+    <label class="field">执政者
+      <input class="search-input" type="text" name="ruler" list="col-rulers" value="{{ filter_ruler }}" placeholder="如 乔治六世">
+    </label>
+    <label class="field">面值
+      <input class="search-input" type="text" name="denomination" list="col-denominations" value="{{ filter_denomination }}" placeholder="如 1 便士">
+    </label>
+    <button class="btn btn-primary" type="submit">查询</button>
+  </div>
+</form>
+<datalist id="col-countries">{% for item in country_options %}<option>{{ item }}</option>{% endfor %}</datalist>
+<datalist id="col-rulers">{% for item in ruler_options %}<option>{{ item }}</option>{% endfor %}</datalist>
+<datalist id="col-denominations">{% for item in denomination_options %}<option>{{ item }}</option>{% endfor %}</datalist>
+
+<div class="coin-new-collection" id="new-collection" hidden>
   <form class="search-form coin-form-plain" method="post" action="/coins/collections/add">
     <div class="search-row search-row-labeled">
       <label class="field">自定义 ID
@@ -32,28 +52,7 @@
       <button class="btn btn-primary" type="submit">创建</button>
     </div>
   </form>
-</details>
-
-<div class="coin-kpis">
-  <div class="coin-kpi">
-    <span class="coin-kpi-label">收藏系列</span>
-    <span class="coin-kpi-value">{{ total_collections }}</span>
-  </div>
-  <div class="coin-kpi">
-    <span class="coin-kpi-label">整体覆盖</span>
-    <span class="coin-kpi-value">{{ coverage_pct }}%</span>
-  </div>
-  <div class="coin-kpi">
-    <span class="coin-kpi-label">缺失年份</span>
-    <span class="coin-kpi-value">{{ missing_year_total }}</span>
-  </div>
-  <div class="coin-kpi">
-    <span class="coin-kpi-label">待升级</span>
-    <span class="coin-kpi-value">{{ upgrade_year_total }}</span>
-  </div>
 </div>
-
-{{ coin_collection_tabs("collections") }}
 
 {% if not collections %}
 <div class="empty">还没有收藏系列，展开上方「新建收藏系列」先建一个。</div>
@@ -62,80 +61,47 @@
   {% for collection in collections %}
   {% set stats = collection_stats.get(collection.id, {}) %}
   {% set member_rows = members_by_collection.get(collection.id, []) %}
-  {% set filters = member_filters.get(collection.id or 0, {}) %}
+  {% set series_profile = collection_profiles.get(collection.id) %}
   {% set total_years = stats.get("years", 0) %}
   {% set owned_years = stats.get("owned", 0) %}
   {% set coverage = ((owned_years * 100 / total_years) | round | int) if total_years else 0 %}
-  <details class="coin-collection-card" id="collection-{{ collection.id }}"{% if expanded_id == collection.id %} open{% endif %}>
-    <summary class="coin-collection-summary">
-      <span class="coin-collection-name">{{ collection.name }}</span>
-      <span class="coin-collection-years">
-        {% if stats and stats.min_year is not none %}{{ stats.min_year }}–{{ stats.max_year }}{% if total_years %} · {{ total_years }} 枚{% endif %}{% else %}无年份{% endif %}
-      </span>
-      <span class="coin-collection-stats">
-        {% if total_years %}已有 {{ owned_years }} · 缺 {{ stats.missing }} · 升级 {{ stats.upgrade }}{% else %}无画像{% endif %}
-      </span>
-      <span class="coin-collection-size">
-        {{ stats.size_band if stats and stats.size_band else '未分档' }} · 成员 {{ member_rows|length }}
-      </span>
-    </summary>
-
-    <div class="coin-collection-body">
-      <p class="digest-meta">
-        ID <code>{{ collection.collection_key }}</code>
-        · 国家 {{ collection.country }}
-        {%- if collection.ruler %} · 执政者 {{ collection.ruler }}{% endif %}
-        · 面值 {{ collection.denomination }}
+  <article class="coin-collection-card">
+    <div class="col-row" data-col-row role="button" tabindex="0" aria-expanded="false" aria-controls="col-body-{{ collection.id }}">
+      <p class="col-summary">
+        <b class="col-title">{{ collection.name }}</b>
+        <span class="col-meta">
+          {%- if stats and stats.min_year is not none -%}
+          {{ stats.min_year }}–{{ stats.max_year }} · {{ total_years }} 枚 已有 {{ owned_years }} · 缺 {{ stats.missing }} · 升级 {{ stats.upgrade }} · 成员 {{ member_rows|length }}
+          {%- else -%}
+          无年份画像 · 成员 {{ member_rows|length }}
+          {%- endif -%}
+        </span>
       </p>
-
-      {% set series_profile = collection_profiles.get(collection.id) %}
+      <span class="col-row-actions">
+        <a class="col-link" href="/coins/collections/{{ collection.id }}">进入管理 →</a>
+      </span>
+    </div>
+    <div class="col-body" id="col-body-{{ collection.id }}" hidden>
+      <p class="coin-collection-id">
+        <span>ID <code>{{ collection.collection_key }}</code></span>
+        <span>Numista 系列 {{ member_rows|length }}</span>
+      </p>
       {% if series_profile and series_profile.entries %}
-      <div class="coin-member-profile">
-        <p class="digest-meta">
-          <strong>{{ collection.name }}</strong> · {{ series_profile.entries|length }} 枚
-        </p>
-        <div class="coin-progress"><span style="width: {{ coverage }}%;"></span></div>
-        <div class="coin-progress-stats">
-          <span>覆盖 {{ coverage }}%</span>
-          <span>已有 {{ series_profile.owned_entries|length }}</span>
-          <span class="coin-text-danger">缺失 {{ series_profile.missing_entries|length }}</span>
-          <span class="coin-text-warning">待升级 {{ series_profile.upgrade_entries|length }}</span>
-        </div>
-        <div class="coin-year-matrix">
-          {% for entry in series_profile.entries %}
-          <span class="coin-year-chip is-{{ entry.status }}">{{ entry.label }}</span>
-          {% endfor %}
-        </div>
-
-        {% set grade_entries = grade_entries_by_collection.get(collection.id, []) %}
-        {% if grade_entries %}
-        <form class="coin-grade-panel" method="post" action="/coins/grades/add">
-          <input type="hidden" name="country" value="{{ collection.country }}">
-          <input type="hidden" name="denomination" value="{{ grade_entries[0].denomination }}">
-          <input type="hidden" name="next" value="/coins/collections?expand={{ collection.id }}">
-          <span class="coin-grade-name">{{ collection.name }}</span>
-          <label class="field">年份
-            <select name="entry" onchange="this.form.denomination.value = this.selectedOptions[0].dataset.denomination">
-              {% for entry in grade_entries %}
-              <option value="{{ entry.value }}" data-denomination="{{ entry.denomination }}"{% if entry.selected %} selected{% endif %}>{{ entry.label }}</option>
-              {% endfor %}
-            </select>
-          </label>
-          <label class="field">品相
-            <select name="grade">
-              {% for grade in grades %}
-              <option value="{{ grade }}">{{ grade }}</option>
-              {% endfor %}
-            </select>
-          </label>
-          <button class="btn btn-primary" type="submit">保存品相</button>
-        </form>
-        {% endif %}
+      <div class="coin-progress"><span style="width: {{ coverage }}%;"></span></div>
+      <div class="coin-progress-stats">
+        <span>覆盖 {{ coverage }}%</span>
+        <span>已有 {{ series_profile.owned_entries|length }}</span>
+        <span class="coin-text-danger">缺失 {{ series_profile.missing_entries|length }}</span>
+        <span class="coin-text-warning">待升级 {{ series_profile.upgrade_entries|length }}</span>
+      </div>
+      <div class="coin-year-matrix">
+        {% for entry in series_profile.entries %}
+        <span class="coin-year-chip is-{{ entry.status }}">{{ entry.label }}</span>
+        {% endfor %}
       </div>
       {% else %}
-      <p class="digest-meta">还没有年份画像：先把 Numista series 加入成员。</p>
+      <p class="digest-meta">还没有年份画像：进入管理加入 Numista series。</p>
       {% endif %}
-
       <div class="coin-member-chips">
         <span class="coin-member-label">成员</span>
         {% for member in member_rows %}
@@ -145,158 +111,8 @@
         <span class="digest-meta">无</span>
         {% endfor %}
       </div>
-
-      <details class="coin-disclosure">
-        <summary>成员与映射</summary>
-        <div class="table-wrap">
-          <table class="sources-table">
-            <thead>
-              <tr>
-                <th>Numista series</th>
-                <th>标题</th>
-                {% set has_commemorative = namespace(value=false) %}
-                {% for member in member_rows %}{% if member.numista_series_id in commemorative_ids %}{% set has_commemorative.value = true %}{% endif %}{% endfor %}
-                {% if has_commemorative.value %}
-                <th>国家</th>
-                <th>发行系列</th>
-                <th>发行主题</th>
-                <th class="nowrap">年份范围</th>
-                <th>面值</th>
-                <th>材质 / 尺寸</th>
-                {% else %}
-                <th>名称</th>
-                <th class="nowrap">年份范围</th>
-                <th>材质 / 尺寸</th>
-                {% endif %}
-                <th class="nowrap">操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              {% for member in member_rows %}
-              {% set series = series_by_id.get(member.numista_series_id) %}
-              <tr>
-                <td>{{ member.numista_series_id }}</td>
-                <td>{{ series.title if series and series.title else '—' }}</td>
-                {% if has_commemorative.value %}
-                <td>{{ series.issuer if series and series.issuer else '—' }}</td>
-                <td>{{ series.issue_series if series and series.issue_series else '—' }}</td>
-                <td>{{ series.issue_theme if series and series.issue_theme else '—' }}</td>
-                <td class="nowrap">{% if series %}{{ series.min_year or '?' }}–{{ series.max_year or '?' }}{% else %}—{% endif %}</td>
-                <td>{{ series.denomination if series and series.denomination else '—' }}</td>
-                <td>
-                  {% if series %}
-                  {{ series.composition or '—' }}{% if series.size_mm %} · {{ series.size_mm }} mm{% endif %}
-                  {% else %}—{% endif %}
-                </td>
-                {% else %}
-                <td>{{ member.numista_series_name or '—' }}</td>
-                <td class="nowrap">{% if series %}{{ series.min_year or '?' }}–{{ series.max_year or '?' }}{% else %}—{% endif %}</td>
-                <td>
-                  {% if series %}
-                  {{ series.composition or '—' }}{% if series.size_mm %} · {{ series.size_mm }} mm{% endif %}
-                  {% else %}—{% endif %}
-                </td>
-                {% endif %}
-                <td class="nowrap">
-                  <form method="post" action="/coins/collections/members/{{ member.id }}/delete">
-                    <input type="hidden" name="collection_id" value="{{ collection.id }}">
-                    <button class="btn btn-danger" type="submit">移除</button>
-                  </form>
-                </td>
-              </tr>
-              {% endfor %}
-              {% if not member_rows %}
-              <tr><td colspan="{{ 9 if has_commemorative.value else 7 }}" class="digest-meta">还没有映射任何 Numista series。</td></tr>
-              {% endif %}
-            </tbody>
-          </table>
-        </div>
-
-        <form class="coin-member-add" method="get" action="/coins/collections">
-          <input type="hidden" name="expand" value="{{ collection.id }}">
-          <input type="hidden" name="collection_id" value="{{ collection.id }}">
-          <label class="field">国家
-            <select name="mcountry" onchange="this.form.mruler.value='__all__'; this.form.mdenomination.value=''; this.form.requestSubmit();">
-              {% for country in filters["countries"] %}
-              <option value="{{ country }}"{% if country == filters["country"] %} selected{% endif %}>{{ country }}</option>
-              {% endfor %}
-            </select>
-          </label>
-          <label class="field">执政者
-            <select name="mruler" onchange="this.form.mdenomination.value=''; this.form.requestSubmit();">
-              <option value="__all__"{% if not filters["ruler"] %} selected{% endif %}>全部</option>
-              {% for ruler in filters["rulers"] %}
-              <option value="{{ ruler }}"{% if ruler == filters["ruler"] %} selected{% endif %}>{{ ruler }}</option>
-              {% endfor %}
-            </select>
-          </label>
-          <label class="field">面值
-            <select name="mdenomination" onchange="this.form.requestSubmit();">
-              {% for denomination in filters["denominations"] %}
-              <option value="{{ denomination }}"{% if denomination == filters["denomination"] %} selected{% endif %}>{{ denomination }}</option>
-              {% endfor %}
-            </select>
-          </label>
-          <label class="field">标题
-            <input class="search-input" type="text" name="mtitle" value="{{ filters['title'] }}" placeholder="模糊查找候选标题">
-          </label>
-          <label class="field coin-member-candidate">候选 series
-            <select name="numista_series_id"{% if not filters["candidates"] %} disabled{% endif %}>
-              {% for series in filters["candidates"] %}
-              <option value="{{ series.numista_id }}">
-                {% if series.numista_id in commemorative_ids %}
-                {{ series.numista_id }} · {{ series.title or '—' }} · {{ series.issuer or '—' }} · {{ series.issue_series or '—' }} · {{ series.issue_theme or '—' }} · {{ series.min_year or '?' }}–{{ series.max_year or '?' }} · {{ series.denomination or '—' }} · {{ series.composition or '—' }}{% if series.size_mm %} · {{ series.size_mm }} mm{% endif %}
-                {% else %}
-                {{ series.numista_id }} · {{ series.title or '—' }} · {{ series.issuer or '—' }} · {{ series.ruler or '—' }} · {{ series.denomination or '—' }} · {{ series.min_year or '?' }}–{{ series.max_year or '?' }}{% if series.composition %} · {{ series.composition }}{% endif %}
-                {% endif %}
-              </option>
-              {% endfor %}
-            </select>
-          </label>
-          <button class="btn btn-ghost" type="submit">筛选</button>
-          <button class="btn btn-primary" type="submit"
-                  formaction="/coins/collections/members/add" formmethod="post"
-                  {% if not filters["candidates"] %}disabled{% endif %}>加入</button>
-        </form>
-        {% if not filters["candidates"] %}
-        <p class="form-hint">当前国家 / 执政者 / 面值 / 标题下没有可加入的青铜 / 铜 series。</p>
-        {% elif filters["truncated"] %}
-        <p class="form-hint">匹配 {{ filters["candidate_total"] }} 条，仅显示前 50 条，请缩小国家 / 执政者 / 面值 / 标题范围。</p>
-        {% else %}
-        <p class="form-hint">已加入收藏系列的 series 不会出现在候选中。</p>
-        {% endif %}
-      </details>
-
-      <details class="coin-disclosure">
-        <summary>编辑收藏系列</summary>
-        <form class="search-form coin-form-plain" method="post" action="/coins/collections/add">
-          <input type="hidden" name="collection_key" value="{{ collection.collection_key }}">
-          <div class="search-row search-row-labeled">
-            <label class="field">展示名
-              <input class="search-input" type="text" name="name" value="{{ collection.name }}">
-            </label>
-            <label class="field">国家
-              <input class="search-input" type="text" name="country" value="{{ collection.country }}" required>
-            </label>
-            <label class="field">执政者
-              <input class="search-input" type="text" name="ruler" value="{{ collection.ruler or '' }}">
-            </label>
-            <label class="field">面值
-              <input class="search-input" type="text" name="denomination" value="{{ collection.denomination }}" required>
-            </label>
-            <label class="field">尺寸 mm
-              <input class="search-input" type="text" name="size_mm" value="{{ collection.size_mm if collection.size_mm is not none else '' }}">
-            </label>
-            <button class="btn btn-primary" type="submit">保存</button>
-          </div>
-        </form>
-      </details>
-
-      <form class="coin-collection-danger" method="post" action="/coins/collections/{{ collection.id }}/delete">
-        <button class="btn btn-danger" type="submit">删除收藏系列</button>
-      </form>
     </div>
-  </details>
+  </article>
   {% endfor %}
 </div>
 
@@ -320,52 +136,33 @@
 
 {% block scripts %}
 <script>
-  // 成员候选的筛选 / 加入改为局部刷新：只替换当前卡片，保留展开状态与已选条件。
   (function () {
-    function swapCard(form, url, method, body) {
-      var card = form.closest("details.coin-collection-card");
-      if (!card) { return false; }
-      var openStates = Array.prototype.map.call(
-        card.querySelectorAll("details"),
-        function (item) { return item.open; }
-      );
-      fetch(url, { method: method, body: body, credentials: "same-origin" })
-        .then(function (resp) {
-          if (!resp.ok) { window.location.href = url; return null; }
-          try { history.replaceState(null, "", resp.url); } catch (err) { /* 忽略 */ }
-          return resp.text();
-        })
-        .then(function (html) {
-          if (html === null) { return; }
-          var doc = new DOMParser().parseFromString(html, "text/html");
-          var fresh = doc.getElementById(card.id);
-          if (!fresh) { window.location.href = url; return; }
-          var scrollY = window.scrollY;
-          card.replaceWith(fresh);
-          Array.prototype.forEach.call(fresh.querySelectorAll("details"), function (item, index) {
-            if (openStates[index]) { item.open = true; }
-          });
-          window.scrollTo(0, scrollY);
-        })
-        .catch(function () { window.location.href = url; });
-      return true;
+    var newButton = document.querySelector("[data-new-collection]");
+    var newPanel = document.getElementById("new-collection");
+    if (newButton && newPanel) {
+      newButton.addEventListener("click", function () {
+        newPanel.hidden = !newPanel.hidden;
+      });
     }
-
-    document.addEventListener("submit", function (event) {
-      var form = event.target.closest("form.coin-member-add");
-      if (!form) { return; }
-      event.preventDefault();
-      var submitter = event.submitter;
-      var method = ((submitter && submitter.formMethod) || form.method || "get").toLowerCase();
-      var action = (submitter && submitter.formAction) || form.action;
-      var data = new FormData(form);
-      if (method === "post") {
-        swapCard(form, action, "POST", data);
-        return;
+    document.querySelectorAll("[data-col-row]").forEach(function (row) {
+      var body = document.getElementById(row.getAttribute("aria-controls"));
+      if (!body) { return; }
+      function toggle() {
+        var opened = body.hidden;
+        body.hidden = !opened;
+        row.setAttribute("aria-expanded", String(opened));
       }
-      var params = new URLSearchParams();
-      data.forEach(function (value, key) { params.append(key, value); });
-      swapCard(form, action.split("?")[0] + "?" + params.toString(), "GET");
+      row.addEventListener("click", function (event) {
+        if (event.target.closest("a")) { return; }
+        toggle();
+      });
+      row.addEventListener("keydown", function (event) {
+        if (event.target !== row) { return; }
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          toggle();
+        }
+      });
     });
   })();
 </script>

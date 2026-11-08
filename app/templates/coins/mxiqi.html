@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}{{ page_title }} · deskhub{% endblock %}
+{% block content_class %} content-wide{% endblock %}
+{% from "coins/_macros.html" import coin_nav, coin_head with context %}
+
+{% block content %}
+{{ coin_nav("data") }}
+{% set subtitle = "分区入口：拍场、拍品搜索与数据分析沿用现有页面，只改入口归属" %}
+{{ coin_head("麦稀奇数据", subtitle) }}
+
+<section class="coin-panel">
+  <div class="coin-panel-head">
+    <h2 class="coin-panel-title">数据分区</h2>
+  </div>
+  <div class="coin-entry-grid">
+    <article class="coin-entry">
+      <h3 class="coin-panel-title">拍卖专场</h3>
+      <p>专场列表、专场详情与拍品详情。</p>
+      <a class="coin-rail-link" href="/coins">进入拍卖专场 →</a>
+    </article>
+    <article class="coin-entry">
+      <h3 class="coin-panel-title">拍品搜索</h3>
+      <p>全局拍品搜索：候选、推荐标签与排序。</p>
+      <a class="coin-rail-link" href="/coins/search">进入拍品搜索 →</a>
+    </article>
+    <article class="coin-entry">
+      <h3 class="coin-panel-title">分类分析</h3>
+      <p>按硬币二级分类看价格、成交率与样本。</p>
+      <a class="coin-rail-link" href="/coins/analysis">进入分类分析 →</a>
+    </article>
+    <article class="coin-entry">
+      <h3 class="coin-panel-title">店铺分析</h3>
+      <p>店铺上架量、成交率与价格稳定性。</p>
+      <a class="coin-rail-link" href="/coins/shops">进入店铺分析 →</a>
+    </article>
+  </div>
+</section>
+{% endblock %}

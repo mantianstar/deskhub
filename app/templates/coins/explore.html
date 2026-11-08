@@ -8,6 +8,7 @@
 {% set subtitle = candidates|length ~ " 个候选" ~ ("（共 " ~ total ~ " 个）" if filters_active else "") ~ " · 目录扫描得到的外部铜币 · 忽略的不再显示" %}
 {{ coin_head("候选池", subtitle) }}
 
+
 <form class="search-form" method="get" action="/coins/explore">
   <div class="search-row search-row-labeled">
     <label class="field">状态

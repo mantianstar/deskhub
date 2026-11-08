@@ -1,65 +1,55 @@
-{# 品相台账结果区：整页渲染与「新增组合」的局部刷新共用（fragment 请求只返回这一段）。 #}
+{# 个人收藏清单结果区：整页渲染与「新增组合」的局部刷新共用（fragment 请求只返回这一段）。 #}
 {% if combos %}
-<form method="post" action="/coins/grades/save">
-  <input type="hidden" name="filter_country" value="{{ country }}">
-  <input type="hidden" name="filter_year" value="{{ year }}">
-  <input type="hidden" name="filter_denomination" value="{{ denomination }}">
-  <div class="table-wrap">
-    <table class="sources-table coin-grade-table">
-      <thead>
-        <tr>
-          <th>国家</th>
-          <th class="nowrap">年份</th>
-          <th class="nowrap">年号</th>
-          <th>面值</th>
-          <th>发行系列</th>
-          <th>发行主题</th>
-          <th>所属收藏系列</th>
-          <th class="nowrap">品相</th>
-          <th class="nowrap">操作</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for combo in combos %}
-        <tr>
-          <td>{{ combo.country }}</td>
-          <td class="nowrap">{{ combo.era }}</td>
-          <td class="nowrap">{{ combo.era_label }}</td>
-          <td>{{ combo.denomination }}</td>
-          <td class="nowrap">{{ combo.theme or '—' }}</td>
-          <td class="nowrap">{{ combo.coin_name or '—' }}</td>
-          <td class="coin-grade-collection">{{ combo.collection_name or '—' }}</td>
-          <td class="nowrap">
-            <input type="hidden" name="country" value="{{ combo.country }}">
-            <input type="hidden" name="era" value="{{ combo.era }}">
-            <input type="hidden" name="denomination" value="{{ combo.denomination }}">
-            <input type="hidden" name="theme" value="{{ combo.theme }}">
-            <input type="hidden" name="coin_name" value="{{ combo.coin_name }}">
-            <select name="grade" aria-label="品相">
-              <option value=""{{ ' selected' if not combo.grade else '' }}>未录入</option>
-              {% for grade in grades %}
-              <option value="{{ grade }}"{{ ' selected' if combo.grade == grade else '' }}>{{ grade }}</option>
-              {% endfor %}
-            </select>
-          </td>
-          <td class="nowrap coin-grade-del">
-            <button class="btn btn-ghost js-grade-del" type="button"
-                    data-country="{{ combo.country }}"
-                    data-era="{{ combo.era }}"
-                    data-denomination="{{ combo.denomination }}"
-                    data-theme="{{ combo.theme }}"
-                    data-coin-name="{{ combo.coin_name }}"
-                    title="删除整行：清掉该组合的全部历史订单与品相记录">删除</button>
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-  <div class="coin-grade-actions">
-    <button class="btn btn-primary" type="submit">保存</button>
-  </div>
-</form>
+<div class="table-wrap">
+  <table class="sources-table coin-grade-table">
+    <thead>
+      <tr>
+        <th>国家</th>
+        <th class="nowrap">年份</th>
+        <th class="nowrap">年号</th>
+        <th>面值</th>
+        <th>发行系列</th>
+        <th>发行主题</th>
+        <th class="nowrap">品相</th>
+        <th class="nowrap">操作</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for combo in combos %}
+      <tr>
+        <td>{{ combo.country }}</td>
+        <td class="nowrap">{{ combo.era }}</td>
+        <td class="nowrap">{{ combo.era_label }}</td>
+        <td>{{ combo.denomination }}</td>
+        <td class="nowrap">{{ combo.theme or '—' }}</td>
+        <td class="nowrap">{{ combo.coin_name or '—' }}</td>
+        <td class="nowrap coin-grade-value">{{ combo.grade or '—' }}</td>
+        <td class="nowrap">
+          <details class="coin-more">
+            <summary class="coin-more-btn" aria-label="更多操作">⋯</summary>
+            <div class="coin-more-menu">
+              <button type="button"
+                      data-grade="{{ combo.country }} · {{ combo.era }} · {{ combo.denomination }}"
+                      data-current="{{ combo.grade }}"
+                      data-country="{{ combo.country }}"
+                      data-era="{{ combo.era }}"
+                      data-denomination="{{ combo.denomination }}"
+                      data-theme="{{ combo.theme }}"
+                      data-coin-name="{{ combo.coin_name }}">修改品相</button>
+              <button type="button" class="is-danger" data-delete
+                      data-country="{{ combo.country }}"
+                      data-era="{{ combo.era }}"
+                      data-denomination="{{ combo.denomination }}"
+                      data-theme="{{ combo.theme }}"
+                      data-coin-name="{{ combo.coin_name }}">删除</button>
+            </div>
+          </details>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
 {% else %}
 <div class="empty">
   没有可录入的历史记录。先在「铜币画像」跑

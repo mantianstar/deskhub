@@ -10,7 +10,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app import config, db, repository
-from app.coins import collection, explore, recommend
+from app.coins import collection, explore, ingest, recommend
 from app.main import app as fastapi_app
 from app.models import (
     CoinCollectionMember,
@@ -1055,6 +1055,188 @@ def test_collection_series_crud_and_member_mapping(temp_db):
     assert repository.list_coin_collection_members(collection_id) == []
 
 
+def test_watchlist_add_list_remove(temp_db):
+    series_id = repository.upsert_coin_series(_series(670))
+    repository.upsert_coin_series_cn(_series(670, title="英国 · 维多利亚 · 1 便士"))
+
+    assert repository.add_coin_watch_item(670)
+    assert not repository.add_coin_watch_item(670)  # 幂等
+    assert not repository.add_coin_watch_item(999)  # 系列不存在
+
+    items = repository.list_coin_watchlist()
+    assert [(item.series_id, item.numista_id, item.title) for item in items] == [
+        (series_id, 670, "英国 · 维多利亚 · 1 便士")
+    ]
+
+    assert repository.remove_coin_watch_item(670)
+    assert repository.list_coin_watchlist() == []
+    assert not repository.remove_coin_watch_item(670)
+
+
+# ---------------------------------------------------------------- 异步采集任务
+
+def test_ingest_task_enqueue_reuse_claim_and_finish(temp_db):
+    first, reused = repository.enqueue_coin_ingest_task(
+        670, name="英国 · 维多利亚 · 1 便士", source="library"
+    )
+    assert first.id is not None
+    assert first.status == "pending"
+    assert not reused
+
+    again, reused = repository.enqueue_coin_ingest_task(670, name="重复入队", source="manual")
+    assert reused
+    assert again.id == first.id  # 复用现有任务，不新建
+    assert again.name == "英国 · 维多利亚 · 1 便士"
+
+    claimed = repository.claim_next_coin_ingest_task()
+    assert claimed is not None
+    assert claimed.id == first.id
+    assert claimed.status == "running"
+    assert claimed.started_at is not None
+    assert repository.claim_next_coin_ingest_task() is None  # 队列已空
+
+    assert repository.set_coin_ingest_node(first.id, "series", "running")
+    assert repository.set_coin_ingest_node(first.id, "series", "done")
+    assert repository.set_coin_ingest_node(first.id, "images", "failed", error="图片下载超时")
+
+    task = repository.list_coin_ingest_tasks()[0]
+    assert (task.node_series, task.node_images) == ("done", "failed")
+    assert task.error == "图片下载超时"
+
+    assert repository.finish_coin_ingest_task(first.id, "failed", error="图片下载超时")
+    assert repository.list_coin_ingest_tasks(status="failed")[0].finished_at is not None
+
+    third, reused = repository.enqueue_coin_ingest_task(670, name="重新入队")
+    assert not reused and third.id != first.id  # 收尾后同系列可再次入队
+
+
+def test_ingest_task_list_filters(temp_db):
+    uk, _ = repository.enqueue_coin_ingest_task(670, name="英国 · 1 便士", source="explore")
+    fr, _ = repository.enqueue_coin_ingest_task(671, name="法国 · 5 法郎", source="watchlist")
+    assert {task.id for task in repository.list_coin_ingest_tasks()} == {uk.id, fr.id}
+
+    assert [task.id for task in repository.list_coin_ingest_tasks(name="法国")] == [fr.id]
+    assert {task.id for task in repository.list_coin_ingest_tasks(status="pending")} == {
+        uk.id,
+        fr.id,
+    }
+
+    assert repository.claim_next_coin_ingest_task().id == uk.id  # 先入先出
+    assert [task.id for task in repository.list_coin_ingest_tasks(status="running")] == [uk.id]
+    assert [task.id for task in repository.list_coin_ingest_tasks(status="pending")] == [fr.id]
+
+    assert len(repository.list_coin_ingest_tasks(created_from="2000-01-01")) == 2
+    assert repository.list_coin_ingest_tasks(created_to="2000-01-01") == []
+
+    repository.finish_coin_ingest_task(uk.id, "done")
+    assert {task.id for task in repository.list_coin_ingest_tasks(finished_from="2000-01-01")} == {
+        uk.id
+    }
+    assert repository.list_coin_ingest_tasks(finished_to="2000-01-01") == []
+
+    with pytest.raises(ValueError):
+        repository.set_coin_ingest_node(uk.id, "unknown", "done")
+    with pytest.raises(ValueError):
+        repository.finish_coin_ingest_task(fr.id, "pending")
+
+
+# ---------------------------------------------------------------- 队列执行器
+
+@pytest.mark.asyncio
+async def test_ingest_run_queue_all_nodes_done(temp_db, monkeypatch):
+    calls: list[str] = []
+
+    async def fake_series(config, *, series_id):
+        calls.append(f"series:{series_id}")
+
+    async def fake_issues(config, *, series_id):
+        calls.append(f"years:{series_id}")
+
+    async def fake_values(config, *, series_id):
+        calls.append(f"values:{series_id}")
+
+    async def fake_images(config, *, numista_id):
+        calls.append(f"images:{numista_id}")
+        return {}  # 采完仍无图 → 节点仍记 done（与用户确认的口径）
+
+    monkeypatch.setattr(ingest.coins_numista, "collect_series_by_id", fake_series)
+    monkeypatch.setattr(ingest.coins_numista, "collect_issues", fake_issues)
+    monkeypatch.setattr(ingest.coins_numista_web, "collect_issue_values", fake_values)
+    monkeypatch.setattr(ingest.coins_numista_web, "download_series_images", fake_images)
+    monkeypatch.setattr(ingest.coins_numista_web, "cached_image", lambda *_: None)
+
+    repository.enqueue_coin_ingest_task(670, name="英国 · 1 便士")
+    assert await ingest.run_queue(object()) == 1
+
+    task = repository.list_coin_ingest_tasks()[0]
+    assert task.status == "done"
+    assert (task.node_series, task.node_years, task.node_values, task.node_images) == (
+        "done",
+        "done",
+        "done",
+        "done",
+    )
+    assert task.started_at is not None and task.finished_at is not None
+    assert calls == ["series:670", "years:670", "values:670", "images:670"]
+
+
+@pytest.mark.asyncio
+async def test_ingest_run_task_skips_existing_data(temp_db, monkeypatch):
+    series_id = repository.upsert_coin_series(_series(670))
+    repository.upsert_coin_issue(_issue(9001, series_id, year=1860))
+    repository.upsert_coin_issue_values(_values(9001, 670))
+    called: list[str] = []
+
+    async def boom(*args, **kwargs):
+        called.append("called")
+        raise AssertionError("已有数据不应再采")
+
+    for module, name in (
+        (ingest.coins_numista, "collect_series_by_id"),
+        (ingest.coins_numista, "collect_issues"),
+        (ingest.coins_numista_web, "collect_issue_values"),
+        (ingest.coins_numista_web, "download_series_images"),
+    ):
+        monkeypatch.setattr(module, name, boom)
+    monkeypatch.setattr(ingest.coins_numista_web, "cached_image", lambda *_: object())
+
+    repository.enqueue_coin_ingest_task(670)
+    task = repository.claim_next_coin_ingest_task()
+    assert await ingest.run_task(object(), task) == "done"
+    assert called == []
+
+    task = repository.list_coin_ingest_tasks()[0]
+    assert (task.node_series, task.node_years, task.node_values, task.node_images) == (
+        "skip",
+        "skip",
+        "skip",
+        "skip",
+    )
+
+
+@pytest.mark.asyncio
+async def test_ingest_run_task_marks_node_failed(temp_db, monkeypatch):
+    async def fake_series(config, *, series_id):
+        return None
+
+    async def fail(config, *, series_id):
+        raise RuntimeError("类型页打不开")
+
+    monkeypatch.setattr(ingest.coins_numista, "collect_series_by_id", fake_series)
+    monkeypatch.setattr(ingest.coins_numista, "collect_issues", fail)
+
+    repository.enqueue_coin_ingest_task(670)
+    task = repository.claim_next_coin_ingest_task()
+    assert await ingest.run_task(object(), task) == "failed"
+
+    task = repository.list_coin_ingest_tasks()[0]
+    assert (task.node_series, task.node_years) == ("done", "failed")
+    assert (task.node_values, task.node_images) == ("wait", "wait")  # 后续节点不再跑
+    assert task.status == "failed"
+    assert task.error == "类型页打不开"
+    assert task.finished_at is not None
+
+
 # ---------------------------------------------------------------- 页面 smoke
 
 
@@ -1109,12 +1291,12 @@ def test_collection_pages_create_map_and_render(web):
     assert page.status_code == 200
     assert "英国 · 维多利亚 · 1 便士" in page.text
     assert "670" in page.text
-    assert "英国 1 便士" in page.text  # 成员展示 coin_series_cn.title
-    assert "1860–1864" in page.text  # 成员年份范围
-    assert '<option value="维多利亚" selected>' in page.text  # 执政者默认取收藏系列
+    assert "英国 1 便士" in page.text  # 成员 chip 展示 coin_series_cn.title
+
+    page = web.get(f"/coins/collections/{collection_row.id}")
     assert "1874–1901" not in page.text  # 爱德华七世不在默认执政者下
 
-    page = web.get(f"/coins/collections?expand={collection_row.id}&mruler=__all__")
+    page = web.get(f"/coins/collections/{collection_row.id}?mruler=__all__")
     assert "1874–1901" in page.text  # 切到「全部」后出现候选年份范围
     assert "爱德华七世 1 便士" in page.text  # 候选 series 展示 coin_series_cn.title
 
@@ -1153,12 +1335,11 @@ def test_collection_grade_panel_uses_member_denomination(web):
     repository.upsert_coin_issue_cn(_issue(9101, series_id, year=2010, mintage=1000))
     repository.upsert_coin_collection_member(collection_id, 900, "中国 1 元")
 
-    page = web.get(f"/coins/collections?expand={collection_id}")
+    page = web.get(f"/coins/collections/{collection_id}")
     assert page.status_code == 200
-    panel = page.text.split('class="coin-grade-panel"', 1)[1].split("</form>", 1)[0]
-    assert 'name="denomination" value="1 元"' in panel
-    assert 'data-denomination="1 元"' in panel
-    assert 'value="5 元"' not in panel
+    assert 'class="coin-grade-panel"' not in page.text
+    assert ">枚数<" in page.text
+    assert "<td>1</td>" in page.text
 
 
 def test_collection_member_filter_by_country_and_denomination(web):
@@ -1178,11 +1359,11 @@ def test_collection_member_filter_by_country_and_denomination(web):
     )
 
     page = web.get(
-        f"/coins/collections?expand={collection_id}&mcountry=日本&mdenomination=2 钱"
+        f"/coins/collections/{collection_id}?mcountry=日本&mdenomination=2 钱"
     )
     assert page.status_code == 200
-    assert '<option value="日本" selected>' in page.text
-    assert '<option value="2 钱" selected>' in page.text
+    assert 'name="mcountry" list="mem-countries" value="日本"' in page.text
+    assert 'name="mdenomination" list="mem-denoms" value="2 钱"' in page.text
     assert 'value="2317"' in page.text
     assert "1873–1892" in page.text
     assert "日本 2 钱" in page.text  # 候选 series 展示 coin_series_cn.title
@@ -1206,13 +1387,13 @@ def test_collection_member_filter_by_ruler(web):
         _series(671, ruler="爱德华七世", min_year=1874, max_year=1901)
     )
 
-    page = web.get(f"/coins/collections?expand={collection_id}")
-    assert '<option value="维多利亚" selected>' in page.text
+    page = web.get(f"/coins/collections/{collection_id}")
+    assert 'name="mruler" list="mem-rulers" value="维多利亚"' in page.text
     assert 'value="670"' in page.text
     assert 'value="671"' not in page.text
 
-    page = web.get(f"/coins/collections?expand={collection_id}&mruler=__all__")
-    assert '<option value="__all__" selected>' in page.text
+    page = web.get(f"/coins/collections/{collection_id}?mruler=__all__")
+    assert 'name="mruler" list="mem-rulers" value=""' in page.text
     assert 'value="671"' in page.text
 
 
@@ -1231,11 +1412,11 @@ def test_collections_page_paginates(web):
     page = web.get("/coins/collections")
     assert "第 1 / 2 页" in page.text
     assert "国00" in page.text
-    assert "国20" not in page.text
+    assert "国20 · 测试 · 1 便士" not in page.text
 
     page = web.get("/coins/collections?page=2")
     assert "第 2 / 2 页" in page.text
-    assert "国20" in page.text
+    assert "国20 · 测试 · 1 便士" in page.text
 
 
 def test_collection_page_paginates_recommendations(web):
@@ -1366,6 +1547,9 @@ def test_collection_page_filters_series_reason_and_hit(web):
     # 未匹配场次折叠为「其他专场」，查看按钮跳当日全部拍场
     assert "其他专场" in page.text
     assert "1 场 · 0 件命中" in page.text
+    # 右栏底部收藏覆盖：标题一行 + 次行灰字汇总
+    assert "收藏覆盖" in page.text
+    assert "已覆盖" in page.text and "缺口" in page.text
     assert 'href="/coins?auction_date=' in page.text and "rec=all" in page.text
     # 推荐模块标题按「国家 · 执政者 · 面值」；下拉不再有相似推荐
     assert "<h3>英国 · 维多利亚 · 1 便士</h3>" in page.text
@@ -1808,8 +1992,8 @@ def test_collection_member_add_keeps_selected_filters(web):
 
     assert response.status_code == 302
     location = response.headers["location"]
-    assert f"expand={collection_id}" in location
+    assert f"/coins/collections/{collection_id}" in location
     assert "mcountry=" in location
     assert "mruler=__all__" in location
     assert "mdenomination=" in location
-    assert location.endswith(f"#collection-{collection_id}")
+    assert location.endswith("#member-panel")
