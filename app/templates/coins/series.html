@@ -42,7 +42,9 @@
       <h2 class="coin-panel-title">系列基本信息</h2>
     </div>
     {% if not is_candidate %}
-    {% if is_watched %}
+    {% if is_collected %}
+    <button class="btn coin-follow-btn is-collected" type="button" disabled>已收藏</button>
+    {% elif is_watched %}
     <button class="btn coin-follow-btn is-followed" type="button" disabled>已观察</button>
     {% else %}
     <form method="post" action="/coins/watchlist/add">

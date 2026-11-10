@@ -639,7 +639,9 @@ async def download_series_images(
         if url
     }
     if not wanted:
-        raise NumistaPageError(f"{numista_id} 没有图片地址，无法下载")
+        # Numista 无图不是错误：采集队列据此把图片节点记成功
+        logger.info("Numista 图片：系列/候选 %s 没有图片地址，跳过", numista_id)
+        return {}
 
     IMAGE_DIR.mkdir(parents=True, exist_ok=True)
     # 已经下载过的面直接复用（按 `序列号-面.*` 判存在），只补缺的那一面

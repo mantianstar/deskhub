@@ -10,6 +10,22 @@
 
 ---
 
+## v1.154 — 2026-11-10 系列详情状态口径 / 探索进度 / 无图任务成功
+
+- 起因：系列详情右上角只看观察名单，与币库列表「已收藏 > 已观察 > 未观察」不一致；采集中心探索进度长时间停在 0%；Numista 无图时图片节点报失败。
+- 改了什么：详情页按列表口径先查收藏成员再查观察名单，已收藏显示「已收藏」；探索任务 percent 分阶段推进（取目录 5 → 解析 10 → 分块翻译 10–50 → 逐条写库 50–100）；`download_series_images` 无图片地址返回空字典，图片节点与任务记成功。
+- 验证结论：`pytest -q` 598 通过 / 1 失败；唯一失败项 `test_run_page_explore_over_50_stops_before_write` 是既有口径不一致（代码上限 100、用例按 51 条断言），已在 HEAD 复现，本次未改动。
+- 影响：`app/routers/coins.py`、`app/templates/coins/series.html`、`app/coins/explore_page.py`、`app/coins/numista_web.py`、`tests/test_coins_pages.py`、`tests/test_coins_explore_page.py`。
+
+---
+
+## v1.153 — 2026-11-10 币库列表增加尺寸范围查询
+
+- 起因：币库只能按国家 / 年份 / 面值 / 材质筛，想按直径挑币（如 28–33mm）只能逐张卡片看尺寸。
+- 改了什么：`/coins/info` 新增「尺寸」输入，填 `28-33` 或单个数值（**不带单位**，兼容全角 / 长破折号）；`_parse_size` 解析成闭区间传给 `search_coin_series(size_min/size_max)` 按 `size_mm` 过滤，无尺寸的系列不命中；非法输入就地提示并忽略该条件。
+- 验证结论：`pytest -q tests/test_coins_pages.py -k info_page` 8 项全通过（补范围 / 单值 / 空结果 / 非法输入用例）。
+- 影响：`app/routers/coins.py`、`app/repository.py`、`app/templates/coins/info.html`、`tests/test_coins_pages.py`、`spec/coins.md`、`plan/coins.md`。
+
 ## v1.152 — 2026-11-09 任务队列增加 Series ID 查询条件
 
 - 起因：任务队列只能按任务名 / 状态 / 时间筛选，定位某个系列的任务要翻页找。

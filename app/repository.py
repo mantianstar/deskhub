@@ -3116,13 +3116,16 @@ def search_coin_series(
     denomination: str | None = None,
     composition: str | None = None,
     object_type: str | None = None,
+    size_min: float | None = None,
+    size_max: float | None = None,
     numista_ids: Sequence[int] | None = None,
     cn: bool = False,
 ) -> list[CoinSeries]:
-    """按国家 / 年份 / 面值 / 材质 / 货币类型查已采集的系列（年份落在 `[min_year, max_year]` 即命中）。
+    """按国家 / 年份 / 面值 / 材质 / 货币类型 / 尺寸范围查已采集的系列（年份落在 `[min_year, max_year]` 即命中）。
 
     参数均可选：全空时返回全部系列。国家 / 货币类型走参数化 SQL（精确匹配）；
     面值 / 材质在取回后做归一化宽松匹配（要处理库值里的空格与数字边界，见 `_text_hit`）。
+    尺寸给 `size_min` / `size_max` 时按 `size_mm` 闭区间筛（**无尺寸的系列不命中**）。
     `numista_ids` 给定时只在这些系列里查（观察系列页用；空列表直接返回空）。
     """
     table = "coin_series_cn" if cn else "coin_series"
@@ -3143,6 +3146,12 @@ def search_coin_series(
     if year is not None:
         clauses.append("(min_year IS NULL OR min_year <= ?) AND (max_year IS NULL OR max_year >= ?)")
         params.extend([year, year])
+    if size_min is not None:
+        clauses.append("size_mm >= ?")
+        params.append(size_min)
+    if size_max is not None:
+        clauses.append("size_mm <= ?")
+        params.append(size_max)
     where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
     with db.connect() as conn:
         rows = conn.execute(

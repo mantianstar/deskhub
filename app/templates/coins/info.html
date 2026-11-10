@@ -42,6 +42,10 @@
         {% for name in compositions %}<option value="{{ name }}"></option>{% endfor %}
       </datalist>
     </label>
+    <label class="field">尺寸
+      <input class="search-input" type="text" name="size" value="{{ size }}"
+             placeholder="如 28-33（可空，只填数字）">
+    </label>
     <label class="field">状态
       <select class="search-input" name="status">
         <option value=""{% if not status %} selected{% endif %}>全部</option>
@@ -53,6 +57,7 @@
     <button class="btn btn-primary" type="submit">查询</button>
   </div>
   {% if year_error %}<p class="form-error">{{ year_error }}</p>{% endif %}
+  {% if size_error %}<p class="form-error">{{ size_error }}</p>{% endif %}
 </form>
 
 {% if series_list %}

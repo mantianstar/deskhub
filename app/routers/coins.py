@@ -412,6 +412,21 @@ def _parse_year(year: str) -> tuple[int | None, str]:
     return int(text), ""
 
 
+def _parse_size(size: str) -> tuple[float | None, float | None, str]:
+    """尺寸输入 → `(下限, 上限, 错误文案)`；空串视为「不限」，支持 `28-33` 或单个数值（不带单位）。"""
+    text = (size or "").strip().replace("－", "-").replace("–", "-")
+    if not text:
+        return None, None, ""
+    parts = [part.strip() for part in text.split("-")]
+    if len(parts) > 2 or any(not part for part in parts):
+        return None, None, f"尺寸「{text}」格式不对，示例 28-33"
+    try:
+        values = [float(part) for part in parts]
+    except ValueError:
+        return None, None, f"尺寸「{text}」不是数字，只填数字（不带单位），已忽略该条件"
+    return min(values), max(values), ""
+
+
 def _manage_url(country: str, year: str, denomination: str, composition: str) -> str:
     query = urlencode(
         {
@@ -478,17 +493,21 @@ def info_page(
     year: str = "",
     denomination: str = "",
     composition: str = "",
+    size: str = "",
     status: str = "",
     page: str = "",
 ) -> Response:
-    """信息查询页：按货币类型 + 国家 + 年份 + 面值 + 材质 + 状态查**本地已采集**的系列（不调接口）。"""
+    """信息查询页：按货币类型 + 国家 + 年份 + 面值 + 材质 + 尺寸 + 状态查**本地已采集**的系列（不调接口）。"""
     parsed_year, year_error = _parse_year(year)
+    size_min, size_max, size_error = _parse_size(size)
     series_list = repository.search_coin_series(
         issuer=country or None,
         year=parsed_year,
         denomination=denomination or None,
         composition=composition or None,
         object_type=object_type or None,
+        size_min=size_min,
+        size_max=size_max,
         cn=True,
     )
     # 状态筛选与卡片角标口径一致：已收藏 > 已观察 > 未观察（互斥）。
@@ -521,6 +540,7 @@ def info_page(
         "year": year,
         "denomination": denomination,
         "composition": composition,
+        "size": size,
         "status": status,
     }
     prev_url = (
@@ -546,9 +566,11 @@ def info_page(
             "year": year,
             "denomination": denomination,
             "composition": composition,
+            "size": size,
             "denominations": repository.list_coin_series_denominations(cn=True),
             "compositions": repository.list_coin_series_compositions(cn=True),
             "year_error": year_error,
+            "size_error": size_error,
             "series_list": paged_series,
             "series_total": len(series_list),
             "commemorative_ids": {
@@ -813,6 +835,19 @@ def series_page(
     has_reverse_image = coins_numista_web.cached_image(numista_id, "reverse") is not None
     # 补全信息按钮只在节点缺失时出现（与采集队列的「已有 → skip」口径一致）
     info_complete = bool(issues) and bool(values) and has_obverse_image and has_reverse_image
+    # 右上角状态与币库列表一致：已收藏 > 已观察 > 未观察（互斥）
+    is_collected = not is_candidate and any(
+        member.numista_series_id == numista_id
+        for member in repository.list_coin_collection_members()
+    )
+    is_watched = (
+        not is_candidate
+        and not is_collected
+        and any(
+            item.numista_id == numista_id
+            for item in repository.list_coin_watchlist()
+        )
+    )
 
     return templates.TemplateResponse(
         request,
@@ -823,13 +858,8 @@ def series_page(
             "series": series,
             "rows": rows,
             "is_candidate": is_candidate,
-            "is_watched": (
-                not is_candidate
-                and any(
-                    item.numista_id == numista_id
-                    for item in repository.list_coin_watchlist()
-                )
-            ),
+            "is_collected": is_collected,
+            "is_watched": is_watched,
             "return_to": f"/coins/series/{numista_id}",
             # 年份数 ≠ 版别数：一个年份可有多个版别（厂标 / 变体 / 精制），故分别给出
             "year_total": len({issue.year for issue in issues if issue.year is not None}),

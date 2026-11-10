@@ -768,6 +768,18 @@ def test_info_page_lists_and_filters(web):
     assert "不是整数" in web.get("/coins/info", params={"year": "abc"}).text
 
 
+def test_info_page_filters_by_size(web):
+    """币库列表：尺寸按闭区间过滤（输入不带单位），无尺寸的系列不命中，非法输入给提示并忽略。"""
+    _seed_series()  # 尺寸 20.0
+    _seed_uk_1904()  # 尺寸为空的系列
+    assert "George III" in web.get("/coins/info", params={"size": "18-22"}).text
+    assert "George III" in web.get("/coins/info", params={"size": "20"}).text
+    out = web.get("/coins/info", params={"size": "28-33"}).text
+    assert "本地没有符合条件的系列" in out
+    assert "George III" not in out and "Edward VII" not in out
+    assert "格式不对" in web.get("/coins/info", params={"size": "28-"}).text
+
+
 def test_info_page_filters_by_status(web):
     """币库列表：按已收藏 / 已观察 / 未观察筛选，缺省显示全部。"""
     _seed_series()
@@ -814,6 +826,24 @@ def test_series_page_watch_button(web):
     assert "+ 观察" in page.text
     web.post("/coins/watchlist/add", data={"numista_id": "670", "next": "/coins/series/670"})
     assert "已观察" in web.get("/coins/series/670").text
+
+
+def test_series_page_shows_collected_badge(web):
+    """系列详情右上角状态与币库列表一致：已收藏优先于已观察。"""
+    _seed_series()
+    collection_id = repository.upsert_coin_collection_series(
+        collection_key="uk-1d",
+        name="英国 1 便士",
+        country="英国",
+        ruler="George III",
+        denomination="1 便士",
+    )
+    repository.upsert_coin_collection_member(
+        collection_id, 670, "英国 · George III · 1 便士"
+    )
+    text = web.get("/coins/series/670").text
+    assert "已收藏" in text
+    assert "+ 观察" not in text
 
 
 def test_watchlist_page_lists_filters_and_removes(web):

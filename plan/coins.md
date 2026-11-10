@@ -403,7 +403,7 @@ coins:
 
 | 方法 | 路径 | 职责 | 同步 / 异步 | 模板 |
 |---|---|---|---|---|
-| GET | `/coins/info` | 查询页：国家 + 年份 + 面值 + 材质（均可选）→ 本地系列列表 | 同步 | `coins/info.html` |
+| GET | `/coins/info` | 查询页：国家 + 年份 + 面值 + 材质 + 尺寸范围（均可选）→ 本地系列列表 | 同步 | `coins/info.html` |
 | GET | `/coins/series/{numista_id}` | 系列详情：系列信息 + **合并后的「各年份信息」表** + ②③④ 补数据动作条；未采纳候选用候选 payload 渲染并给采纳横幅；不存在 404 | 同步 | `coins/series.html` |
 | GET | `/coins/manage` | 管理页：两步表单 + 结果列表（结果按面值 / 材质本地筛选，含每系列已采「年份数 · 版别数」）+ 可选错误提示 | 同步 | `coins/manage.html` |
 | POST | `/coins/manage/fetch-series` | 按钮 1：`collect_series(country, year, denomination, composition)`——取详情后按**面值 / 材质精确过滤**（见 §18.13.3） | 同步 `await` | 302 → `/coins/manage?...` |
@@ -437,10 +437,13 @@ def search_coin_series(
     year: int | None = None,
     denomination: str | None = None,
     composition: str | None = None,
+    size_min: float | None = None,
+    size_max: float | None = None,
     cn: bool = False,
 ) -> list[CoinSeries]:
-    """按条件查系列（year 落在 [min_year, max_year] 即命中）；四参数可空（全空=全部）。
-    国家 / 年份走参数化 SQL；面值 / 材质在取回后经 `_text_hit` 做**归一化宽松匹配**。
+    """按条件查系列（year 落在 [min_year, max_year] 即命中）；参数可空（全空=全部）。
+    国家 / 年份走参数化 SQL；尺寸给 size_min / size_max 时按 size_mm 闭区间筛（无尺寸的不命中）；
+    面值 / 材质在取回后经 `_text_hit` 做**归一化宽松匹配**。
     ORDER BY issuer, min_year, numista_id。"""
 
 def coin_series_issue_stats(*, cn: bool = False) -> dict[int, CoinSeriesIssueStats]:

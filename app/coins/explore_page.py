@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime
+from typing import Callable
 from uuid import uuid4
 
 from app import llm, repository
@@ -23,6 +24,7 @@ logger = logging.getLogger(__name__)
 
 MAX_RESULTS = 100
 OVER_LIMIT_MESSAGE = "当前探索结果超过 100 条，请重新筛选条件"
+_TRANSLATE_CHUNK = 50  # 分块翻译，块间回报进度
 
 # 货币类型 = `st`（不是 `cu`）
 COLLECTIBLE_TYPES: tuple[tuple[str, str], ...] = (
@@ -197,6 +199,7 @@ async def _run(
     config: Config, *, job_id: str, batch_id: str, url: str, issuer: str = ""
 ) -> None:
     try:
+        _state["percent"] = 5  # 取目录阶段没有细粒度回调，先离开 0%
         html = await coins_numista_web.fetch_catalogue_page(config, url=url)
         page = coins_numista_web.parse_catalogue_index(html)
         total = page.total or len(page.items)
@@ -206,7 +209,13 @@ async def _run(
             return
         _state["total"] = total
         items = page.items[:MAX_RESULTS]
-        zh = await _texts_zh(config, items)
+        _state["percent"] = 10
+
+        def _translated(ratio: float) -> None:
+            _state["percent"] = 10 + round(ratio * 40)
+
+        zh = await _texts_zh(config, items, on_progress=_translated)
+        _state["percent"] = 50
         for index, item in enumerate(items, start=1):
             inserted = repository.upsert_coin_page_explore_item(
                 _row(item, batch_id, zh, issuer_slug=issuer)
@@ -216,7 +225,7 @@ async def _run(
             else:
                 _state["skipped"] = int(_state["skipped"]) + 1
             _state["parsed"] = index
-            _state["percent"] = round(index * 100 / total) if total else 100
+            _state["percent"] = 50 + round(index * 50 / total) if total else 100
         _state["percent"] = 100
         _state["status"] = "done"
     except Exception as exc:  # noqa: BLE001 - 后台任务，异常只能在这里收掉
@@ -243,7 +252,9 @@ def _localized(text: str | None, zh: dict[str, str]) -> str | None:
     return zh.get(text) or translate.GLOSSARY.get(text) or text
 
 
-async def _texts_zh(config: Config, items: list) -> dict[str, str]:
+async def _texts_zh(
+    config: Config, items: list, on_progress: Callable[[float], None] | None = None
+) -> dict[str, str]:
     """一批结果的短词（名称 / 国家 / 执政者 / 面值 / 材质）整句一次交大模型翻译。
 
     词表已整词收录的不进请求；没配 Key 或翻译失败只告警，`_row` 保留英文原文。
@@ -264,9 +275,20 @@ async def _texts_zh(config: Config, items: list) -> dict[str, str]:
     if pending:
         try:
             client = llm.get_client(config)
-            _TEXT_CACHE.update(await translate_llm.short_texts_zh(client, pending))
         except llm.LLMError as exc:
             logger.warning("页面探索短词翻译失败，回退内置词表：%s", exc)
+            client = None
+        # 分块翻译：每块完成回调一次进度，前端百分比在采集途中也能推进
+        if client is not None:
+            for start in range(0, len(pending), _TRANSLATE_CHUNK):
+                chunk = pending[start : start + _TRANSLATE_CHUNK]
+                try:
+                    _TEXT_CACHE.update(await translate_llm.short_texts_zh(client, chunk))
+                except llm.LLMError as exc:
+                    logger.warning("页面探索短词翻译失败，回退内置词表：%s", exc)
+                    break
+                if on_progress is not None:
+                    on_progress(min(start + len(chunk), len(pending)) / len(pending))
     return {text: _TEXT_CACHE[text] for text in texts if text in _TEXT_CACHE}
 
 

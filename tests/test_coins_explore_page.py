@@ -66,6 +66,20 @@ def _run_once(item_html: str, batch_id: str, monkeypatch, issuer: str = "") -> N
     )
 
 
+def test_download_images_without_urls_returns_empty(temp_db, monkeypatch):
+    """Numista 无图片地址时不抛错，返回空字典（采集队列据此把图片节点记成功）。"""
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(
+        repository,
+        "get_coin_series",
+        lambda _id: SimpleNamespace(obverse_picture=None, reverse_picture=None),
+    )
+    assert asyncio.run(
+        numista_web.download_series_images(config.get(), numista_id=990001)
+    ) == {}
+
+
 def test_page_url_maps_chinese_filters():
     filters = explore_page.normalize_filters(
         issuer="英国", st="1", year="1900-2026", material="5", size="30"
