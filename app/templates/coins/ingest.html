@@ -48,11 +48,132 @@
 
 <section class="coin-panel">
   <div class="coin-panel-head">
-    <h2 class="coin-panel-title">探索结果 <span class="coin-panel-note">{{ result_total }} 条</span></h2>
-    <span class="coin-panel-note">多选后一次加入队列</span>
+    <h2 class="coin-panel-title">探索条件 · 批量方式(页面)</h2>
+    <span class="coin-panel-note">按国家 + 货币类型 + 年份 + 材质 + 尺寸抓 Numista 列表页</span>
   </div>
+  <form class="coin-form-grid" id="page-explore-form" onsubmit="return false;">
+    <label class="field">国家
+      <input class="search-input" type="text" id="page-issuer" list="page-issuer-options" placeholder="如 英国 / royaume-uni" autocomplete="off">
+      <datalist id="page-issuer-options">
+        {% for issuer in page_explore_options.issuers %}
+        <option value="{{ issuer }}"></option>
+        {% endfor %}
+      </datalist>
+    </label>
+    <label class="field">货币类型
+      <select id="page-st">
+        {% for value, label in page_explore_options.collectible_types %}
+        <option value="{{ value }}">{{ label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label class="field">年份<input class="search-input" type="text" id="page-year" placeholder="如 1900-2026（可空）" autocomplete="off"></label>
+    <label class="field">材质
+      <select id="page-material">
+        <option value="">不限</option>
+        {% for value, label in page_explore_options.compositions %}
+        <option value="{{ value }}">{{ label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label class="field">尺寸<input class="search-input" type="text" id="page-size" placeholder="如 30（mm，可空）" autocomplete="off"></label>
+    <button class="btn btn-primary" type="button" id="page-explore-start">探索</button>
+  </form>
+  <div class="coin-query-inline">
+    <label class="field coin-field-inline">Numista 链接
+      <input class="search-input coin-explore-url" type="text" id="page-explore-url" readonly placeholder="点「探索」后生成">
+    </label>
+    <button class="btn btn-primary" type="button" id="page-fetch-list" disabled>获取列表</button>
+  </div>
+  <p class="form-hint" id="page-explore-error"></p>
+</section>
+
+<section class="coin-panel" id="explore-results" data-batch="{{ batch }}">
+  <div class="coin-panel-head">
+    <h2 class="coin-panel-title">探索结果 <span class="coin-panel-note">{{ result_total }} 条</span></h2>
+    <span class="coin-panel-note" id="page-explore-progress">多选后一次加入队列</span>
+  </div>
+  <script>
+  (function () {
+    var startBtn = document.getElementById('page-explore-start');
+    if (!startBtn) { return; }
+    var fetchBtn = document.getElementById('page-fetch-list');
+    var linkInput = document.getElementById('page-explore-url');
+    var err = document.getElementById('page-explore-error');
+    var progress = document.getElementById('page-explore-progress');
+    var timer = null;
+    linkInput.addEventListener('click', function () {
+      if (linkInput.value) { window.open(linkInput.value, '_blank', 'noopener'); }
+    });
+    function params(start) {
+      return new URLSearchParams({
+        issuer: document.getElementById('page-issuer').value,
+        st: document.getElementById('page-st').value,
+        year: document.getElementById('page-year').value,
+        material: document.getElementById('page-material').value,
+        size: document.getElementById('page-size').value,
+        start: start
+      }).toString();
+    }
+    function send(start) {
+      return fetch('/coins/ingest/page-explore', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+        body: params(start)
+      }).then(function (resp) {
+        return resp.json().then(function (data) { return {ok: resp.ok, data: data}; });
+      });
+    }
+    startBtn.addEventListener('click', function () {
+      startBtn.disabled = true;
+      err.textContent = '';
+      send('0').then(function (res) {
+        if (!res.ok) { throw new Error(res.data.error || '探索失败'); }
+        linkInput.value = res.data.url;
+        fetchBtn.disabled = false;
+      }).catch(function (e) {
+        err.textContent = e.message;
+      }).finally(function () {
+        startBtn.disabled = false;
+      });
+    });
+    fetchBtn.addEventListener('click', function () {
+      fetchBtn.disabled = true;
+      progress.textContent = '正在采集：0%';
+      err.textContent = '';
+      send('1').then(function (res) {
+        if (!res.ok) { throw new Error(res.data.error || '获取列表失败'); }
+        if (timer) { clearInterval(timer); }
+        timer = setInterval(function () {
+          fetch('/coins/ingest/page-explore/status').then(function (r) {
+            return r.json();
+          }).then(function (state) {
+            if (state.status === 'running') {
+              progress.textContent = '正在采集：' + state.percent + '%';
+              return;
+            }
+            clearInterval(timer);
+            timer = null;
+            if (state.status === 'done') {
+              window.location.href = '/coins/ingest?batch=' + encodeURIComponent(state.batch_id);
+              return;
+            }
+            fetchBtn.disabled = false;
+            progress.textContent = '多选后一次加入队列';
+            err.textContent = state.error_message || '采集失败';
+          });
+        }, 800);
+      }).catch(function (e) {
+        fetchBtn.disabled = false;
+        progress.textContent = '多选后一次加入队列';
+        err.textContent = e.message;
+      });
+    });
+  })();
+  </script>
   {% if results %}
-  <form method="post" action="/coins/ingest/queue">
+  <form method="post" action="/coins/ingest/queue" id="join-queue-form">
+    <input type="hidden" name="batch" value="{{ batch }}">
     <div class="table-wrap">
       <table class="sources-table">
         <thead>
@@ -96,41 +217,23 @@
     <span class="btn btn-disabled">下一页</span>
     {% endif %}
   </nav>
-  <script>
-  (function () {
-    var picks = Array.prototype.slice.call(document.querySelectorAll('.result-pick'));
-    var pickAll = document.getElementById('pick-all');
-    var count = document.getElementById('result-count');
-    var join = document.getElementById('join-queue');
-    if (!picks.length || !pickAll || !count || !join) { return; }
-    function refresh() {
-      var n = picks.filter(function (box) { return box.checked; }).length;
-      count.textContent = String(n);
-      join.textContent = '加入队列 (' + n + ')';
-      join.disabled = n === 0;
-      pickAll.checked = n === picks.length && n > 0;
-    }
-    picks.forEach(function (box) { box.addEventListener('change', refresh); });
-    pickAll.addEventListener('change', function () {
-      picks.forEach(function (box) { box.checked = pickAll.checked; });
-      refresh();
-    });
-    refresh();
-  })();
-  </script>
   {% else %}
   <p class="form-hint">还没有探索结果：填写条件或系列 ID 后点「探索」。</p>
   {% endif %}
 </section>
 
-<section class="coin-panel">
+<section class="coin-panel" id="ingest-queue">
   <div class="coin-panel-head">
     <h2 class="coin-panel-title">任务队列 <span class="coin-panel-note">{{ task_total }} 条</span></h2>
     <span class="coin-panel-note">按加入时间倒序 · 跳过已有数据的节点显示「已跳过」</span>
   </div>
 
-  <form class="search-form" method="get" action="/coins/ingest">
+  <form class="search-form" method="get" action="/coins/ingest" id="queue-filter">
+    <input type="hidden" name="batch" value="{{ batch }}">
     <div class="search-row search-row-labeled">
+      <label class="field">Series ID
+        <input class="search-input" type="text" name="series" value="{{ queue_series }}" placeholder="精确匹配，如 670" inputmode="numeric" autocomplete="off">
+      </label>
       <label class="field">任务名称
         <input class="search-input" type="text" name="name" value="{{ queue_name }}" placeholder="模糊匹配，如 乔治六世" autocomplete="off">
       </label>
@@ -156,7 +259,7 @@
   <div class="table-wrap">
     <table class="sources-table">
       <thead>
-        <tr><th class="coin-nowrap">Series ID</th><th>任务名称</th><th>进度</th><th>状态</th><th class="coin-nowrap">加入时间</th><th class="coin-nowrap">完成时间</th></tr>
+        <tr><th class="coin-nowrap">Series ID</th><th>任务名称</th><th>进度</th><th>状态</th><th class="coin-nowrap">加入时间</th><th class="coin-nowrap">完成时间</th><th>操作</th></tr>
       </thead>
       <tbody>
         {% for task in tasks %}
@@ -176,6 +279,17 @@
           <td><span class="coin-badge is-{{ task.status }}">{{ badge_labels.get(task.status, task.status) }}</span></td>
           <td class="coin-nowrap">{{ task.created_at[5:16] }}</td>
           <td class="coin-nowrap">{{ task.finished_at[5:16] if task.finished_at else '—' }}</td>
+          <td>
+            <details class="coin-more">
+              <summary class="coin-more-btn" aria-label="更多操作">⋯</summary>
+              <div class="coin-more-menu">
+                <form method="post" action="/coins/ingest/delete">
+                  <input type="hidden" name="task_id" value="{{ task.id }}">
+                  <button type="submit" class="is-danger">删除</button>
+                </form>
+              </div>
+            </details>
+          </td>
         </tr>
         {% endfor %}
       </tbody>
@@ -199,4 +313,83 @@
   <p class="form-hint">队列为空：在探索结果里勾选系列后点「加入队列」。</p>
   {% endif %}
 </section>
+
+<script>
+(function () {
+  var resultsPanel = document.getElementById('explore-results');
+  var queuePanel = document.getElementById('ingest-queue');
+  if (!resultsPanel || !queuePanel) { return; }
+  var batch = resultsPanel.getAttribute('data-batch') || '';
+
+  function refreshCount() {
+    var picks = Array.prototype.slice.call(document.querySelectorAll('.result-pick'));
+    var pickAll = document.getElementById('pick-all');
+    var count = document.getElementById('result-count');
+    var join = document.getElementById('join-queue');
+    if (!count || !join) { return; }
+    var n = picks.filter(function (box) { return box.checked; }).length;
+    count.textContent = String(n);
+    join.textContent = '加入队列 (' + n + ')';
+    join.disabled = n === 0;
+    if (pickAll) { pickAll.checked = n === picks.length && n > 0; }
+  }
+
+  document.addEventListener('change', function (event) {
+    var target = event.target;
+    if (!target || !target.matches || !target.matches('.result-pick, #pick-all')) { return; }
+    if (target.id === 'pick-all') {
+      Array.prototype.forEach.call(document.querySelectorAll('.result-pick'), function (box) {
+        box.checked = target.checked;
+      });
+    }
+    refreshCount();
+  });
+
+  function swapPanels(html, withResults) {
+    var doc = new DOMParser().parseFromString(html, 'text/html');
+    var nextQueue = doc.getElementById('ingest-queue');
+    if (nextQueue) { queuePanel.innerHTML = nextQueue.innerHTML; }
+    if (withResults) {
+      var nextResults = doc.getElementById('explore-results');
+      if (nextResults) { resultsPanel.innerHTML = nextResults.innerHTML; }
+      refreshCount();
+    }
+  }
+
+  document.addEventListener('submit', function (event) {
+    var form = event.target;
+    if (!form || form.tagName !== 'FORM') { return; }
+    var isJoin = form.id === 'join-queue-form';
+    var isFilter = queuePanel.contains(form) && form.method.toLowerCase() === 'get';
+    if (!isJoin && !isFilter) { return; }
+    event.preventDefault();
+    var button = form.querySelector('button[type="submit"]');
+    if (button) { button.disabled = true; }
+    if (isJoin) {
+      var picked = document.querySelectorAll('.result-pick:checked').length;
+      fetch(form.action, { method: 'POST', body: new FormData(form) })
+        .then(function (resp) { return resp.text(); })
+        .then(function (html) {
+          swapPanels(html, true);
+          var progress = document.getElementById('page-explore-progress');
+          if (progress) {
+            progress.textContent = picked ? ('已加入队列 ' + picked + ' 条') : '多选后一次加入队列';
+          }
+        })
+        .catch(function () { form.submit(); });
+      return;
+    }
+    var params = new URLSearchParams(new FormData(form));
+    if (batch) { params.set('batch', batch); }
+    var epage = new URLSearchParams(window.location.search).get('epage');
+    if (epage) { params.set('epage', epage); }
+    fetch('/coins/ingest?' + params.toString())
+      .then(function (resp) { return resp.text(); })
+      .then(function (html) { swapPanels(html, false); })
+      .catch(function () { form.submit(); });
+  });
+
+  refreshCount();
+})();
+</script>
 {% endblock %}

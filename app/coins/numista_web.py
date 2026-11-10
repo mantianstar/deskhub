@@ -131,6 +131,8 @@ class CatalogueItem:
     catalog_no: str | None
     obverse_picture: str | None
     reverse_picture: str | None
+    ruler: str | None = None
+    denomination: str | None = None
 
 
 @dataclass(frozen=True)
@@ -277,8 +279,21 @@ def parse_catalogue_index(html: str) -> CataloguePage:
         if anchor is None:  # 结构变了 → 跳过这一条，不臆造
             continue
         head, _, tail = anchor.group(2).partition("<br>")
+        title_text = _plain_text(head) or None
         year_text = _plain_text(tail)
-        years = [int(value) for value in re.findall(r"\d{3,4}", year_text)]
+        # 年份只看第一个括号之前：`1940-1950 (1883-1893)` → 1940/1950
+        year_part = year_text.split("(")[0].strip()
+        years = [int(value) for value in re.findall(r"\d{3,4}", year_part)]
+        denomination = ruler = None
+        if title_text:
+            head_part, separator, ruler_part = title_text.partition(" - ")
+            if separator:
+                denomination = head_part.strip() or None
+                ruler = ruler_part.strip() or None
+            else:
+                # 无执政者（如 `10 Penniä (Civil War Coinage)`）→ 面值取括号前，ruler 留空；
+                # 也没有括号时（如 `5 Avos`）整串就是面值
+                denomination = title_text.split(" (")[0].strip() or None
         spec_match = _CAT_SPEC.search(chunk)
         spec = _plain_text(spec_match.group(1)) if spec_match else ""
         weight_match = _CAT_WEIGHT.search(spec)
@@ -290,7 +305,7 @@ def parse_catalogue_index(html: str) -> CataloguePage:
         items.append(
             CatalogueItem(
                 numista_id=int(anchor.group(1)),
-                title=_plain_text(head) or None,
+                title=title_text,
                 issuer=issuer,
                 year_text=year_text or None,
                 min_year=years[0] if years else None,
@@ -301,6 +316,8 @@ def parse_catalogue_index(html: str) -> CataloguePage:
                 catalog_no=_plain_text(ref_match.group(1)) if ref_match else None,
                 obverse_picture=obverse.group(1) if obverse else None,
                 reverse_picture=reverse.group(1) if reverse else None,
+                ruler=ruler,
+                denomination=denomination,
             )
         )
     return CataloguePage(total=total, items=items)
@@ -398,7 +415,11 @@ async def _wait_for_catalogue(page, timeout_seconds: int) -> str:
 
 
 async def fetch_catalogue_page(
-    config: Config, *, page_no: int = 1, cdp_url: str | None = None
+    config: Config,
+    *,
+    page_no: int = 1,
+    cdp_url: str | None = None,
+    url: str | None = None,
 ) -> str:
     """按配置里的筛选条件打开目录列表页，返回渲染后的 HTML。
 
@@ -411,7 +432,7 @@ async def fetch_catalogue_page(
             "取 Numista 页面需要 playwright（pip install -r requirements.txt）"
         ) from exc
 
-    url = catalogue_url(config.coins.collection.explore_catalogue, page=page_no)
+    page_url = url or catalogue_url(config.coins.collection.explore_catalogue, page=page_no)
     timeout_seconds = config.coins.numista.timeout_seconds
     async with async_playwright() as playwright:
         try:
@@ -427,7 +448,7 @@ async def fetch_catalogue_page(
         context = contexts[0] if contexts else await browser.new_context()
         page = await context.new_page()
         try:
-            await page.goto(url, wait_until="domcontentloaded", timeout=timeout_seconds * 1000)
+            await page.goto(page_url, wait_until="domcontentloaded", timeout=timeout_seconds * 1000)
             return await _wait_for_catalogue(page, timeout_seconds)
         finally:
             await page.close()

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-SCHEMA_VERSION = "34"
+SCHEMA_VERSION = "36"
 
 # 所有时间列存北京时间 ISO8601 字符串（`YYYY-MM-DDTHH:MM:SS`，无时区后缀；SQLite 无原生时间类型）
 DDL = """
@@ -463,6 +463,39 @@ CREATE TABLE IF NOT EXISTS coin_explore_candidates (
 CREATE INDEX IF NOT EXISTS idx_coin_explore_status
   ON coin_explore_candidates(status);
 
+-- 采集中心「批量方式(页面)」的一次性列表结果：只作展示，不参与候选池采纳流转。
+CREATE TABLE IF NOT EXISTS coin_page_explore_items (
+  id                INTEGER PRIMARY KEY AUTOINCREMENT,
+  batch_id          TEXT    NOT NULL,              -- 一次「获取列表」一个批次号
+  numista_id        INTEGER NOT NULL UNIQUE,       -- Numista 系列号（主键语义）
+  title             TEXT,
+  title_cn          TEXT,
+  issuer            TEXT,
+  issuer_cn         TEXT,
+  ruler             TEXT,
+  ruler_cn          TEXT,
+  denomination      TEXT,
+  denomination_cn   TEXT,
+  year_text         TEXT,
+  min_year          INTEGER,
+  max_year          INTEGER,
+  composition       TEXT,
+  composition_cn    TEXT,
+  size_mm           REAL,
+  source_url        TEXT,
+  created_at        TEXT    NOT NULL,
+  updated_at        TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_coin_page_explore_batch
+  ON coin_page_explore_items(batch_id);
+
+-- 一次「获取列表」的成员关系：结果行按 numista_id 全局唯一，重复探索只记成员，不改老行的 batch_id。
+CREATE TABLE IF NOT EXISTS coin_page_explore_batch_items (
+  batch_id    TEXT    NOT NULL,
+  numista_id  INTEGER NOT NULL,
+  PRIMARY KEY (batch_id, numista_id)
+);
+
 -- 观察系列：粒度 = 单个 Numista 系列（币库详情「+ 观察」写入，观察系列页读取）。
 CREATE TABLE IF NOT EXISTS coin_watchlist (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -917,6 +950,29 @@ class CoinExploreCandidate:
     verified_at: str
     created_at: str
     updated_at: str
+
+
+@dataclass(frozen=True)
+class CoinPageExploreItem:
+    """「批量方式(页面)」抓到的一条目录结果（双语字段，前端只显示中文）。"""
+
+    numista_id: int
+    batch_id: str
+    title: str | None
+    title_cn: str | None
+    issuer: str | None
+    issuer_cn: str | None
+    ruler: str | None
+    ruler_cn: str | None
+    denomination: str | None
+    denomination_cn: str | None
+    year_text: str | None
+    min_year: int | None
+    max_year: int | None
+    composition: str | None
+    composition_cn: str | None
+    size_mm: float | None
+    source_url: str | None
 
 
 @dataclass(frozen=True)

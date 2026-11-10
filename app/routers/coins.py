@@ -14,13 +14,14 @@ from math import ceil
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Form, Query, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from starlette.responses import Response
 
 from app import config, repository, textmatch
 from app.coins import analysis as coins_analysis
 from app.coins import collection as coins_collection
 from app.coins import explore as coins_explore
+from app.coins import explore_page as coins_explore_page
 from app.coins import grades as coins_grades
 from app.coins import ingest as coins_ingest
 from app.coins import numista as coins_numista
@@ -1160,21 +1161,47 @@ async def ingest_page(
     denomination: str = "",
     composition: str = "",
     series_id: str = "",
+    batch: str = "",
     epage: str = "",
     page: str = "",
+    series: str = "",
     name: str = "",
     status: str = "",
     created: str = "",
     finished: str = "",
 ) -> Response:
     """采集中心：条件 / ID 两种方式调 Numista 探索，结果入候选池后多选入队。"""
-    results, explore_error = await _ingest_result_series(
-        country, year, denomination, composition, series_id
-    )
+    if batch:
+        queued_ids = {
+            task.series_numista_id
+            for task in repository.list_coin_ingest_tasks()
+            if task.status in ("pending", "running")
+        }
+        results = [
+            {
+                "numista_id": item.numista_id,
+                "title": item.title_cn or item.title,
+                "issuer": item.issuer_cn or item.issuer,
+                "ruler": item.ruler_cn or item.ruler,
+                "denomination": item.denomination_cn or item.denomination,
+                "min_year": item.min_year,
+                "max_year": item.max_year,
+                "composition": item.composition_cn or item.composition,
+                "size_mm": item.size_mm,
+            }
+            for item in repository.list_coin_page_explore_items(batch)
+            if item.numista_id not in queued_ids
+        ]
+        explore_error = ""
+    else:
+        results, explore_error = await _ingest_result_series(
+            country, year, denomination, composition, series_id
+        )
     paged_results, result_page, result_pages = _paginate(
         results, epage, INGEST_RESULT_PAGE_SIZE
     )
     tasks = repository.list_coin_ingest_tasks(
+        series_numista_id=int(series) if series.strip().isdigit() else None,
         name=name or None,
         status=status or None,
         created_from=created or None,
@@ -1190,8 +1217,10 @@ async def ingest_page(
         "denomination": denomination,
         "composition": composition,
         "series_id": series_id,
+        "batch": batch,
     }
     queue_params = {
+        "series": series,
         "name": name,
         "status": status,
         "created": created,
@@ -1215,6 +1244,9 @@ async def ingest_page(
             "denomination": denomination,
             "composition": composition,
             "series_id": series_id,
+            "batch": batch,
+            "page_explore_options": coins_explore_page.options(),
+            "page_explore_batch": batch,
             "explore_error": explore_error,
             "results": paged_results,
             "result_total": len(results),
@@ -1234,6 +1266,7 @@ async def ingest_page(
             "task_total": len(tasks),
             "task_page": task_page,
             "task_pages": task_pages,
+            "queue_series": series,
             "queue_name": name,
             "queue_status": status,
             "queue_created": created,
@@ -1255,6 +1288,41 @@ async def ingest_page(
     )
 
 
+@router.post("/coins/ingest/page-explore")
+async def page_explore_start(
+    issuer: str = Form(""),
+    st: str = Form("1"),
+    year: str = Form(""),
+    material: str = Form(""),
+    size: str = Form(""),
+    start: str = Form("1"),
+) -> Response:
+    """批量方式(页面)：校验条件、后端重算链接；`start=1` 时起后台抓取任务。"""
+    try:
+        filters = coins_explore_page.normalize_filters(
+            issuer=issuer, st=st, year=year, material=material, size=size
+        )
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    if start not in ("1", "true", "on", "yes"):
+        return JSONResponse(
+            {
+                "job_id": "",
+                "url": coins_explore_page.catalogue_page_url(**filters),
+                "batch_id": "",
+            }
+        )
+    started = coins_explore_page.start(config.get(), **filters)
+    if started is None:
+        return JSONResponse({"error": "已有采集任务在跑"}, status_code=409)
+    return JSONResponse(started)
+
+
+@router.get("/coins/ingest/page-explore/status")
+async def page_explore_status() -> Response:
+    return JSONResponse(coins_explore_page.status())
+
+
 @router.post("/coins/ingest")
 async def enqueue_ingest(
     series_numista_id: str = Form(""), name: str = Form("")
@@ -1274,7 +1342,7 @@ async def enqueue_ingest(
 
 @router.post("/coins/ingest/queue")
 async def enqueue_ingest_selected(
-    series_numista_id: list[str] = Form([]),
+    series_numista_id: list[str] = Form([]), batch: str = Form("")
 ) -> Response:
     """探索结果多选入队：逐个入队（已在队列的复用），回本页带数量提示。"""
     ids = sorted({int(raw) for raw in series_numista_id if raw.strip().isdigit()})
@@ -1284,6 +1352,14 @@ async def enqueue_ingest_selected(
         series.numista_id: coins_ingest.series_task_name(series)
         for series in repository.search_coin_series(numista_ids=ids, cn=True)
     }
+    page_items = (
+        {
+            item.numista_id: item
+            for item in repository.list_coin_page_explore_items(batch.strip())
+        }
+        if batch.strip()
+        else {}
+    )
     queued = reused = 0
     for numista_id in ids:
         name = names.get(numista_id, "")
@@ -1292,13 +1368,36 @@ async def enqueue_ingest_selected(
             if candidate is not None:
                 payload = candidate.payload_cn or candidate.payload
                 name = coins_ingest.series_task_name(payload)
+        item = page_items.get(numista_id)
+        if not name and item is not None:
+            name = coins_ingest.series_task_name(
+                {
+                    "issuer": item.issuer_cn or item.issuer,
+                    "ruler": item.ruler_cn or item.ruler,
+                    "denomination": item.denomination_cn or item.denomination,
+                    "min_year": item.min_year,
+                    "max_year": item.max_year,
+                    "title": item.title_cn or item.title,
+                }
+            )
         _, exists = repository.enqueue_coin_ingest_task(
             numista_id, name=name, source="explore"
         )
         reused += int(exists)
         queued += int(not exists)
     coins_ingest.start(config.get())
-    return _redirect(f"/coins/ingest?queued={queued}&reused={reused}")
+    location = f"/coins/ingest?queued={queued}&reused={reused}"
+    if batch.strip():
+        location = f"{location}&{urlencode({'batch': batch.strip()})}"
+    return _redirect(location)
+
+
+@router.post("/coins/ingest/delete")
+async def delete_ingest_task(task_id: str = Form("")) -> Response:
+    """从任务队列删除一条任务（按任务 ID）。"""
+    if task_id.strip().isdigit():
+        repository.delete_coin_ingest_task(int(task_id))
+    return _redirect("/coins/ingest")
 
 
 def _grades_url(country: str, year: str, denomination: str) -> str:

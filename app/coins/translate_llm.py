@@ -143,6 +143,29 @@ def parse_issue_comments(raw: str) -> dict[int, str]:
     return result
 
 
+def _texts_prompt(texts: Sequence[str]) -> str:
+    return (
+        "把下列 Numista 硬币目录里的英文短词（名称 / 国家 / 执政者 / 面值 / 材质）"
+        "逐个翻成简洁、准确的简体中文，返回**原顺序、等长**的 JSON 字符串数组（只输出数组）：\n"
+        + json.dumps(list(texts), ensure_ascii=False)
+    )
+
+
+def parse_texts(raw: str, keys: Sequence[str]) -> dict[str, str]:
+    """译文 JSON → `{原文: 译文}`；长度不符或全空 → `TranslationError`。"""
+    payload = _load_json(raw)
+    if not isinstance(payload, list) or len(payload) != len(keys):
+        raise TranslationError(f"译文不是等长数组：{(raw or '')[:200]}")
+    result = {
+        key: value.strip()
+        for key, value in zip(keys, payload)
+        if isinstance(value, str) and value.strip()
+    }
+    if not result:
+        raise TranslationError(f"译文里没有任何可用短词：{(raw or '')[:200]}")
+    return result
+
+
 # ---------------------------------------------------------------- 取数（薄封装）
 
 
@@ -168,6 +191,15 @@ async def issue_texts_zh(
         return {}
     raw = await client.complete_json(_SYSTEM, _issues_prompt(pairs))
     return parse_issue_comments(raw)
+
+
+async def short_texts_zh(client: llm.LLMClient, texts: Sequence[str]) -> dict[str, str]:
+    """一次翻一批短词（名称 / 国家 / 执政者 / 面值 / 材质），返回 `{原文: 译文}`。"""
+    unique = [text for text in dict.fromkeys(texts) if text and text.strip()]
+    if not unique:
+        return {}
+    raw = await client.complete_json(_SYSTEM, _texts_prompt(unique))
+    return parse_texts(raw, unique)
 
 
 # ---------------------------------------------------------------- 存量重翻（CLI）

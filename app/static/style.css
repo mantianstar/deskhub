@@ -832,6 +832,7 @@ img.coin-mxiqi-thumb {
 
 .coin-query-inline { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; }
 .coin-field-inline { flex-direction: row; align-items: center; gap: 8px; white-space: nowrap; }
+.coin-explore-url { width: 480px; max-width: 100%; cursor: pointer; }
 .coin-nowrap { white-space: nowrap; }
 .coin-list-single { display: flex; flex-direction: column; gap: 8px; }
 .coin-list-single .coin-series-card { margin-bottom: 0; }

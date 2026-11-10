@@ -10,6 +10,63 @@
 
 ---
 
+## v1.152 — 2026-11-09 任务队列增加 Series ID 查询条件
+
+- 起因：任务队列只能按任务名 / 状态 / 时间筛选，定位某个系列的任务要翻页找。
+- 改了什么：队列筛选区在「任务名称」前新增 Series ID 输入（精确匹配），`/coins/ingest?series=` 透传到 `list_coin_ingest_tasks(series_numista_id=...)`。
+- 验证结论：`pytest -q tests/test_coins_pages.py -k ingest_queue` 全通过（补按系列 ID 过滤用例）。
+- 影响：`app/routers/coins.py`、`app/repository.py`、`app/templates/coins/ingest.html`、`tests/test_coins_pages.py`。
+
+## v1.151 — 2026-11-09 任务名从页面探索结果拼接
+
+- 起因：批量方式(页面)入队的任务名显示成「Numista #35423」——探索结果只落 `coin_page_explore_items`，入队取名只查币库与候选池。
+- 改了什么：`enqueue_ingest_selected` 增加第三级回退，按 `batch` 取页面探索结果，用「国家 · 执政者 · 面值 · 年份」拼任务名。
+- 验证结论：`pytest -q tests/test_coins_pages.py -k ingest_queue` 全通过；补批内入队任务名断言。
+- 影响：`app/routers/coins.py`、`tests/test_coins_pages.py`。
+
+## v1.150 — 2026-11-09 任务队列行内删除
+
+- 起因：采集中心任务队列只能看不能清，失败 / 过期的任务行一直占着列表。
+- 改了什么：`ingest.html` 表头「完成时间」后加「操作」列，行内 `⋯` 下拉一项「删除」；新增 `POST /coins/ingest/delete`（`task_id` 表单字段）→ `repository.delete_coin_ingest_task` 按 ID 删行。
+- 验证结论：`pytest -q tests/test_coins_pages.py` → 全通过；新增行内菜单与删除后队列为空一条用例。
+- 影响：`app/repository.py`、`app/routers/coins.py`、`app/templates/coins/ingest.html`。
+
+## v1.149 — 2026-11-09 页面探索：国家回填 / 面值兜底 / 同批重跑结果可见
+
+- 起因：真实联调暴露三处缺陷——按国家筛选时分组头只剩货币名（`Pataca (1894-date)`），国家列被覆盖且未译；`5 Avos` 这类无「 - 」无「 (」的标题面值为空；同批 ID 重跑后 `?batch=新批次` 显示 0 条（行仍挂老批次）。
+- 改了什么：
+  - `explore_page`：新增 `_SLUG_TO_ZH` / `_SLUG_TO_EN`，`start()` 把解析后的 slug 传给 `_run(issuer=…)`，`_row(issuer_slug=…)` 命中时用筛选国家回填中英文。
+  - `numista_web.parse_catalogue_index`：无「 - 」时面值取第一个「 (」前；也没有括号则整串作面值，执政者留空。
+  - `repository`：新增成员表 `coin_page_explore_batch_items`（`SCHEMA_VERSION` 35→36）；upsert 冲突时补记成员关系并刷新中文列（行上 `batch_id` 不变）；`list_coin_page_explore_items` 改为按本批 ID 集合过滤（行上 `batch_id` 命中或成员表命中）。
+- 验证结论：`pytest -q tests/test_coins_explore_page.py tests/test_coins_numista_web.py tests/test_coins_pages.py` → 133 passed；新增国家回填、无括号面值两条用例（同批重跑可见已有用例覆盖）。
+- 影响：`app/models.py`、`app/migrations/__init__.py`、`app/repository.py`、`app/coins/explore_page.py`、`app/coins/numista_web.py`。
+
+## v1.148 — 2026-11-09 页面探索短词改走大模型翻译 + 无执政者取面值
+
+- 起因：探索结果区大量英文——国家 / 名称 / 执政者 / 面值 / 材质只走词表，未收录即原样保留；`10 Penniä (Civil War Coinage)` 这类无「 - 」的标题面值与执政者同时留空。
+- 改了什么：`translate_llm.short_texts_zh` 新增批量短词翻译（一次请求、等长数组、失败抛 `TranslationError`）；`explore_page._texts_zh` 收集去重后交大模型、进程内缓存，词表已译出的优先词表、无 Key 或失败回退词表；`numista_web.parse_catalogue_index` 无分隔符时面值取第一个「 (」前、执政者留空。
+- 验证结论：`pytest tests -q` → 590 passed, 1 skipped；新增面值兜底与批量翻译（mock）两条用例。
+- 影响：无 schema / 路由 / 模板变更。
+
+## v1.147 — 2026-11-09 探索条件「Numista 链接」可点击新页打开并加宽
+
+- 起因：「批量方式(页面)」生成链接后只能肉眼确认，无法直接打开核对；输入框过窄看不清完整链接。
+- 改了什么：`app/templates/coins/ingest.html` 的 `#page-explore-url` 点击时新标签页打开（有值才响应）；`style.css` 新增 `.coin-explore-url` 宽度 480px + 手型光标。
+- 验证结论：`pytest -q tests/test_coins_explore_page.py` 通过；链接生成逻辑未改。
+- 影响：无 schema / 路由变更。
+
+## v1.146 — 2026-11-09 采集中心新增「探索条件 · 批量方式(页面)」
+
+- 起因：采集中心只有条件 / ID 两种探索（走 Numista 接口），缺按目录页面批量采集的入口；该页面被 Cloudflare 挡（普通 HTTP 403），只能挂本地调试 Chrome 取页。
+- 改了什么：
+  - 新表 `coin_page_explore_items`（`SCHEMA_VERSION` 34→35，`migrations` 登记直升级），`repository` 增 upsert（`ON CONFLICT DO NOTHING`）与按批次 list。
+  - 新模块 `app/coins/explore_page.py`：查询条件常量、国家静态词表 `ISSUER_CODES`（中文名排序）、后端按条件重算 URL（不信任前端传链接）、>50 条硬停、内存单飞任务（进度重启丢失，未起任务时 `status=idle`）、英文原值 + 中文译名双语入库。
+  - `app/coins/numista_web.py`：`CatalogueItem` 增 `ruler` / `denomination`，年份只取首个括号前的区间，`fetch_catalogue_page(url=...)` 支持指定链接。
+  - 路由：`POST /coins/ingest/page-explore`（`start=0` 只回重算链接 / `start=1` 起抓取任务，共用一个端点）、`GET /coins/ingest/page-explore/status`、`GET /coins/ingest?batch=`。
+  - 模板：ID 方式下方新增区块 + 800ms 轮询进度；完成后按 `?batch=` 由服务端渲染结果，复用既有勾选 / 入队。
+- 验证：`pytest -q tests/test_coins_explore_page.py tests/test_coins_analysis.py tests/test_coins_categories.py` → 38 passed；同批修正 8 处 `schema_version` 断言（34→35）与 3 个探索用例缺 `config.load()`。
+- 受影响：`spec/coins.md`、`plan/coins.md`（章节未补，待按 doc-policy 评估）。
+
 ## v1.145 — 2026-11-08 采集中心两种探索改为调 Numista 接口 + 候选池暂存
 
 - 条件方式 / ID 方式不再查本地库：`explore_series` + `explore_series_by_id` 实时调 `/types` 与 `/types/{id}`，命中即写入 `coin_explore_candidates`（临时表），失败在页面就地提示。

@@ -26,6 +26,7 @@ from app.models import (
     CoinLot,
     CoinLotCard,
     CoinOrder,
+    CoinPageExploreItem,
     CoinPriceRef,
     CoinProfileTag,
     CoinPurchaseGrade,
@@ -1113,6 +1114,7 @@ def enqueue_coin_ingest_task(
 
 
 def list_coin_ingest_tasks(
+    series_numista_id: int | None = None,
     name: str | None = None,
     status: str | None = None,
     created_from: str | None = None,
@@ -1120,9 +1122,12 @@ def list_coin_ingest_tasks(
     finished_from: str | None = None,
     finished_to: str | None = None,
 ) -> list[CoinIngestTask]:
-    """任务列表（新入队在前）；四组条件可组合：任务名 / 状态 / 加入时间 / 完成时间。"""
+    """任务列表（新入队在前）；五组条件可组合：系列 ID / 任务名 / 状态 / 加入时间 / 完成时间。"""
     where: list[str] = []
     params: list[object] = []
+    if series_numista_id is not None:
+        where.append("series_numista_id = ?")
+        params.append(series_numista_id)
     if name:
         where.append("name LIKE ?")
         params.append(f"%{name}%")
@@ -1148,6 +1153,13 @@ def list_coin_ingest_tasks(
     with db.connect() as conn:
         rows = conn.execute(sql, params).fetchall()
     return [_row_to_ingest_task(row) for row in rows]
+
+
+def delete_coin_ingest_task(task_id: int) -> bool:
+    """按 ID 删除一条采集任务（从任务队列移除）。"""
+    with db.connect() as conn, conn:
+        cursor = conn.execute("DELETE FROM coin_ingest_tasks WHERE id = ?", (task_id,))
+    return cursor.rowcount > 0
 
 
 def set_coin_ingest_node(
@@ -1270,6 +1282,111 @@ def list_coin_explore_candidates(*, include_ignored: bool = False) -> list[CoinE
     with db.connect() as conn:
         rows = conn.execute(sql).fetchall()
     return [_row_to_explore_candidate(row) for row in rows]
+
+
+def upsert_coin_page_explore_item(item: CoinPageExploreItem) -> bool:
+    """按 numista_id 写入页面探索结果；已存在则跳过，返回是否新插入。"""
+    now = now_local()
+    with db.connect() as conn, conn:
+        cursor = conn.execute(
+            """
+            INSERT INTO coin_page_explore_items
+                (batch_id, numista_id, title, title_cn, issuer, issuer_cn, ruler, ruler_cn,
+                 denomination, denomination_cn, year_text, min_year, max_year,
+                 composition, composition_cn, size_mm, source_url, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(numista_id) DO NOTHING
+            """,
+            (
+                item.batch_id,
+                item.numista_id,
+                item.title,
+                item.title_cn,
+                item.issuer,
+                item.issuer_cn,
+                item.ruler,
+                item.ruler_cn,
+                item.denomination,
+                item.denomination_cn,
+                item.year_text,
+                item.min_year,
+                item.max_year,
+                item.composition,
+                item.composition_cn,
+                item.size_mm,
+                item.source_url,
+                now,
+                now,
+            ),
+        )
+        # 冲突跳过时行仍挂在老批次上，这里单独记一条成员关系，供按批次查询时用
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO coin_page_explore_batch_items (batch_id, numista_id)
+            VALUES (?, ?)
+            """,
+            (item.batch_id, item.numista_id),
+        )
+        inserted = cursor.rowcount > 0
+        if not inserted:
+            # 行是展示缓存：翻译口径变了要跟着刷中文列，批次号保持不变
+            conn.execute(
+                """
+                UPDATE coin_page_explore_items
+                SET title_cn = ?, issuer_cn = ?, ruler_cn = ?, denomination_cn = ?,
+                    composition_cn = ?, updated_at = ?
+                WHERE numista_id = ?
+                """,
+                (
+                    item.title_cn,
+                    item.issuer_cn,
+                    item.ruler_cn,
+                    item.denomination_cn,
+                    item.composition_cn,
+                    now,
+                    item.numista_id,
+                ),
+            )
+        return inserted
+
+
+def list_coin_page_explore_items(batch_id: str) -> list[CoinPageExploreItem]:
+    """本批结果 = 行上 batch_id 命中 + 本批成员表命中（重复探索的 ID 只留在老行上）。"""
+    with db.connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT * FROM coin_page_explore_items
+            WHERE batch_id = ?
+               OR numista_id IN (
+                   SELECT numista_id FROM coin_page_explore_batch_items WHERE batch_id = ?
+               )
+            ORDER BY numista_id
+            """,
+            (batch_id, batch_id),
+        ).fetchall()
+    return [_row_to_page_explore_item(row) for row in rows]
+
+
+def _row_to_page_explore_item(row) -> CoinPageExploreItem:
+    return CoinPageExploreItem(
+        numista_id=int(row["numista_id"]),
+        batch_id=str(row["batch_id"]),
+        title=row["title"],
+        title_cn=row["title_cn"],
+        issuer=row["issuer"],
+        issuer_cn=row["issuer_cn"],
+        ruler=row["ruler"],
+        ruler_cn=row["ruler_cn"],
+        denomination=row["denomination"],
+        denomination_cn=row["denomination_cn"],
+        year_text=row["year_text"],
+        min_year=row["min_year"],
+        max_year=row["max_year"],
+        composition=row["composition"],
+        composition_cn=row["composition_cn"],
+        size_mm=row["size_mm"],
+        source_url=row["source_url"],
+    )
 
 
 def get_coin_explore_candidate(numista_id: int) -> CoinExploreCandidate | None:

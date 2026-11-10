@@ -207,3 +207,141 @@ async def test_fetch_type_page_guides_user_when_browser_missing(temp_db):
 
     message = str(excinfo.value)
     assert "remote-debugging-port" in message or "playwright" in message
+
+
+# ---------------------------------------------------------------- 批量方式(页面)解析
+
+
+def test_parse_catalogue_index_splits_denomination_and_ruler():
+    page = numista_web.parse_catalogue_index(CATALOGUE_HTML)
+
+    first = page.items[0]
+    assert first.denomination == "1 Penny"
+    assert first.ruler == "George VI (SOUTH AFRICA - SUID AFRIKA)"
+    assert page.items[1].denomination == "5 Centimos de Escudo"
+    assert page.items[1].ruler == "Isabella II"
+
+
+def test_parse_catalogue_index_year_ignores_secondary_range():
+    html = """
+    <div class="catalogue_navigation">1 results found.</div>
+    <div class="catalogue_search_results">
+      <header id="e_test"><h2>Testland • Dollar</h2></header>
+      <div class="resultat_recherche">
+        <div class="photo_avers"><a href="/42"><img src="a.jpg"></a></div>
+        <div class="photo_revers"><a href="/42"><img src="b.jpg"></a></div>
+        <div class="description_piece">
+          <strong><a href="/42"> 1 Dollar - Test<br>
+          1940-1950 (1883-1893) </a></strong>
+          <br><em>Coins › Standard circulation coins</em><br>
+          Bronze • 9.0&nbsp;g • ⌀&nbsp;31&nbsp;mm<br>
+          KM# 1, N# 42 </div>
+      </div>
+    </div>
+    """
+
+    item = numista_web.parse_catalogue_index(html).items[0]
+    assert (item.min_year, item.max_year) == (1940, 1950)
+
+
+def test_parse_catalogue_index_denomination_without_ruler():
+    html = """
+    <div class="catalogue_navigation">1 results found.</div>
+    <div class="catalogue_search_results">
+      <header id="e_test"><h2>Finland • Markka</h2></header>
+      <div class="resultat_recherche">
+        <div class="photo_avers"><a href="/43"><img src="a.jpg"></a></div>
+        <div class="photo_revers"><a href="/43"><img src="b.jpg"></a></div>
+        <div class="description_piece">
+          <strong><a href="/43"> 10 Penniä (Civil War Coinage)<br>
+          1917 </a></strong>
+          <br><em>Coins › Standard circulation coins</em><br>
+          Copper • 12.8&nbsp;g • ⌀&nbsp;30&nbsp;mm<br>
+          KM# 1, N# 43 </div>
+      </div>
+    </div>
+    """
+
+    item = numista_web.parse_catalogue_index(html).items[0]
+    assert item.denomination == "10 Penniä"
+    assert item.ruler is None
+
+
+def test_parse_catalogue_index_denomination_without_brackets():
+    html = """
+    <div class="catalogue_navigation">1 results found.</div>
+    <div class="catalogue_search_results">
+      <header id="e_test"><h2>India • Rupee</h2></header>
+      <div class="resultat_recherche">
+        <div class="photo_avers"><a href="/44"><img src="a.jpg"></a></div>
+        <div class="photo_revers"><a href="/44"><img src="b.jpg"></a></div>
+        <div class="description_piece">
+          <strong><a href="/44"> 5 Avos<br>
+          1952 </a></strong>
+          <br><em>Coins › Standard circulation coins</em><br>
+          Bronze • 2&nbsp;g • ⌀&nbsp;18&nbsp;mm<br>
+          KM# 2, N# 44 </div>
+      </div>
+    </div>
+    """
+
+    item = numista_web.parse_catalogue_index(html).items[0]
+    assert item.denomination == "5 Avos"
+    assert item.ruler is None
+
+
+def test_fetch_catalogue_page_uses_explicit_url(monkeypatch):
+    import asyncio
+    import sys
+    import types
+
+    seen: dict[str, str] = {}
+
+    class FakePage:
+        async def goto(self, url, **kwargs):
+            seen["url"] = url
+
+        async def close(self):
+            pass
+
+    class FakeContext:
+        async def new_page(self):
+            return FakePage()
+
+    class FakeBrowser:
+        contexts = [FakeContext()]
+
+    class FakeChromium:
+        async def connect_over_cdp(self, url):
+            return FakeBrowser()
+
+    class FakePlaywright:
+        chromium = FakeChromium()
+
+    class FakeManager:
+        async def __aenter__(self):
+            return FakePlaywright()
+
+        async def __aexit__(self, *args):
+            return False
+
+    package = types.ModuleType("playwright")
+    package.__path__ = []
+    module = types.ModuleType("playwright.async_api")
+    module.async_playwright = lambda: FakeManager()
+    monkeypatch.setitem(sys.modules, "playwright", package)
+    monkeypatch.setitem(sys.modules, "playwright.async_api", module)
+
+    async def fake_wait(page, timeout_seconds):
+        return "<html>ok</html>"
+
+    monkeypatch.setattr(numista_web, "_wait_for_catalogue", fake_wait)
+
+    html = asyncio.run(
+        numista_web.fetch_catalogue_page(
+            config_module.load(), url="https://example.test/list"
+        )
+    )
+
+    assert html == "<html>ok</html>"
+    assert seen["url"] == "https://example.test/list"

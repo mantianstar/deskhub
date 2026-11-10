@@ -15,6 +15,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app import config, repository
+from app.coins import explore_page as coins_explore_page
 from app.coins import grades as coins_grades
 from app.coins import ingest as coins_ingest
 from app.coins import numista as coins_numista
@@ -28,6 +29,7 @@ from app.models import (
     CoinIssueValues,
     CoinLot,
     CoinOrder,
+    CoinPageExploreItem,
     CoinPriceRef,
     CoinSale,
     CoinSeries,
@@ -1215,6 +1217,126 @@ def test_ingest_page_shows_four_tabs_and_queue(web):
     assert "队列为空" in page.text
 
 
+def test_ingest_queue_filter_by_series_id(web):
+    """任务队列按 Series ID 精确过滤，输入框在「任务名称」之前。"""
+    repository.enqueue_coin_ingest_task(670, name="甲任务", source="test")
+    repository.enqueue_coin_ingest_task(1867, name="乙任务", source="test")
+
+    page = web.get("/coins/ingest", params={"series": "670"}).text
+    assert 'href="/coins/series/670"' in page
+    assert 'href="/coins/series/1867"' not in page
+    assert page.index('name="series"') < page.index("任务名称")
+
+
+def test_ingest_page_renders_page_explore_section(web, monkeypatch):
+    """批量方式(页面)区块：表单、链接展示、获取列表按钮与进度元素。"""
+    monkeypatch.setattr(coins_explore_page, "issuer_options", lambda: ["英国"])
+
+    page = web.get("/coins/ingest").text
+    assert "批量方式(页面)" in page
+    assert 'id="page-explore-url"' in page
+    assert 'id="page-fetch-list"' in page and "获取列表" in page
+    assert 'id="page-explore-progress"' in page
+
+
+def test_ingest_page_page_explore_progress_after_script_element(web, monkeypatch):
+    """进度节点必须先于脚本取值渲染，否则点【获取列表】时取到 null 抛 TypeError。"""
+    monkeypatch.setattr(coins_explore_page, "issuer_options", lambda: ["英国"])
+
+    page = web.get("/coins/ingest").text
+    span_at = page.index('id="page-explore-progress"')
+    script_at = page.index("var progress = document.getElementById('page-explore-progress')")
+    assert span_at < script_at
+    assert "'采集中'" not in page
+
+
+def test_page_explore_preview_returns_backend_url(web):
+    """【探索】只拿后端算出的链接，不起任务（start=0）。"""
+    resp = web.post(
+        "/coins/ingest/page-explore",
+        data={
+            "issuer": "英国",
+            "st": "1",
+            "year": "1900-2026",
+            "material": "5",
+            "size": "30",
+            "start": "0",
+        },
+    )
+
+    assert resp.status_code == 200
+    url = resp.json()["url"]
+    assert "e=royaume-uni" in url and "st=1" in url
+    assert "a=1900-2026" in url and "m=5" in url and "t=30" in url
+
+
+def test_page_explore_start_conflict_when_running(web, monkeypatch):
+    monkeypatch.setattr(coins_explore_page, "start", lambda cfg, **kwargs: None)
+
+    resp = web.post("/coins/ingest/page-explore", data={"issuer": "英国", "st": "1"})
+    assert resp.status_code == 409
+
+
+def test_page_explore_rejects_unknown_issuer(web):
+    resp = web.post(
+        "/coins/ingest/page-explore",
+        data={"issuer": "火星", "st": "1", "start": "0"},
+    )
+    assert resp.status_code == 400
+
+
+def test_page_explore_status_reports_progress(web, monkeypatch):
+    monkeypatch.setattr(
+        coins_explore_page,
+        "status",
+        lambda: {
+            "job_id": "j",
+            "status": "running",
+            "total": 10,
+            "parsed": 4,
+            "saved": 4,
+            "skipped": 0,
+            "percent": 40,
+            "error_code": "",
+            "error_message": "",
+            "batch_id": "b",
+        },
+    )
+
+    body = web.get("/coins/ingest/page-explore/status").json()
+    assert body["status"] == "running" and body["percent"] == 40
+
+
+def test_ingest_page_batch_renders_chinese_rows(web):
+    """`?batch=` 用页面探索结果渲染，字段按中文展示。"""
+    repository.upsert_coin_page_explore_item(
+        CoinPageExploreItem(
+            numista_id=6699,
+            batch_id="b1",
+            title="1 Penny - George VI",
+            title_cn="1 便士 - 乔治六世",
+            issuer="South Africa",
+            issuer_cn="南非",
+            ruler="George VI",
+            ruler_cn="乔治六世",
+            denomination="1 Penny",
+            denomination_cn="1 便士",
+            year_text="1948-1950",
+            min_year=1948,
+            max_year=1950,
+            composition="Bronze",
+            composition_cn="青铜",
+            size_mm=31.0,
+            source_url="https://en.numista.com/catalogue/pieces6699.html",
+        )
+    )
+
+    page = web.get("/coins/ingest", params={"batch": "b1"}).text
+    assert "1 便士 - 乔治六世" in page
+    assert "南非" in page and "青铜" in page
+    assert "<code>6699</code>" in page
+
+
 def test_ingest_post_enqueues_and_reuses(web, monkeypatch):
     """入队后回本页并列出任务；同系列重复入队复用在跑任务。"""
     starts: list[bool] = []
@@ -1246,6 +1368,19 @@ def test_ingest_post_rejects_bad_series_id(web):
         "/coins/ingest", data={"series_numista_id": "abc"}, follow_redirects=False
     )
     assert resp.headers["location"] == "/coins/ingest?error=1"
+    assert repository.list_coin_ingest_tasks() == []
+
+
+def test_ingest_delete_removes_task_from_queue(web):
+    """任务队列行内「⋯ → 删除」把任务从队列移除。"""
+    task, _ = repository.enqueue_coin_ingest_task(670, name="英国 · 1 便士")
+    page = web.get("/coins/ingest").text
+    assert 'action="/coins/ingest/delete"' in page
+
+    resp = web.post(
+        "/coins/ingest/delete", data={"task_id": str(task.id)}, follow_redirects=False
+    )
+    assert resp.headers["location"] == "/coins/ingest"
     assert repository.list_coin_ingest_tasks() == []
 
 
@@ -1325,6 +1460,54 @@ def test_ingest_queue_enqueues_selected(web, monkeypatch):
     page = web.get("/coins/ingest").text
     assert "1 便士" in page and "半 便士" in page
     assert '<span class="coin-badge is-pending">未开始</span>' in page
+
+
+def test_ingest_queue_keeps_batch_results_except_selected(web, monkeypatch):
+    """多选入队后回跳保留 batch，只隐藏已入队的行，其余探索结果仍在。"""
+    for numista_id, title in ((6699, "已入队行"), (6700, "留在结果里")):
+        repository.upsert_coin_page_explore_item(
+            CoinPageExploreItem(
+                numista_id=numista_id,
+                batch_id="bq",
+                title=f"Series {numista_id}",
+                title_cn=title,
+                issuer="South Africa",
+                issuer_cn="南非",
+                ruler="",
+                ruler_cn="",
+                denomination="1 Penny",
+                denomination_cn="1 便士",
+                year_text="1948",
+                min_year=1948,
+                max_year=1948,
+                composition="Bronze",
+                composition_cn="青铜",
+                size_mm=31.0,
+                source_url=f"https://en.numista.com/catalogue/pieces{numista_id}.html",
+            )
+        )
+    monkeypatch.setattr(coins_ingest, "start", lambda cfg: True)
+
+    resp = web.post(
+        "/coins/ingest/queue",
+        data={"series_numista_id": ["6699"], "batch": "bq"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 302
+    assert resp.headers["location"] == "/coins/ingest?queued=1&reused=0&batch=bq"
+
+    page = web.get(resp.headers["location"]).text
+    assert "留在结果里" in page
+    assert "已入队行" not in page
+    assert "已加入队列 1 条" in page
+    task = next(
+        item for item in repository.list_coin_ingest_tasks() if item.series_numista_id == 6699
+    )
+    assert task.name == "南非 · 1 便士 · 1948"
+    # 局部刷新：两块面板有稳定 id，加入队列与队列查询都带着 batch（避免整页换掉探索结果）
+    assert 'id="explore-results"' in page and 'id="ingest-queue"' in page
+    assert 'id="join-queue-form"' in page and 'id="queue-filter"' in page
+    assert page.count('name="batch" value="bq"') == 2
 
 
 def test_info_page_filters_by_denomination_and_composition(web):
