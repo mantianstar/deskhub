@@ -8,7 +8,9 @@
   一条请求里的并行工具调用天然同轮；不用「间隔 ≤3 秒」猜批次——快串行会被并成一批，
   慢串行又被拆成多轮，两个方向都错；
 - 请求 = 本轮已落盘的请求条数 + 在飞这一条，与 `--round` 的「请求数」同口径；
-- 累计输入 = 本会话起点（`created_ts`）至今 `prompt_tokens` 之和，只用于 400k / 800k / 1.2M 判档；
+- 累计输入 = 本任务链起点至今 `prompt_tokens` 之和，只用于 400k / 800k / 1.2M 判档；
+  链起点由 `chain_anchor` 从流水回溯：闲置 >30 分钟或最新 pending 交接处断链，
+  session_id 抖动（同一段工作被切成多个会话）不再把账本归零；
   子代理请求同样写流水、无法从字段区分，一律计入（真实花费，不剔除）；
 - 上下文 = 本轮首条「提问」的 `prompt_tokens` → 本轮末条已完成请求的 `prompt_tokens`；
   本轮还没有流水时显示「待落盘」，不拿上一任务的末条兜底。
@@ -40,6 +42,8 @@ CTX_WARNS = (60_000, 80_000, 100_000)
 # （新会话首轮 22k + 一轮读文件），继续 2 轮 ≈ 2 × ctx；ctx ≥ 3 × 基线时续做比交接贵。
 RESTART_BASELINE = 21_700
 HANDOFF_PATH = "data/handoffs/{YYYY-MM-DD}-{slug}.md"
+HANDOFF_DIR = Path(os.environ.get("DESKHUB_HANDOFF_DIR") or REPO / "data" / "handoffs")
+CHAIN_IDLE = 1_800  # 任务链断点：相邻请求相隔超过 30 分钟算另一次任务
 CLOSURE_LINE = "继续不算坚持，停止不算未完成"
 HANDOFF = ("- 已完成：", "- 未完成：", "- 下一步：", "- 约束：", "- 读取起点：")
 
@@ -104,6 +108,47 @@ def _epoch(text: object) -> float | None:
         except ValueError:
             continue
     return None
+
+
+def pending_handoff_mtime() -> float | None:
+    """最新一份 `status: pending` 交接的 mtime；没有则 None（读不到按没有处理）。"""
+    latest: float | None = None
+    try:
+        for path in HANDOFF_DIR.glob("*.md"):
+            try:
+                with path.open(encoding="utf-8") as fh:
+                    if not fh.readline().strip().startswith("status: pending"):
+                        continue
+                mtime = path.stat().st_mtime
+            except OSError:
+                continue
+            latest = mtime if latest is None else max(latest, mtime)
+    except OSError:
+        return None
+    return latest
+
+
+def chain_anchor(
+    rows: list[tuple[float | None, int, str, str]], now: int, handoff_ts: float | None = None
+) -> float:
+    """任务链起点：从最新一条往回走，遇断点即停。
+
+    断点 = 相邻两条相隔 > `CHAIN_IDLE`，或早于最新 pending 交接（交接 = 上一段已收口）。
+    这样 session_id 抖动不会把账本归零，15M 的连续工作不会被切成 3M + 3M。
+    """
+    anchor = float(now)
+    newer: float | None = None
+    for row in reversed(rows):
+        ts = row[0]
+        if ts is None:
+            continue
+        if handoff_ts is not None and ts < handoff_ts:
+            break
+        if newer is not None and newer - ts > CHAIN_IDLE:
+            break
+        anchor = ts
+        newer = ts
+    return anchor
 
 
 def load_rows(path: Path) -> list[tuple[float | None, int, str, str]]:
@@ -229,9 +274,15 @@ def main() -> None:
         slot["task_start_ts"] = task_start
 
         data = load_rows(USAGE)
-        session_rows = [row for row in data if row[0] is not None and row[0] >= created]
+        anchor = chain_anchor(data, now, pending_handoff_mtime())
+        session_rows = [row for row in data if row[0] is not None and row[0] >= anchor]
         cumulative = sum(row[1] for row in session_rows)
         task_rows = [row for row in session_rows if row[0] >= task_start]
+        # 超线标记：Stop hook 据此把「收口」从建议变成一次阻断（重试成本 1 轮，不是一次重发）
+        if cumulative >= BUDGET_LIMIT:
+            state["budget_over"] = {"ts": now, "session_id": session_id}
+        else:
+            state.pop("budget_over", None)
 
         # 轮 / 请求都从流水推：本轮已落盘请求数 + 在飞这一条。一条请求里的并行工具调用
         # 同属一轮、也只算一次工具往返；不用状态文件计数——并行 hook 会互相覆盖（实测 3→1 回退）。

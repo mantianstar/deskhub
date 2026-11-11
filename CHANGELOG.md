@@ -10,6 +10,15 @@
 
 ---
 
+## v1.155 — 2026-11-10 预算闸门：Stop 阻断 / 任务链计数 / 已读摘要 / 宽搜首提示
+
+- 起因：近一周 23/31 段累计输入超 1.2M，超线部分 61.98M（66.6%）；hook 已注入 106 次「本段会话收口」仍未停，且 session_id 抖动让 `cum` 腰斩 156 次（11-09 `1,159,512→0`、11-10 `1,810,530→0`），账本长期低于真实累积。
+- 改了什么：`guard_budget` 的累计输入改由 `chain_anchor` 从流水回溯（相邻请求闲置 >30 分钟或最新 pending 交接处断链），超线时写 `budget_over` 标记；`guard_stop` 在「已超 1.2M + 本会话 + 半小时内 + 没有 pending 交接」时 `block` 一次，逼出五段交接；`guard_reset` 仍清空去重表（新任务允许重读），但把已读压成一行（≤6 个文件、只留前两段区间）随新消息注入；`guard_search` 对 `path=app / tests / 仓库根` 的首次 `Grep` 也提示，不再只判重。
+- 验证结论：`pytest -q tests/test_hooks_contract.py tests/test_rules_guard.py` → 58 passed, 1 skipped（新增 4 条：任务链跨会话不归零、超线 block / 落交接后放行、已读摘要回注、宽搜首提示）。
+- 影响：`.trae/hooks/guard_budget.py`、`.trae/hooks/guard_stop.py`、`.trae/hooks/guard_reset.py`、`.trae/hooks/guard_search.py`、`tests/test_hooks_contract.py`、`tests/test_rules_guard.py`。RULES.md 与常驻摘要未改。
+
+---
+
 ## v1.154 — 2026-11-10 系列详情状态口径 / 探索进度 / 无图任务成功
 
 - 起因：系列详情右上角只看观察名单，与币库列表「已收藏 > 已观察 > 未观察」不一致；采集中心探索进度长时间停在 0%；Numista 无图时图片节点报失败。

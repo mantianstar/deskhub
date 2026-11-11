@@ -22,6 +22,7 @@ import _state
 REPO = Path(__file__).resolve().parents[2]
 AUDIT = Path(os.environ.get("DESKHUB_HOOK_AUDIT") or REPO / "data" / "hook_audit.log")
 MAX_SEARCHES = 50
+WIDE_PATHS = {".", "app", "tests"}
 KNOWN = {"Grep", "Glob", "LS"}
 
 
@@ -69,6 +70,17 @@ def covers(parent: str, child: str) -> bool:
     if parent == ".":
         return not child.startswith("/")
     return child.startswith(parent.rstrip("/") + "/")
+
+
+def is_wide(path: str) -> bool:
+    """目录级宽搜：仓库根 / app / tests（RULES「禁止目录级宽搜」）。"""
+    real = Path(path)
+    if real.is_absolute():
+        try:
+            real = real.relative_to(REPO)
+        except ValueError:
+            return False
+    return os.path.normpath(str(real)) in WIDE_PATHS
 
 
 def describe(tool: str, tool_input: dict) -> dict:
@@ -150,6 +162,16 @@ def main() -> None:
         searches.append(entry)
         slot["searches"] = searches[-MAX_SEARCHES:]
         _state.save(state)
+
+    if tool == "Grep" and is_wide(entry["path"]):
+        audit(tool, label(entry), "hint", f"wide path={entry['path']}")
+        hint(
+            "已放行，仅提示："
+            f"Grep 的 path={entry['path']} 是目录级宽搜（RULES 禁止 app / tests / 仓库根）。"
+            "先按 PROJECT_MAP「30 秒定位」定到文件，再带符号名精确搜；"
+            "本次执行完若已命中，不要再缩范围重搜同一事实。"
+        )
+        return
 
     audit(tool, label(entry), "allow", f"record path={entry['path']}")
 

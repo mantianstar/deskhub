@@ -93,9 +93,13 @@ HOOKS = ROOT / ".trae" / "hooks"
 
 
 def _run_hook(
-    script: str, payload: dict, audit_path: Path, state_path: Path | None = None
+    script: str,
+    payload: dict,
+    audit_path: Path,
+    state_path: Path | None = None,
+    extra_env: dict | None = None,
 ) -> subprocess.CompletedProcess:
-    env = {**os.environ, "DESKHUB_HOOK_AUDIT": str(audit_path)}
+    env = {**os.environ, "DESKHUB_HOOK_AUDIT": str(audit_path), **(extra_env or {})}
     if state_path is not None:
         env["DESKHUB_HOOK_STATE"] = str(state_path)
     return subprocess.run(
@@ -244,9 +248,9 @@ def _search_hook(tool: str, tool_input: dict, tmp_path: Path) -> subprocess.Comp
 
 def test_search_hook_hints_repeated_grep(tmp_path: Path):
     """同一 pattern 同一范围搜两次，第二次提示放行，且两次都落审计。"""
-    assert _search_hook("Grep", {"pattern": "foo", "path": "tests"}, tmp_path).stdout.strip() == ""
+    assert _search_hook("Grep", {"pattern": "foo", "path": "app/routers"}, tmp_path).stdout.strip() == ""
     payload = json.loads(
-        _search_hook("Grep", {"pattern": "foo", "path": "tests"}, tmp_path).stdout
+        _search_hook("Grep", {"pattern": "foo", "path": "app/routers"}, tmp_path).stdout
     )
     head = payload["hookSpecificOutput"]
     assert "permissionDecision" not in head
@@ -385,4 +389,42 @@ def test_stop_hook_allows_cost_followed_by_token_cost_mention(tmp_path: Path):
     )
     result = _run_hook("guard_stop.py", {"last_assistant_message": message}, audit_path)
     assert result.stdout.strip() == ""
+
+
+def test_search_hook_hints_first_wide_grep(tmp_path: Path):
+    """目录级宽搜第一次就提示（不是 deny）：app / tests / 仓库根。"""
+    payload = json.loads(_search_hook("Grep", {"pattern": "foo", "path": "app"}, tmp_path).stdout)
+    head = payload["hookSpecificOutput"]
+    assert "permissionDecision" not in head
+    assert "宽搜" in head["additionalContext"]
+
+
+def test_stop_hook_blocks_over_budget_until_handoff(tmp_path: Path):
+    """累计输入超 1.2M 且没落交接时 block 一次；写了 pending 交接就放行。"""
+    import time
+
+    state_path = tmp_path / "state.json"
+    state_path.write_text(
+        json.dumps({"budget_over": {"ts": int(time.time()), "session_id": "s1"}}),
+        encoding="utf-8",
+    )
+    handoffs = tmp_path / "handoffs"
+    handoffs.mkdir()
+    message = (
+        "回执：\n"
+        "- 轮数：1 ｜ 请求：1 ｜ 上下文：20,000→20,000 ｜ 还能发 2 条\n"
+        "- 搜索/读取：Grep×0 ｜ 输出峰：1KB ｜ 越界：无\n"
+        "- 成本：输入 1 + 输出 1 = 合计 2"
+    )
+    payload = {"session_id": "s1", "last_assistant_message": message}
+    extra = {"DESKHUB_HANDOFF_DIR": str(handoffs)}
+    audit_path = tmp_path / "audit.log"
+
+    blocked = json.loads(
+        _run_hook("guard_stop.py", payload, audit_path, state_path, extra).stdout
+    )
+    assert blocked["decision"] == "block" and "1.2M" in blocked["reason"]
+
+    (handoffs / "h.md").write_text("status: pending\n", encoding="utf-8")
+    assert _run_hook("guard_stop.py", payload, audit_path, state_path, extra).stdout.strip() == ""
 

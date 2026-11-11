@@ -463,3 +463,52 @@ def test_stop_hook_accepts_batch_round_line(tmp_path: Path):
 
     assert run(message).strip() == ""
     assert '"decision": "block"' in run(message.rsplit("\n", 1)[0])
+
+
+def test_budget_hook_chain_survives_session_restart(tmp_path: Path):
+    """同一条工作被切成新会话（created_ts 变晚）时，累计输入不能归零。"""
+    env, state_path = _budget_env(tmp_path, [600_000, 620_000])
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["sessions"]["s1"]["created_ts"] = int(time.time()) - 60
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    assert "交接摘要" in _context(_run_budget(env))
+
+
+def test_reset_hook_reinjects_read_roster(tmp_path: Path):
+    """换任务清空去重表，但把已读压成一行带回来，避免跨消息重读。"""
+    import os
+    import subprocess
+    import sys
+
+    state_path = tmp_path / "state.json"
+    state_path.write_text(
+        json.dumps(
+            {
+                "sessions": {
+                    "s1": {
+                        "ts": 0,
+                        "created_ts": 0,
+                        "reads": {"/x/app/a.py": [[1, 120]]},
+                        "searches": [],
+                        "cmds": [],
+                    }
+                }
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    env = {
+        **os.environ,
+        "DESKHUB_HOOK_STATE": str(state_path),
+        "DESKHUB_HANDOFF_DIR": str(tmp_path / "none"),
+    }
+    out = subprocess.run(
+        [sys.executable, str(HOOKS / "guard_reset.py")],
+        input=json.dumps({"session_id": "s1"}),
+        capture_output=True,
+        text=True,
+        env=env,
+    ).stdout
+    text = json.loads(out)["hookSpecificOutput"]["additionalContext"]
+    assert "本段已读" in text and "a.py:1-120" in text

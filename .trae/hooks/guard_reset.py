@@ -22,6 +22,7 @@ import _state
 REPO = Path(__file__).resolve().parents[2]
 HANDOFF_DIR = Path(os.environ.get("DESKHUB_HANDOFF_DIR") or REPO / "data" / "handoffs")
 PENDING = "status: pending"
+ROSTER_MAX = 6  # 已读摘要最多列 6 个文件：多一行就多一份每轮重发的成本
 
 
 def pending_handoff() -> Path | None:
@@ -40,6 +41,30 @@ def pending_handoff() -> Path | None:
     return latest[1] if latest else None
 
 
+def read_roster(slot: dict) -> str:
+    """把本段已读压成一行：换任务时清空去重表（允许重读），但先告诉模型读过什么。"""
+    reads = slot.get("reads")
+    if not isinstance(reads, dict) or not reads:
+        return ""
+    items: list[str] = []
+    for path, spans in list(reads.items())[-ROSTER_MAX:]:
+        real = Path(str(path))
+        try:
+            shown = str(real.relative_to(REPO)) if real.is_absolute() else str(real)
+        except ValueError:
+            shown = real.name
+        ranges: list[str] = []
+        for span in (spans or [])[:2]:
+            try:
+                ranges.append(f"{int(span[0])}-{int(span[1])}")
+            except (TypeError, ValueError, IndexError):
+                continue
+        items.append(shown + (":" + ",".join(ranges) if ranges else ""))
+    rest = len(reads) - len(items)
+    tail = f"；另有 {rest} 个" if rest > 0 else ""
+    return f"本段已读（不必重读，改前只补未读区间）：{'、'.join(items)}{tail}"
+
+
 def main() -> None:
     try:
         payload = json.load(sys.stdin)
@@ -56,6 +81,7 @@ def main() -> None:
         state = _state.load()
         slot = _state.bucket(state, session_id)
         first_message = "created_ts" not in slot
+        roster = read_roster(slot)
         slot["reads"] = {}
         slot["prints"] = {}
         slot["read_counts"] = {}
@@ -66,24 +92,28 @@ def main() -> None:
         slot.setdefault("created_ts", int(time.time()))
         _state.save(state)
 
-    if not first_message:
+    parts: list[str] = []
+    if first_message:
+        path = pending_handoff()
+        if path is not None:
+            try:
+                shown = path.relative_to(REPO)
+            except ValueError:
+                shown = path
+            parts.append(
+                f"发现待确认交接：{shown}。先问用户是否继续该任务，用户确认后再读文件执行；"
+                "用户要做别的事就忽略，不要主动执行。执行后把首行改成 status: done。"
+            )
+    if roster:
+        parts.append(roster)
+    if not parts:
         return
-    path = pending_handoff()
-    if path is None:
-        return
-    try:
-        shown = path.relative_to(REPO)
-    except ValueError:
-        shown = path
     print(
         json.dumps(
             {
                 "hookSpecificOutput": {
                     "hookEventName": "UserPromptSubmit",
-                    "additionalContext": (
-                        f"发现待确认交接：{shown}。先问用户是否继续该任务，用户确认后再读文件执行；"
-                        "用户要做别的事就忽略，不要主动执行。执行后把首行改成 status: done。"
-                    ),
+                    "additionalContext": "\n".join(parts),
                 }
             },
             ensure_ascii=False,
