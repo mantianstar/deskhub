@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-SCHEMA_VERSION = "36"
+SCHEMA_VERSION = "37"
 
 # 所有时间列存北京时间 ISO8601 字符串（`YYYY-MM-DDTHH:MM:SS`，无时区后缀；SQLite 无原生时间类型）
 DDL = """
@@ -190,6 +190,32 @@ CREATE TABLE IF NOT EXISTS coin_lot_images (
 );
 CREATE INDEX IF NOT EXISTS idx_coin_lot_images_key ON coin_lot_images(oss_key);
 CREATE INDEX IF NOT EXISTS idx_coin_lot_images_lot ON coin_lot_images(lot_id);
+
+-- 铜币品相评级（好品推荐；每日最多评 50 条，见 app/coins/best.py）
+-- series_id 是 coin_series_cn.id（内部主键），不设外键：中英两张表的 id 各自独立
+CREATE TABLE IF NOT EXISTS coin_lot_grades (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  lot_id         INTEGER NOT NULL UNIQUE REFERENCES coin_lots(id) ON DELETE CASCADE,
+  series_id      INTEGER,
+  status         TEXT    NOT NULL DEFAULT 'pending',  -- pending / graded / failed
+  grade_interval TEXT,     -- 模型原文区间，如 XF40-45
+  grade_score    INTEGER,  -- 区间下界（40）
+  grade_cn       TEXT,     -- 中文品相（极美）
+  color_grade    TEXT,     -- 铜色等级（BN / RB / RD）
+  wear_desc      TEXT,
+  color_desc     TEXT,
+  flaws          TEXT,
+  blind_spots    TEXT,
+  confidence     TEXT,
+  net_grade      TEXT,
+  model_raw      TEXT,
+  model          TEXT,
+  created_at     TEXT    NOT NULL,
+  graded_at      TEXT,
+  error          TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_coin_lot_grades_status ON coin_lot_grades(status, created_at);
+CREATE INDEX IF NOT EXISTS idx_coin_lot_grades_score ON coin_lot_grades(grade_score);
 
 -- 全局拍品搜索索引（FTS5；CJK 逐字分词见 app/textmatch.fts_text）
 CREATE VIRTUAL TABLE IF NOT EXISTS coin_lot_fts USING fts5(
@@ -1261,6 +1287,28 @@ class CoinTodayLot:
     shop_name: str | None
     session_title: str
     auction_at: str | None
+    shop_followed: bool = False
+
+
+@dataclass(frozen=True)
+class CoinBestLot:
+    """一条已评级（>= XF40）的今日好品拍品（好品推荐区块用）。"""
+
+    id: int
+    session_id: int
+    title: str
+    start_price: float | None
+    current_price: float | None
+    image_urls: list[str]
+    shop_name: str | None
+    session_title: str
+    auction_at: str | None
+    issuer: str | None
+    ruler: str | None
+    denomination: str | None
+    grade_interval: str | None
+    grade_score: int | None
+    color_grade: str | None
     shop_followed: bool = False
 
 

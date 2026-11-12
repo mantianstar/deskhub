@@ -19,6 +19,7 @@ from starlette.responses import Response
 
 from app import config, repository, textmatch
 from app.coins import analysis as coins_analysis
+from app.coins import best as coins_best
 from app.coins import collection as coins_collection
 from app.coins import explore as coins_explore
 from app.coins import explore_page as coins_explore_page
@@ -1639,8 +1640,9 @@ def save_grades(
 
 COIN_COLLECTION_PAGE_SIZE = 20
 COIN_LIBRARY_PAGE_SIZE = 20
-COIN_RECOMMEND_PAGE_SIZE = 20
-COIN_SIMILAR_PAGE_SIZE = 5
+COIN_RECOMMEND_PAGE_SIZE = 3
+COIN_SIMILAR_PAGE_SIZE = 3
+COIN_BEST_PAGE_SIZE = 3
 COIN_PROFILE_PAGE_SIZE = 10
 COIN_MEMBER_CANDIDATE_LIMIT = 50
 COIN_REASON_LABELS = {1: "稀缺年份", 2: "差品升级", 4: "年份匹配", 5: "面值探索"}
@@ -1680,6 +1682,7 @@ def _collection_page_url(
     ppage: int,
     *,
     spage: int = 0,
+    bpage: int = 0,
     series: str = "",
     reason: str = "",
     hit: str = "",
@@ -1691,6 +1694,7 @@ def _collection_page_url(
             "page": page if page > 1 else 0,
             "ppage": ppage if ppage > 1 else 0,
             "spage": spage if spage > 1 else 0,
+            "bpage": bpage if bpage > 1 else 0,
             "series": series,
             "reason": reason,
             "hit": hit,
@@ -2058,6 +2062,7 @@ def collection_page(
     page: str = "",
     ppage: str = "",
     spage: str = "",
+    bpage: str = "",
     series: str = "",
     reason: str = "",
     hit: str = "1",
@@ -2097,6 +2102,10 @@ def collection_page(
     )
     similar_paged, similar_page, similar_total_pages = _paginate(
         similar_view, spage, COIN_SIMILAR_PAGE_SIZE
+    )
+    best_items = coins_best.load_best_lots(cfg, series=series)
+    best_paged, best_page, best_total_pages = _paginate(
+        best_items, bpage, COIN_BEST_PAGE_SIZE
     )
 
     item_pager = {
@@ -2173,6 +2182,35 @@ def collection_page(
             anchor="similar",
         )
         if similar_page < similar_total_pages
+        else "",
+    }
+
+    best_pager = {
+        "page": best_page,
+        "total_pages": best_total_pages,
+        "prev_url": _collection_page_url(
+            page_no,
+            profile_page,
+            spage=similar_page,
+            bpage=best_page - 1,
+            series=series,
+            reason=reason,
+            hit=hit,
+            anchor="best",
+        )
+        if best_page > 1
+        else "",
+        "next_url": _collection_page_url(
+            page_no,
+            profile_page,
+            spage=similar_page,
+            bpage=best_page + 1,
+            series=series,
+            reason=reason,
+            hit=hit,
+            anchor="best",
+        )
+        if best_page < best_total_pages
         else "",
     }
 
@@ -2278,6 +2316,9 @@ def collection_page(
             "similar_items": similar_paged,
             "similar_total": len(similar_view),
             "similar_pager": similar_pager,
+            "best_items": best_paged,
+            "best_total": len(best_items),
+            "best_pager": best_pager,
             "item_pager": item_pager,
             "item_total": len(items),
             "filtered_total": filtered_total,

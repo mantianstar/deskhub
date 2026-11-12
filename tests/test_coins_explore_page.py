@@ -99,8 +99,8 @@ def test_page_url_accepts_english_and_slug():
         explore_page.resolve_issuer("火星")
 
 
-def test_run_page_explore_over_50_stops_before_write(temp_db, monkeypatch):
-    _run_once(_catalogue_html(51, [(1, "1 Penny - George VI")]), "b-over", monkeypatch)
+def test_run_page_explore_over_100_stops_before_write(temp_db, monkeypatch):
+    _run_once(_catalogue_html(101, [(1, "1 Penny - George VI")]), "b-over", monkeypatch)
 
     assert repository.list_coin_page_explore_items("b-over") == []
     state = explore_page.status()

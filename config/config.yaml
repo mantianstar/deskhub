@@ -29,6 +29,17 @@ llm:
   # 单次请求超时（秒）。批量抽取画像实测 30s 会把大多数请求打成 ReadTimeout，故放宽
   timeout_seconds: 120
 
+# 铜币品相评级专用（小米 mimo 多模态）。与上面的 llm 段互不影响，别的功能不要读这段。
+coin_grade:
+  # base_url: https://api.xiaomimimo.com/v1
+  # model: mimo-v2.6-pro
+  # api_key_env: DESKHUB_MIMO_API_KEY   # 只写环境变量名，不写密钥本身
+  base_url: https://api.deepseek.com        # 原 https://api.xiaomimimo.com/v1
+  model: deepseek-v4-flash                  # 原 mimo-v2.6-pro
+  api_key_env: DESKHUB_LLM_API_KEY
+  timeout_seconds: 120                # 图片 + 长文本输出，给宽一点
+  temperature: 0.1                    # 评级要稳定，别自由发挥
+
 modules:
   agent:
     label: Agent 开发

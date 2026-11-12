@@ -65,6 +65,30 @@
 </article>
 {% endmacro %}
 
+{% macro render_best_card(lot) %}
+<article class="coin-rec-card is-precise">
+  <div class="coin-rec-head">
+    <div class="coin-rec-title">
+      <h3>{{ lot.issuer or '—' }} · {{ lot.ruler or '—' }} · {{ lot.denomination or '—' }}</h3>
+      <p class="coin-rec-meta">{{ lot.title }}</p>
+    </div>
+    <span class="coin-reason coin-reason-1">好品推荐</span>
+  </div>
+  <div class="coin-rec-facts">
+    <span>评级分数 {{ lot.grade_interval or '—' }}</span>
+    <span>铜色等级 {{ lot.color_grade or '—' }}</span>
+  </div>
+  <div class="coin-rec-lots">
+    <a class="coin-rec-lot" href="/coins/session/{{ lot.session_id }}">
+      <span class="coin-rec-lot-shop">{{ lot.shop_name or '未知店铺' }}</span>
+      <span class="coin-rec-lot-title">{{ lot.title }}</span>
+      <span class="coin-rec-lot-price">¥{{ lot.current_price | price }}</span>
+      <span class="coin-rec-lot-time">{% if lot.auction_at %}{{ lot.auction_at | local_time }}{% endif %}</span>
+    </a>
+  </div>
+</article>
+{% endmacro %}
+
 {{ coin_nav("today") }}
 {% set rec_total = filtered_total if filtered_total != item_total else item_total %}
 {{ coin_head("今日推荐", profiles_total ~ " 个收藏系列 · " ~ rec_total ~ " 条推荐 · 当日拍品 " ~ (today_lots|length) ~ " 条") }}
@@ -152,6 +176,22 @@
       {% endif %}
     </section>
     {% endif %}
+
+    <div id="best"></div>
+    <section class="coin-rec-section">
+      <h3 class="coin-rec-section-title">
+        <span>好品推荐 <span class="coin-rec-hint">今日外币拍品 · 品相 ≥ XF40</span></span>
+        <span class="coin-rec-section-count">{{ best_total }} 项</span>
+      </h3>
+      {% if best_items %}
+      {% for lot in best_items %}
+      {{ render_best_card(lot) }}
+      {% endfor %}
+      {{ render_pager(best_pager) }}
+      {% else %}
+      <div class="empty coin-empty-inline">今日暂无好品。</div>
+      {% endif %}
+    </section>
 
     <div id="similar"></div>
     <section class="coin-rec-section">

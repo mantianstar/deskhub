@@ -10,6 +10,15 @@
 
 ---
 
+## v1.156 — 2026-11-11 铜币品相评级（小米 mimo 多模态，只打印）
+
+- 起因：需要按用户给定的七维度 / 谢尔顿 70 分制口径，对正反面图做铜币品相评级，并用库里的系列信息（国家/年代/材质/图案描述）作上下文。
+- 改了什么：新增 `app/coin_grade/`（`prompt.py` 照录用户提示词并组装系列字段；`mimo_client.py` 独立 OpenAI 兼容多模态客户端，图片走 data URL）；`app/config.py` 新增独立 `coin_grade` 段（`base_url` / `model` / `api_key_env`，不影响既有 `llm`）；`app/cli.py` 新增 `coins-grade <正面图> <背面图> <系列号>`，只打印结果、不落库；`.env.example` 增加 `DESKHUB_MIMO_API_KEY`。
+- 验证结论：`pytest -q tests/test_coin_grade.py` 通过（只测提示词组装与参数解析，不发网络请求）。
+- 影响：`app/coin_grade/`、`app/config.py`、`app/cli.py`、`config/config.yaml`、`.env.example`、`tests/test_coin_grade.py`。
+
+---
+
 ## v1.155 — 2026-11-10 预算闸门：Stop 阻断 / 任务链计数 / 已读摘要 / 宽搜首提示
 
 - 起因：近一周 23/31 段累计输入超 1.2M，超线部分 61.98M（66.6%）；hook 已注入 106 次「本段会话收口」仍未停，且 session_id 抖动让 `cum` 腰斩 156 次（11-09 `1,159,512→0`、11-10 `1,810,530→0`），账本长期低于真实累积。

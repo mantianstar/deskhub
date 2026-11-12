@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from app import repository
+from app.coins import best as coins_best
 from app.coins import categories, coinmap, matcher, pricing
 from app.coins import recommend as coins_recommend
 from app.coins.gapi import KIND_LIVE, GapiError, MxiqiGapi
@@ -195,6 +196,14 @@ async def run(
             mapping.lots_issue_mapped,
             "、".join(f"{key} {count}" for key, count in sorted(mapping.by_method.items())) or "无",
         )
+
+        # 好品推荐：匹配今日外币拍品 + 大模型评级（每日限 50 条），失败不影响主流程
+        try:
+            best_matched = await asyncio.to_thread(coins_best.match_today_lots, config)
+            best_graded = await asyncio.to_thread(coins_best.grade_candidates, config)
+            logger.info("好品推荐：匹配 %d 条，评级 %d 条", best_matched, best_graded)
+        except Exception:
+            logger.warning("好品推荐：本轮跳过", exc_info=True)
 
         if collect_only:
             sales = repository.count_coin_sales_by_source()

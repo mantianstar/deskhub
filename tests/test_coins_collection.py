@@ -1439,11 +1439,11 @@ def test_collection_page_paginates_recommendations(web):
     page = web.get("/coins/collection?hit=all")
     assert page.status_code == 200
     assert "25 条" in page.text
-    assert "第 1 / 2 页" in page.text
+    assert "第 1 / 9 页" in page.text
 
     page = web.get("/coins/collection?hit=all&page=2")
     assert page.status_code == 200
-    assert "第 2 / 2 页" in page.text
+    assert "第 2 / 9 页" in page.text
 
 
 def test_collection_page_filters_series_reason_and_hit(web):

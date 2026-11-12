@@ -108,6 +108,22 @@ class CoinProfileLLMConfig:
 
 
 @dataclass(frozen=True)
+class CoinGradeConfig:
+    """小米 mimo 多模态（铜币品相评级专用）。
+
+    与 `llm` 段完全独立：换模型 / 换厂商只改这里，不影响既有打分与画像调用。
+    base_url / model 留空表示尚未配置，由 CLI 在调用前报错提示。
+    """
+
+    base_url: str = ""
+    model: str = ""
+    api_key_env: str = "DESKHUB_MIMO_API_KEY"
+    api_key: str = ""
+    timeout_seconds: int = 120
+    temperature: float = 0.1
+
+
+@dataclass(frozen=True)
 class CoinNumistaConfig:
     """Numista 目录接口（铜币参考库，spec §14.13 / plan §18.13）。
 
@@ -245,6 +261,7 @@ class Config:
     # 铜币配置只对铜币模块有意义；给个兜底，让「手工构造 Config」的测试（fetcher/scorer/
     # scheduler）不必为无关模块写样板。生产一律走 config.load()，会显式传入。
     coins: CoinsConfig = field(default_factory=lambda: _default_coins_config())
+    coin_grade: CoinGradeConfig = field(default_factory=CoinGradeConfig)
 
     def module(self, key: str) -> ModuleConfig:
         try:
@@ -420,6 +437,28 @@ def _parse_llm(raw: dict[str, Any]) -> LLMConfig:
         api_key_env=api_key_env,
         api_key=os.environ.get(api_key_env, ""),
         timeout_seconds=_req_int(section, "timeout_seconds", where),
+    )
+
+
+def _parse_coin_grade(raw: dict[str, Any]) -> CoinGradeConfig:
+    """mimo 段可缺省；缺省时 CLI 会提示先填 base_url / model 再调用。"""
+    section = raw.get("coin_grade")
+    if section is None:
+        return CoinGradeConfig()
+    if not isinstance(section, dict):
+        raise ConfigError("config.yaml：`coin_grade` 必须是配置段")
+    where = "config.yaml.coin_grade"
+    api_key_env = _opt_str(section, "api_key_env", "DESKHUB_MIMO_API_KEY", where)
+    # base_url / model 允许留空（尚未开通 mimo 时不影响其它命令加载配置）
+    base_url = os.environ.get("DESKHUB_MIMO_BASE_URL") or str(section.get("base_url") or "").strip()
+    model = os.environ.get("DESKHUB_MIMO_MODEL") or str(section.get("model") or "").strip()
+    return CoinGradeConfig(
+        base_url=base_url,
+        model=model,
+        api_key_env=api_key_env,
+        api_key=os.environ.get(api_key_env, ""),
+        timeout_seconds=_opt_int(section, "timeout_seconds", 120, where),
+        temperature=_opt_float(section, "temperature", 0.1, where),
     )
 
 
@@ -657,6 +696,7 @@ def load(
         modules=modules,
         sources=sources,
         coins=_parse_coins(raw),
+        coin_grade=_parse_coin_grade(raw),
     )
 
     global _config

@@ -18,6 +18,7 @@ from datetime import date
 from app import config, db, fetcher, llm, logging_setup, models, pipeline, repository, scorer
 from app.coins import numista as coins_numista
 from app.coins import numista_web as coins_numista_web
+from app.coins import best as coins_best
 from app.coins import coinmap as coins_coinmap
 from app.coins import explore as coins_explore
 from app.coins import filter_scan as coins_filter_scan
@@ -25,6 +26,8 @@ from app.coins import pipeline as coins_pipeline
 from app.coins import profile as coins_profile
 from app.coins import translate_llm as coins_translate_llm
 from app.coins.gapi import GapiError
+from app.coin_grade import mimo_client as coin_grade_mimo
+from app.coin_grade import prompt as coin_grade_prompt
 from app.fetcher import FetchOutcome
 from app.models import CoinFetchStatus
 
@@ -393,6 +396,86 @@ def cmd_coins_filter_scan(args: argparse.Namespace) -> int:
 # ---------------------------------------------------------------- Numista 参考库
 
 
+def cmd_coins_grade(args: argparse.Namespace) -> int:
+    """用小米 mimo 对正反面图做铜币品相评级（只打印，不落库）。"""
+    cfg = _bootstrap()
+    section = cfg.coin_grade
+    if not section.base_url or not section.model:
+        raise config.ConfigError(
+            "config.yaml 的 coin_grade 段未配置 base_url / model，填好后重试"
+        )
+    if not section.api_key:
+        raise config.ConfigError(
+            f"未设置环境变量 {section.api_key_env}，无法调用 mimo；写进 .env 后重试"
+        )
+    series = repository.get_coin_series(args.series_id, cn=True) or repository.get_coin_series(
+        args.series_id
+    )
+    if series is None:
+        print(
+            f"系列 {args.series_id} 不在库里，先跑 coins-series 或 coins-explore-adopt",
+            file=sys.stderr,
+        )
+        return 1
+    with coin_grade_mimo.MimoClient(
+        base_url=section.base_url,
+        api_key=section.api_key,
+        model=section.model,
+        temperature=section.temperature,
+        timeout_seconds=section.timeout_seconds,
+    ) as client:
+        text = client.grade(
+            system=coin_grade_prompt.SYSTEM_PROMPT,
+            user=coin_grade_prompt.build_user_prompt(series),
+            images=[args.obverse, args.reverse],
+        )
+    print(text)
+    return 0
+
+
+# ---------------------------------------------------------------- 好品推荐
+
+
+def cmd_coins_best_match(args: argparse.Namespace) -> int:
+    """匹配今日外币拍品并入队待评级，打印新入队条数。"""
+    cfg = _bootstrap()
+    queued = coins_best.match_today_lots(cfg)
+    print(f"新入队 {queued} 条")
+    return 0
+
+
+def cmd_coins_best_grade(args: argparse.Namespace) -> int:
+    """调模型给待评级队列做品相评级并落库，打印本轮成功评级条数。"""
+    cfg = _bootstrap()
+    graded = coins_best.grade_candidates(cfg)
+    print(f"成功评级 {graded} 条")
+    return 0
+
+
+def cmd_coins_best_list(args: argparse.Namespace) -> int:
+    """打印今日已评级好品（按分数降序），`--series` 只取该收藏系列成员。"""
+    cfg = _bootstrap()
+    lots = coins_best.load_best_lots(cfg, series=args.series)
+    if not lots:
+        print("今日暂无达标好品")
+        return 0
+    rows = [
+        (
+            str(lot.id),
+            " ".join(part for part in (lot.issuer, lot.ruler) if part) or "-",
+            lot.denomination or "-",
+            (
+                f"{lot.grade_score}（{lot.grade_interval}）"
+                if lot.grade_interval
+                else str(lot.grade_score)
+            ),
+        )
+        for lot in lots
+    ]
+    _print_table(("lot_id", "系列", "面值", "分数"), rows)
+    return 0
+
+
 def cmd_coins_series(args: argparse.Namespace) -> int:
     """按「国家 + 年份 + 面值」从 Numista 查系列并落库（输入是中文，自动转英文）。"""
     cfg = _bootstrap()
@@ -702,6 +785,32 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     coins_filter.set_defaults(func=cmd_coins_filter_scan)
 
+    coins_grade = subparsers.add_parser(
+        "coins-grade", help="用小米 mimo 给铜币正反面图做品相评级（只打印，不落库）"
+    )
+    coins_grade.add_argument("obverse", help="正面图路径或 http(s) 链接")
+    coins_grade.add_argument("reverse", help="背面图路径或 http(s) 链接")
+    coins_grade.add_argument(
+        "series_id", type=int, help="系列号（Numista type id），取库里的国家/年代/材质/图案描述"
+    )
+    coins_grade.set_defaults(func=cmd_coins_grade)
+
+    coins_best_match = subparsers.add_parser(
+        "coins-best-match", help="匹配今日外币拍品并入队待评级（好品推荐第一步）"
+    )
+    coins_best_match.set_defaults(func=cmd_coins_best_match)
+
+    coins_best_grade = subparsers.add_parser(
+        "coins-best-grade", help="给待评级队列做品相评级并落库（好品推荐第二步）"
+    )
+    coins_best_grade.set_defaults(func=cmd_coins_best_grade)
+
+    coins_best_list = subparsers.add_parser(
+        "coins-best-list", help="打印今日已评级好品（好品推荐第三步：筛选）"
+    )
+    coins_best_list.add_argument("--series", default="", help="只取该收藏系列 key 的成员")
+    coins_best_list.set_defaults(func=cmd_coins_best_list)
+
     coins_series = subparsers.add_parser(
         "coins-series", help="按国家/年份/面值从 Numista 查系列并落库（中文输入自动转英文）"
     )
@@ -773,6 +882,7 @@ def main(argv: list[str] | None = None) -> int:
         GapiError,
         coins_numista.NumistaError,
         coins_numista_web.NumistaPageError,
+        coin_grade_mimo.MimoError,
         ValueError,
     ) as exc:
         print(f"错误：{exc}", file=sys.stderr)

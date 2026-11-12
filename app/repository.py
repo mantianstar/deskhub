@@ -16,6 +16,7 @@ from app import db, models, textmatch
 from app.coins import grades, translate
 from app.config import SourceConfig
 from app.models import (
+    CoinBestLot,
     CoinCollectionMember,
     CoinCollectionSeries,
     CoinExploreCandidate,
@@ -1406,10 +1407,27 @@ def set_coin_explore_candidate_status(numista_id: int, status: str) -> bool:
     return cursor.rowcount > 0
 
 
-def list_coin_today_lots(tz: ZoneInfo, *, now: datetime | None = None) -> list[CoinTodayLot]:
-    """当日截拍专场里的全部拍品（推荐匹配用）。"""
+def list_coin_today_lots(
+    tz: ZoneInfo,
+    *,
+    now: datetime | None = None,
+    category_prefixes: Sequence[str] | None = None,
+    ungraded_only: bool = False,
+    exclude_title_keywords: Sequence[str] | None = None,
+) -> list[CoinTodayLot]:
+    """当日截拍专场里的全部拍品（推荐匹配用）。
+
+    传 `category_prefixes` 只取这些类目的拍品；`ungraded_only` 排除评级盒（`is_graded=1`）；
+    `exclude_title_keywords` 排除标题含任一关键词的拍品。
+    """
     start, end = local_day_bounds(tz, now=now)
-    return _list_coin_lots_between(start, end)
+    return _list_coin_lots_between(
+        start,
+        end,
+        category_prefixes=category_prefixes,
+        ungraded_only=ungraded_only,
+        exclude_title_keywords=exclude_title_keywords,
+    )
 
 
 def list_coin_lots_on_day(tz: ZoneInfo, day: date) -> list[CoinTodayLot]:
@@ -1418,21 +1436,35 @@ def list_coin_lots_on_day(tz: ZoneInfo, day: date) -> list[CoinTodayLot]:
     return _list_coin_lots_between(start, end)
 
 
-def _list_coin_lots_between(start: str, end: str) -> list[CoinTodayLot]:
+def _list_coin_lots_between(
+    start: str,
+    end: str,
+    *,
+    category_prefixes: Sequence[str] | None = None,
+    ungraded_only: bool = False,
+    exclude_title_keywords: Sequence[str] | None = None,
+) -> list[CoinTodayLot]:
+    sql = """
+        SELECT l.id, l.session_id, l.title, l.start_price, l.current_price,
+               l.image_urls, s.title AS session_title, s.auction_at,
+               sh.name AS shop_name, COALESCE(sh.followed, 0) AS shop_followed
+        FROM coin_lots l
+        JOIN coin_sessions s ON s.id = l.session_id
+        LEFT JOIN coin_shops sh ON sh.id = s.shop_id
+        WHERE s.auction_at >= ? AND s.auction_at < ?
+    """
+    params: list[object] = [start, end]
+    if category_prefixes:
+        sql += " AND (" + " OR ".join("l.category_code LIKE ?" for _ in category_prefixes) + ")"
+        params.extend(f"{prefix}%" for prefix in category_prefixes)
+    if ungraded_only:
+        sql += " AND COALESCE(l.is_graded, 0) = 0"
+    if exclude_title_keywords:
+        sql += " AND " + " AND ".join("l.title NOT LIKE ?" for _ in exclude_title_keywords)
+        params.extend(f"%{keyword}%" for keyword in exclude_title_keywords)
+    sql += " ORDER BY s.auction_at, l.id"
     with db.connect() as conn:
-        rows = conn.execute(
-            """
-            SELECT l.id, l.session_id, l.title, l.start_price, l.current_price,
-                   l.image_urls, s.title AS session_title, s.auction_at,
-                   sh.name AS shop_name, COALESCE(sh.followed, 0) AS shop_followed
-            FROM coin_lots l
-            JOIN coin_sessions s ON s.id = l.session_id
-            LEFT JOIN coin_shops sh ON sh.id = s.shop_id
-            WHERE s.auction_at >= ? AND s.auction_at < ?
-            ORDER BY s.auction_at, l.id
-            """,
-            (start, end),
-        ).fetchall()
+        rows = conn.execute(sql, params).fetchall()
     return [
         CoinTodayLot(
             id=row["id"],
@@ -1449,6 +1481,175 @@ def _list_coin_lots_between(start: str, end: str) -> list[CoinTodayLot]:
         for row in rows
     ]
 
+
+# ---------------------------------------------------------------- 好品推荐（铜币品相评级）
+
+
+def insert_pending_coin_lot_grades(rows: Sequence[tuple[int, int]]) -> int:
+    """匹配到的 `(lot_id, series_id)` 入队待评级；同一拍品只留一行（幂等）。"""
+    if not rows:
+        return 0
+    now = now_local()
+    with db.connect() as conn, conn:
+        cursor = conn.executemany(
+            """
+            INSERT OR IGNORE INTO coin_lot_grades (lot_id, series_id, status, created_at)
+            VALUES (?, ?, 'pending', ?)
+            """,
+            [(lot_id, series_id, now) for lot_id, series_id in rows],
+        )
+    return max(cursor.rowcount, 0)
+
+
+def list_pending_grade_lots(limit: int) -> list[dict[str, object]]:
+    """待评级队列（按入队顺序），附拍品标题与图片供评级调用。"""
+    if limit <= 0:
+        return []
+    with db.connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT g.lot_id, g.series_id, l.title, l.image_urls
+            FROM coin_lot_grades g
+            JOIN coin_lots l ON l.id = g.lot_id
+            WHERE g.status = 'pending'
+            ORDER BY g.created_at, g.id
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+    return [
+        {
+            "lot_id": row["lot_id"],
+            "series_id": row["series_id"],
+            "title": row["title"],
+            "image_urls": _json_list(row["image_urls"]),
+        }
+        for row in rows
+    ]
+
+
+def count_coin_graded_on_day(day: str | None = None) -> int:
+    """某天（默认今天）已成功评级的条数，用于每日 50 条风控。"""
+    target = day or now_local()[:10]
+    with db.connect() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) AS n FROM coin_lot_grades "
+            "WHERE status = 'graded' AND graded_at LIKE ?",
+            (f"{target}%",),
+        ).fetchone()
+    return int(row["n"])
+
+
+def mark_coin_lot_grade_failed(lot_id: int, error: str) -> None:
+    with db.connect() as conn, conn:
+        conn.execute(
+            "UPDATE coin_lot_grades SET status = 'failed', error = ? WHERE lot_id = ?",
+            ((error or "")[:500], lot_id),
+        )
+
+
+def save_coin_lot_grade(
+    lot_id: int,
+    parsed: dict[str, object],
+    *,
+    model_raw: str,
+    model: str,
+) -> None:
+    with db.connect() as conn, conn:
+        conn.execute(
+            """
+            UPDATE coin_lot_grades SET
+                status = 'graded', grade_interval = ?, grade_score = ?, grade_cn = ?,
+                color_grade = ?, wear_desc = ?, color_desc = ?, flaws = ?,
+                blind_spots = ?, confidence = ?, net_grade = ?,
+                model_raw = ?, model = ?, graded_at = ?, error = NULL
+            WHERE lot_id = ?
+            """,
+            (
+                parsed.get("grade_interval"),
+                parsed.get("grade_score"),
+                parsed.get("grade_cn"),
+                parsed.get("color_grade"),
+                parsed.get("wear_desc"),
+                parsed.get("color_desc"),
+                parsed.get("flaws"),
+                parsed.get("blind_spots"),
+                parsed.get("confidence"),
+                parsed.get("net_grade"),
+                model_raw,
+                model,
+                now_local(),
+                lot_id,
+            ),
+        )
+
+
+def get_coin_series_by_id(series_id: int, *, cn: bool = True) -> CoinSeries | None:
+    """按内部主键取系列（`get_coin_series` 只按 numista_id 查）。"""
+    table = "coin_series_cn" if cn else "coin_series"
+    with db.connect() as conn:
+        row = conn.execute(f"SELECT * FROM {table} WHERE id = ?", (series_id,)).fetchone()
+    return _row_to_coin_series(row) if row else None
+
+
+def list_best_grade_lots(
+    tz: ZoneInfo,
+    *,
+    min_score: int = 40,
+    collection_key: str | None = None,
+    now: datetime | None = None,
+) -> list[CoinBestLot]:
+    """今日 11070 类别、已评级且下界 >= `min_score` 的拍品，按分数降序。"""
+    start, end = local_day_bounds(tz, now=now)
+    sql = """
+        SELECT l.id, l.session_id, l.title, l.start_price, l.current_price,
+               l.image_urls, s.title AS session_title, s.auction_at,
+               sh.name AS shop_name, COALESCE(sh.followed, 0) AS shop_followed,
+               g.grade_interval, g.grade_score, g.color_grade,
+               cs.issuer, cs.ruler, cs.denomination
+        FROM coin_lot_grades g
+        JOIN coin_lots l ON l.id = g.lot_id
+        JOIN coin_sessions s ON s.id = l.session_id
+        LEFT JOIN coin_shops sh ON sh.id = s.shop_id
+        LEFT JOIN coin_series_cn cs ON cs.id = g.series_id
+        WHERE g.status = 'graded' AND g.grade_score >= ?
+          AND s.auction_at >= ? AND s.auction_at < ?
+          AND l.category_code LIKE '11070%'
+    """
+    params: list[object] = [min_score, start, end]
+    if collection_key:
+        sql += """
+          AND EXISTS (
+              SELECT 1 FROM coin_collection_series c
+              JOIN coin_collection_series_members m ON m.collection_id = c.id
+              WHERE c.collection_key = ? AND m.numista_series_id = cs.numista_id
+          )
+        """
+        params.append(collection_key)
+    sql += " ORDER BY g.grade_score DESC, l.id"
+    with db.connect() as conn:
+        rows = conn.execute(sql, params).fetchall()
+    return [
+        CoinBestLot(
+            id=row["id"],
+            session_id=row["session_id"],
+            title=row["title"],
+            start_price=row["start_price"],
+            current_price=row["current_price"],
+            image_urls=_json_list(row["image_urls"]),
+            shop_name=row["shop_name"],
+            session_title=row["session_title"],
+            auction_at=row["auction_at"],
+            issuer=row["issuer"],
+            ruler=row["ruler"],
+            denomination=row["denomination"],
+            grade_interval=row["grade_interval"],
+            grade_score=row["grade_score"],
+            color_grade=row["color_grade"],
+            shop_followed=bool(row["shop_followed"]),
+        )
+        for row in rows
+    ]
 
 
 def search_coin_lots(
