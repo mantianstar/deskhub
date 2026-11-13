@@ -1508,7 +1508,10 @@ def list_pending_grade_lots(limit: int) -> list[dict[str, object]]:
     with db.connect() as conn:
         rows = conn.execute(
             """
-            SELECT g.lot_id, g.series_id, l.title, l.image_urls
+            SELECT g.lot_id, g.series_id, l.title, l.image_urls,
+                   (SELECT f.features_text FROM coin_grade_features f
+                     WHERE f.lot_id = g.lot_id
+                     ORDER BY f.id DESC LIMIT 1) AS features_text
             FROM coin_lot_grades g
             JOIN coin_lots l ON l.id = g.lot_id
             WHERE g.status = 'pending'
@@ -1523,9 +1526,55 @@ def list_pending_grade_lots(limit: int) -> list[dict[str, object]]:
             "series_id": row["series_id"],
             "title": row["title"],
             "image_urls": _json_list(row["image_urls"]),
+            "features_text": row["features_text"],
         }
         for row in rows
     ]
+
+
+def save_coin_grade_features(
+    *,
+    lot_id: int | None,
+    series_id: int | None,
+    features_text: str,
+    model: str,
+    obverse: str = "",
+    reverse: str = "",
+) -> int:
+    """第一阶段特征落库，返回特征记录 id；好品推荐按 lot_id 复用，CLI 手动评级 lot_id 为空。
+
+    `series_id` 存 Numista type id（与 CLI 入参、读取侧同口径）。
+    """
+    with db.connect() as conn, conn:
+        cursor = conn.execute(
+            """
+            INSERT INTO coin_grade_features
+                (lot_id, series_id, obverse, reverse, features_text, model, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (lot_id, series_id, obverse, reverse, features_text, model, now_local()),
+        )
+    return int(cursor.lastrowid or 0)
+
+
+def get_coin_grade_features(feature_id: int) -> dict[str, object] | None:
+    """CLI 手动评级第二阶段：按特征记录 id 取一条（coin_grade_features.id 唯一确定）。"""
+    with db.connect() as conn:
+        row = conn.execute(
+            """
+            SELECT series_id, features_text, model, created_at FROM coin_grade_features
+            WHERE id = ?
+            """,
+            (feature_id,),
+        ).fetchone()
+    if row is None:
+        return None
+    return {
+        "series_id": row["series_id"],
+        "features_text": row["features_text"],
+        "model": row["model"],
+        "created_at": row["created_at"],
+    }
 
 
 def count_coin_graded_on_day(day: str | None = None) -> int:

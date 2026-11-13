@@ -1,4 +1,4 @@
-"""解析 mimo 品相评级输出（固定六行格式，见 app/coin_grade/prompt.py）。
+"""解析第二阶段品相评级输出（固定七行格式，见 app/coin_grade/prompt.py）。
 
 模型偶尔会漏行或换全角符号：这里只做宽松提取，缺项返回 None，不猜测。
 """
@@ -15,6 +15,7 @@ _LABELS = {
     "磨损": "wear_desc",
     "铜色": "color_desc",
     "瑕疵": "flaws",
+    "瑕疵与盲区": "blind_spots",
     "盲区": "blind_spots",
     "置信度": "confidence",
 }

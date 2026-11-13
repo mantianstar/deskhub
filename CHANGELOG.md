@@ -10,6 +10,20 @@
 
 ---
 
+## v1.158 — 2026-11-13 `coin_grade_features.series_id` 统一存 Numista type id
+
+- 起因：CLI 入参与读取侧都按 Numista type id 查，写入却存 `coin_series(.cn).id`，导致 `coins-grade 578` 查不到刚落的特征（记录里是 14）。
+- 改了什么：`app/cli.py#cmd_coins_grade_features` 与 `app/coins/best.py#grade_candidates` 改为落 `series.numista_id`；`app/models.py` / `app/repository.py` 注明该列口径；存量记录 `coin_grade_features.id=1` 的 `series_id` 由 14 更正为 578。
+- 验证结论：`pytest -q` 全量通过；`get_latest_coin_grade_features(578)` 可读到该记录。
+- 影响：`app/cli.py`、`app/coins/best.py`、`app/models.py`、`app/repository.py`。
+
+## v1.157 — 2026-11-13 铜币品相评级改两阶段（视觉提特征 → 推理评级）
+
+- 起因：单模型一次出分对光线 / 深色包浆更敏感，且特征过程不可追溯；改为先客观提取物理特征并落库，再由推理模型按谢尔顿 70 分制锁定档位。
+- 改了什么：`app/coin_grade/prompt.py` 换成两套提示词（`VISION_SYSTEM_PROMPT` + `build_vision_user_prompt`、`GRADER_SYSTEM_PROMPT` + `build_grader_user_prompt`，口径来自 `data/handoffs/2026-11-11-coin-grade-mimo-prompt.md`）；`mimo_client.py` 增加纯文本 `complete()`；`config.yaml` 的 `coin_grade` 拆成 `vision`（qwen3-vl-plus）与 `reason`（deepseek-v4-flash）两段；`app/coins/best.py` 的 `grade_candidates` 与 `app/cli.py` 的 `coins-grade` 改为先提特征落库再评级；新增 `coin_grade_features` 表（schema 38），待评级队列复用已存特征；`app/coin_grade/parse.py` 适配七行输出的「瑕疵与盲区」。
+- 验证结论：`pytest -q tests/test_coin_grade.py tests/test_coins_best.py` 通过；全量 `pytest -q` 通过。
+- 影响：`app/coin_grade/`、`app/coins/best.py`、`app/cli.py`、`app/config.py`、`app/models.py`、`app/migrations/__init__.py`、`app/db.py`、`app/repository.py`、`config/config.yaml`、`.env.example`、`tests/test_coin_grade.py`、`tests/test_coins_best.py`、`tests/test_coins_analysis.py`、`tests/test_coins_categories.py`。
+
 ## v1.156 — 2026-11-11 铜币品相评级（小米 mimo 多模态，只打印）
 
 - 起因：需要按用户给定的七维度 / 谢尔顿 70 分制口径，对正反面图做铜币品相评级，并用库里的系列信息（国家/年代/材质/图案描述）作上下文。

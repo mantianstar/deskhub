@@ -1,6 +1,7 @@
-"""小米 mimo 多模态客户端：只服务铜币品相评级，不走 app.llm 的既有调用路径。
+"""OpenAI 兼容模型客户端（类名沿用 MimoClient）：只服务铜币品相评级，不走 app.llm。
 
-- OpenAI 兼容 `POST {base_url}/chat/completions`，本地图片转成 data URL 内联提交，
+- 第一阶段 `grade`（视觉模型，带图）；第二阶段 `complete`（推理模型，纯文本）。
+- `POST {base_url}/chat/completions`，本地图片转成 data URL 内联提交，
   http(s) 链接原样透传。
 - 同步实现即可：CLI 单次评级，不需要并发。
 """
@@ -48,11 +49,19 @@ class MimoClient:
         self.close()
 
     def grade(self, *, system: str, user: str, images: list[Path | str]) -> str:
+        """第一阶段：带图调用（正反面图片 → 物理特征描述）。"""
+        return self._post(system=system, content=self._user_content(user, images))
+
+    def complete(self, *, system: str, user: str) -> str:
+        """第二阶段：纯文本调用（特征文本 → 品相评级），不传图片。"""
+        return self._post(system=system, content=user)
+
+    def _post(self, *, system: str, content: object) -> str:
         body = {
             "model": self.model,
             "messages": [
                 {"role": "system", "content": system},
-                {"role": "user", "content": self._user_content(user, images)},
+                {"role": "user", "content": content},
             ],
             "temperature": self.temperature,
         }

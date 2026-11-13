@@ -396,21 +396,23 @@ def cmd_coins_filter_scan(args: argparse.Namespace) -> int:
 # ---------------------------------------------------------------- Numista 参考库
 
 
-def cmd_coins_grade(args: argparse.Namespace) -> int:
-    """用小米 mimo 对正反面图做铜币品相评级（只打印，不落库）。"""
+def _coin_grade_series(series_id: int) -> "models.CoinSeries | None":
+    return repository.get_coin_series(series_id, cn=True) or repository.get_coin_series(series_id)
+
+
+def cmd_coins_grade_features(args: argparse.Namespace) -> int:
+    """第一阶段：视觉模型提特征并落库，不调用推理模型。"""
     cfg = _bootstrap()
-    section = cfg.coin_grade
-    if not section.base_url or not section.model:
+    vision_cfg = cfg.coin_grade.vision
+    if not vision_cfg.base_url or not vision_cfg.model:
         raise config.ConfigError(
-            "config.yaml 的 coin_grade 段未配置 base_url / model，填好后重试"
+            "config.yaml 的 coin_grade.vision 段未配置 base_url / model，填好后重试"
         )
-    if not section.api_key:
+    if not vision_cfg.api_key:
         raise config.ConfigError(
-            f"未设置环境变量 {section.api_key_env}，无法调用 mimo；写进 .env 后重试"
+            f"未设置环境变量 {vision_cfg.api_key_env}，无法调用 coin_grade.vision；写进 .env 后重试"
         )
-    series = repository.get_coin_series(args.series_id, cn=True) or repository.get_coin_series(
-        args.series_id
-    )
+    series = _coin_grade_series(args.series_id)
     if series is None:
         print(
             f"系列 {args.series_id} 不在库里，先跑 coins-series 或 coins-explore-adopt",
@@ -418,17 +420,74 @@ def cmd_coins_grade(args: argparse.Namespace) -> int:
         )
         return 1
     with coin_grade_mimo.MimoClient(
-        base_url=section.base_url,
-        api_key=section.api_key,
-        model=section.model,
-        temperature=section.temperature,
-        timeout_seconds=section.timeout_seconds,
-    ) as client:
-        text = client.grade(
-            system=coin_grade_prompt.SYSTEM_PROMPT,
-            user=coin_grade_prompt.build_user_prompt(series),
+        base_url=vision_cfg.base_url,
+        api_key=vision_cfg.api_key,
+        model=vision_cfg.model,
+        temperature=vision_cfg.temperature,
+        timeout_seconds=vision_cfg.timeout_seconds,
+    ) as vision:
+        features = vision.grade(
+            system=coin_grade_prompt.VISION_SYSTEM_PROMPT,
+            user=coin_grade_prompt.build_vision_user_prompt(series),
             images=[args.obverse, args.reverse],
         )
+    feature_id = repository.save_coin_grade_features(
+        lot_id=None,
+        series_id=series.numista_id,
+        features_text=features,
+        model=vision_cfg.model,
+        obverse=args.obverse,
+        reverse=args.reverse,
+    )
+    print(f"【特征记录 id】{feature_id}（第二阶段：coins-grade {feature_id}）")
+    print("【第一阶段：特征提取】（已落库）")
+    print(features)
+    return 0
+
+
+def cmd_coins_grade(args: argparse.Namespace) -> int:
+    """第二阶段：按特征记录 id 读落库特征，交给推理模型给品相。"""
+    cfg = _bootstrap()
+    reason_cfg = cfg.coin_grade.reason
+    if not reason_cfg.base_url or not reason_cfg.model:
+        raise config.ConfigError(
+            "config.yaml 的 coin_grade.reason 段未配置 base_url / model，填好后重试"
+        )
+    if not reason_cfg.api_key:
+        raise config.ConfigError(
+            f"未设置环境变量 {reason_cfg.api_key_env}，无法调用 coin_grade.reason；写进 .env 后重试"
+        )
+    record = repository.get_coin_grade_features(args.feature_id)
+    if record is None:
+        print(
+            f"特征记录 {args.feature_id} 不存在，先跑 "
+            "coins-grade-features <正面图> <背面图> <系列号>",
+            file=sys.stderr,
+        )
+        return 1
+    features = str(record.get("features_text") or "").strip()
+    series_id = record.get("series_id")
+    series = _coin_grade_series(int(series_id)) if isinstance(series_id, int) else None
+    if series is None:
+        print(
+            f"特征记录 {args.feature_id} 的系列 {series_id} 不在库里，"
+            "先跑 coins-series 或 coins-explore-adopt",
+            file=sys.stderr,
+        )
+        return 1
+    with coin_grade_mimo.MimoClient(
+        base_url=reason_cfg.base_url,
+        api_key=reason_cfg.api_key,
+        model=reason_cfg.model,
+        temperature=reason_cfg.temperature,
+        timeout_seconds=reason_cfg.timeout_seconds,
+    ) as reason:
+        text = reason.complete(
+            system=coin_grade_prompt.GRADER_SYSTEM_PROMPT,
+            user=coin_grade_prompt.build_grader_user_prompt(series, features),
+        )
+    print(f"【特征来源】{record.get('model') or '未知模型'} @ {record.get('created_at') or ''}")
+    print("【第二阶段：品相评级】")
     print(text)
     return 0
 
@@ -785,13 +844,21 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     coins_filter.set_defaults(func=cmd_coins_filter_scan)
 
-    coins_grade = subparsers.add_parser(
-        "coins-grade", help="用小米 mimo 给铜币正反面图做品相评级（只打印，不落库）"
+    coins_grade_features = subparsers.add_parser(
+        "coins-grade-features", help="铜币评级第一阶段：视觉模型提特征并落库"
     )
-    coins_grade.add_argument("obverse", help="正面图路径或 http(s) 链接")
-    coins_grade.add_argument("reverse", help="背面图路径或 http(s) 链接")
-    coins_grade.add_argument(
+    coins_grade_features.add_argument("obverse", help="正面图路径或 http(s) 链接")
+    coins_grade_features.add_argument("reverse", help="背面图路径或 http(s) 链接")
+    coins_grade_features.add_argument(
         "series_id", type=int, help="系列号（Numista type id），取库里的国家/年代/材质/图案描述"
+    )
+    coins_grade_features.set_defaults(func=cmd_coins_grade_features)
+
+    coins_grade = subparsers.add_parser(
+        "coins-grade", help="铜币评级第二阶段：用特征记录 id 取已落库特征调推理模型给品相"
+    )
+    coins_grade.add_argument(
+        "feature_id", type=int, help="特征记录 id（coin_grade_features.id）"
     )
     coins_grade.set_defaults(func=cmd_coins_grade)
 

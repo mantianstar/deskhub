@@ -60,7 +60,7 @@ def test_fresh_db_has_is_graded_column(tmp_path):
 
     with db.connect() as conn:
         assert "is_graded" in _columns(conn, "coin_lots")
-        assert _version(conn) == "37"
+        assert _version(conn) == "38"
 
 
 def test_v21_db_upgrade_backfills_is_graded_locally(tmp_path):
@@ -93,7 +93,7 @@ def test_v21_db_upgrade_backfills_is_graded_locally(tmp_path):
             row["mxiqi_id"]: row["is_graded"]
             for row in conn.execute("SELECT mxiqi_id, is_graded FROM coin_lots")
         }
-        assert _version(conn) == "37"
+        assert _version(conn) == "38"
     assert rows == {"a": 1, "b": 0}
 
 
@@ -123,7 +123,7 @@ def test_v22_upgrade_is_idempotent(tmp_path):
     with db.connect() as conn:
         columns = [row["name"] for row in conn.execute("PRAGMA table_info(coin_lots)")]
         assert columns.count("is_graded") == 1
-        assert _version(conn) == "37"
+        assert _version(conn) == "38"
 
 
 def test_v27_adds_theme_columns_and_rebuilds_grade_index(tmp_path):
@@ -164,7 +164,7 @@ def test_v27_adds_theme_columns_and_rebuilds_grade_index(tmp_path):
             for row in conn.execute("PRAGMA index_info(uidx_coin_purchase_grades)")
         ]
         assert index_columns == ["country", "era", "denomination", "theme", "coin_name"]
-        assert _version(conn) == "37"
+        assert _version(conn) == "38"
 
 
 def test_v28_pushes_theme_to_members_and_drops_series_columns(tmp_path):
@@ -223,7 +223,7 @@ def test_v28_pushes_theme_to_members_and_drops_series_columns(tmp_path):
             )
         ]
         assert rows == [(101, "亚运会", "女排"), (102, "亚运会", "女排")]
-        assert _version(conn) == "37"
+        assert _version(conn) == "38"
 
 
 @pytest.fixture()

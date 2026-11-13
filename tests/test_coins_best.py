@@ -15,6 +15,7 @@ from app.coins import best
 from app.config import (
     AppConfig,
     CoinGradeConfig,
+    CoinGradeStageConfig,
     Config,
     DigestConfig,
     FetchConfig,
@@ -23,12 +24,11 @@ from app.config import (
 )
 from app.models import CoinLot, CoinSeries, CoinSession
 
-GRADE_TEXT = """评级：XF40-45 / 极美 / 深铜 / 净分40
-磨损：高点轻微磨损
-铜色：深铜色均匀
-瑕疵：无明显瑕疵
-盲区：边缘
-置信度：0.8"""
+GRADE_TEXT = """评级：XF40-45 / 极美 / 深褐 / 净分40
+磨损：观察区1鼻尖为C级
+瑕疵与盲区：边缘轻磕"""
+
+FEATURE_TEXT = "1. 核心高点状态：鼻尖轻微磨圆"
 
 
 @pytest.fixture()
@@ -78,9 +78,16 @@ def cfg(tmp_path):
         modules={},
         sources=(),
         coin_grade=CoinGradeConfig(
-            base_url="http://mimo.test",
-            model="mimo-test",
-            api_key="k",
+            vision=CoinGradeStageConfig(
+                base_url="http://vision.test",
+                model="vision-test",
+                api_key="k",
+            ),
+            reason=CoinGradeStageConfig(
+                base_url="http://reason.test",
+                model="reason-test",
+                api_key="k",
+            ),
         ),
     )
 
@@ -171,9 +178,14 @@ class FakeClient:
     def __init__(self, text: str = GRADE_TEXT) -> None:
         self.text = text
         self.calls: list[list[object]] = []
+        self.completed: list[str] = []
 
     def grade(self, *, system: str, user: str, images: list[object]) -> str:
         self.calls.append(list(images))
+        return FEATURE_TEXT
+
+    def complete(self, *, system: str, user: str) -> str:
+        self.completed.append(user)
         return self.text
 
     def close(self) -> None:
@@ -217,8 +229,10 @@ def test_grade_candidates_skips_missing_image_and_caps_daily_quota(
     assert best.match_today_lots(cfg) == 2
 
     client = FakeClient()
-    assert best.grade_candidates(cfg, client=client) == 1
+    assert best.grade_candidates(cfg, vision_client=client, reason_client=client) == 1
     assert len(client.calls) == 1
+    assert len(client.completed) == 1
+    assert FEATURE_TEXT in client.completed[0]
     assert repository.count_coin_graded_on_day() == 1
 
     items = best.load_best_lots(cfg)
@@ -232,5 +246,5 @@ def test_grade_candidates_skips_missing_image_and_caps_daily_quota(
     )
     _lot(session_id, "best-1:quota-full", "英国 1863年 1 便士 铜币")
     assert best.match_today_lots(cfg) == 1
-    assert best.grade_candidates(cfg, client=client) == 0
+    assert best.grade_candidates(cfg, vision_client=client, reason_client=client) == 0
     assert len(client.calls) == 1

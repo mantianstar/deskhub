@@ -45,36 +45,43 @@ def _series(**overrides: object) -> CoinSeries:
     return CoinSeries(**data)  # type: ignore[arg-type]
 
 
-def test_build_user_prompt_fills_series_fields() -> None:
-    text = prompt.build_user_prompt(_series())
+def test_build_vision_prompt_fills_series_fields() -> None:
+    text = prompt.build_vision_user_prompt(_series())
 
-    assert "国家：United Kingdom" in text
-    assert "年代：1900" in text
-    assert "材质：bronze" in text
-    assert "面值：1 penny" in text
-    assert "正面图案描述：bust facing left" in text
-    assert "背面图案描述：Britannia seated" in text
+    assert "币种：United Kingdom/1900/1 penny" in text
+    assert "正面描述：bust facing left" in text
+    assert "背面描述：Britannia seated" in text
 
 
-def test_build_user_prompt_marks_missing_fields() -> None:
-    text = prompt.build_user_prompt(_series(issuer=None, composition=None, obverse_desc=""))
+def test_build_vision_prompt_marks_missing_fields() -> None:
+    text = prompt.build_vision_user_prompt(_series(issuer=None, composition=None, obverse_desc=""))
 
-    assert "国家：未提供" in text
-    assert "材质：未提供" in text
-    assert "正面图案描述：未提供" in text
-
-
-def test_system_prompt_keeps_key_constraints() -> None:
-    for fragment in ("谢尔顿70分制", "青铜病", "合法刻度", "盲区", "置信度"):
-        assert fragment in prompt.SYSTEM_PROMPT
+    assert "币种：未提供/1900/1 penny" in text
+    assert "正面描述：未提供" in text
 
 
-def test_cli_parses_three_positional_args() -> None:
-    args = cli._build_parser().parse_args(["coins-grade", "a.jpg", "b.jpg", "1234"])
+def test_grader_prompt_keeps_key_constraints() -> None:
+    text = prompt.build_grader_user_prompt(_series(), "特征：高点轻微磨圆")
+
+    for fragment in ("谢尔顿70分制", "合法刻度", "青铜病", "盲区", "锚点校验"):
+        assert fragment in text
+    assert "特征：高点轻微磨圆" in text
+    assert "严禁跨大档" in prompt.GRADER_SYSTEM_PROMPT
+
+
+def test_cli_parses_grade_features_args() -> None:
+    args = cli._build_parser().parse_args(["coins-grade-features", "a.jpg", "b.jpg", "1234"])
 
     assert args.obverse == "a.jpg"
     assert args.reverse == "b.jpg"
     assert args.series_id == 1234
+    assert args.func is cli.cmd_coins_grade_features
+
+
+def test_cli_parses_grade_args() -> None:
+    args = cli._build_parser().parse_args(["coins-grade", "4721"])
+
+    assert args.feature_id == 4721
     assert args.func is cli.cmd_coins_grade
 
 
@@ -96,24 +103,22 @@ def test_user_content_rejects_missing_local_file(tmp_path: Path) -> None:
 
 def test_parse_grade_splits_interval_colors_and_labels() -> None:
     parsed = parse.parse_grade(
-        "评级：XF40-45 / 极美 / 深铜 / 净分40\n"
-        "磨损：高点轻微磨损\n"
-        "铜色：深铜色均匀\n"
-        "瑕疵：无明显瑕疵\n"
-        "盲区：边缘\n"
-        "置信度：0.8"
+        "评级：XF40-45 / 极美 / 深褐 / 净分40\n"
+        "磨损：观察区1鼻尖为C级\n"
+        "触发规则：冲突保底\n"
+        "降级说明：纯磨损降级\n"
+        "综合判定为纯磨损，由最差核心高点决定。\n"
+        "瑕疵与盲区：边缘轻磕，微观盲区\n"
+        "锚点校验：确认未扣分"
     )
 
     assert parsed["grade_interval"] == "XF40-45"
     assert parsed["grade_score"] == 40
     assert parsed["grade_cn"] == "极美"
-    assert parsed["color_grade"] == "深铜"
+    assert parsed["color_grade"] == "深褐"
     assert parsed["net_grade"] == "40"
-    assert parsed["wear_desc"] == "高点轻微磨损"
-    assert parsed["color_desc"] == "深铜色均匀"
-    assert parsed["flaws"] == "无明显瑕疵"
-    assert parsed["blind_spots"] == "边缘"
-    assert parsed["confidence"] == "0.8"
+    assert parsed["wear_desc"] == "观察区1鼻尖为C级"
+    assert parsed["blind_spots"] == "边缘轻磕，微观盲区"
 
 
 def test_parse_grade_keeps_missing_fields_empty() -> None:
@@ -124,7 +129,7 @@ def test_parse_grade_keeps_missing_fields_empty() -> None:
     assert parsed["grade_cn"] is None
     assert parsed["color_grade"] is None
     assert parsed["wear_desc"] == "轻微"
-    assert parsed["flaws"] is None
+    assert parsed["blind_spots"] is None
 
     assert parse.parse_grade(None)["grade_interval"] is None
     assert parse.parse_grade("")["grade_score"] is None

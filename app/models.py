@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-SCHEMA_VERSION = "37"
+SCHEMA_VERSION = "38"
 
 # 所有时间列存北京时间 ISO8601 字符串（`YYYY-MM-DDTHH:MM:SS`，无时区后缀；SQLite 无原生时间类型）
 DDL = """
@@ -216,6 +216,20 @@ CREATE TABLE IF NOT EXISTS coin_lot_grades (
 );
 CREATE INDEX IF NOT EXISTS idx_coin_lot_grades_status ON coin_lot_grades(status, created_at);
 CREATE INDEX IF NOT EXISTS idx_coin_lot_grades_score ON coin_lot_grades(grade_score);
+
+-- 第一阶段（视觉模型）特征提取结果；好品推荐按 lot_id 复用，CLI 手动评级 lot_id 为空
+-- series_id 存 Numista type id，与 CLI 入参同口径（不存 coin_series(.cn).id）
+CREATE TABLE IF NOT EXISTS coin_grade_features (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  lot_id        INTEGER,
+  series_id     INTEGER,
+  obverse       TEXT,
+  reverse       TEXT,
+  features_text TEXT    NOT NULL,
+  model         TEXT,
+  created_at    TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_coin_grade_features_lot ON coin_grade_features(lot_id, id);
 
 -- 全局拍品搜索索引（FTS5；CJK 逐字分词见 app/textmatch.fts_text）
 CREATE VIRTUAL TABLE IF NOT EXISTS coin_lot_fts USING fts5(

@@ -1,4 +1,4 @@
-status: pending
+status: done
 
 - 已完成：
   - 定位现网配置：`config/config.yaml` 第 33-38 行 `coin_grade.model = mimo-v2.6-pro`（base_url `https://api.xiaomimimo.com/v1`，temperature 0.1，timeout 120）。

@@ -108,19 +108,26 @@ class CoinProfileLLMConfig:
 
 
 @dataclass(frozen=True)
-class CoinGradeConfig:
-    """小米 mimo 多模态（铜币品相评级专用）。
-
-    与 `llm` 段完全独立：换模型 / 换厂商只改这里，不影响既有打分与画像调用。
-    base_url / model 留空表示尚未配置，由 CLI 在调用前报错提示。
-    """
+class CoinGradeStageConfig:
+    """单阶段模型配置：base_url / model 留空表示尚未配置，调用前由 CLI 报错提示。"""
 
     base_url: str = ""
     model: str = ""
-    api_key_env: str = "DESKHUB_MIMO_API_KEY"
+    api_key_env: str = ""
     api_key: str = ""
     timeout_seconds: int = 120
     temperature: float = 0.1
+
+
+@dataclass(frozen=True)
+class CoinGradeConfig:
+    """铜币品相评级两阶段（与 `llm` 段独立，换模型 / 换厂商只改这里）。
+
+    vision：第一阶段视觉特征提取（多模态）；reason：第二阶段逻辑评级（纯文本推理）。
+    """
+
+    vision: CoinGradeStageConfig = field(default_factory=CoinGradeStageConfig)
+    reason: CoinGradeStageConfig = field(default_factory=CoinGradeStageConfig)
 
 
 @dataclass(frozen=True)
@@ -441,24 +448,36 @@ def _parse_llm(raw: dict[str, Any]) -> LLMConfig:
 
 
 def _parse_coin_grade(raw: dict[str, Any]) -> CoinGradeConfig:
-    """mimo 段可缺省；缺省时 CLI 会提示先填 base_url / model 再调用。"""
+    """coin_grade 段可缺省；两个阶段各自读 base_url / model / api_key_env。"""
     section = raw.get("coin_grade")
     if section is None:
         return CoinGradeConfig()
     if not isinstance(section, dict):
         raise ConfigError("config.yaml：`coin_grade` 必须是配置段")
-    where = "config.yaml.coin_grade"
-    api_key_env = _opt_str(section, "api_key_env", "DESKHUB_MIMO_API_KEY", where)
-    # base_url / model 允许留空（尚未开通 mimo 时不影响其它命令加载配置）
-    base_url = os.environ.get("DESKHUB_MIMO_BASE_URL") or str(section.get("base_url") or "").strip()
-    model = os.environ.get("DESKHUB_MIMO_MODEL") or str(section.get("model") or "").strip()
     return CoinGradeConfig(
-        base_url=base_url,
-        model=model,
+        vision=_parse_coin_grade_stage(section, "vision", "DESKHUB_QW_VL_API_KEY"),
+        reason=_parse_coin_grade_stage(section, "reason", "DESKHUB_LLM_API_KEY"),
+    )
+
+
+def _parse_coin_grade_stage(
+    section: dict[str, Any], key: str, default_api_key_env: str
+) -> CoinGradeStageConfig:
+    where = f"config.yaml.coin_grade.{key}"
+    stage = section.get(key)
+    if stage is None:
+        return CoinGradeStageConfig(api_key_env=default_api_key_env)
+    if not isinstance(stage, dict):
+        raise ConfigError(f"{where} 必须是配置段")
+    api_key_env = _opt_str(stage, "api_key_env", default_api_key_env, where)
+    # base_url / model 允许留空（尚未开通对应模型时不影响其它命令加载配置）
+    return CoinGradeStageConfig(
+        base_url=str(stage.get("base_url") or "").strip(),
+        model=str(stage.get("model") or "").strip(),
         api_key_env=api_key_env,
         api_key=os.environ.get(api_key_env, ""),
-        timeout_seconds=_opt_int(section, "timeout_seconds", 120, where),
-        temperature=_opt_float(section, "temperature", 0.1, where),
+        timeout_seconds=_opt_int(stage, "timeout_seconds", 120, where),
+        temperature=_opt_float(stage, "temperature", 0.1, where),
     )
 
 

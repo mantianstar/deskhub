@@ -379,6 +379,33 @@ for _from in (
         DATA_MIGRATIONS[(_from, "37")] = _previous
 
 
+# 跨版本直升级到 v38：只新增铜币评级特征表（DDL 已建），沿用 v37 的加列与回填
+COLUMN_MIGRATIONS[("37", "38")] = {}
+for _from in (
+    "20",
+    "21",
+    "22",
+    "23",
+    "24",
+    "25",
+    "26",
+    "27",
+    "28",
+    "29",
+    "30",
+    "31",
+    "32",
+    "33",
+    "34",
+    "35",
+    "36",
+):
+    COLUMN_MIGRATIONS[(_from, "38")] = COLUMN_MIGRATIONS[(_from, "37")]
+    _previous = DATA_MIGRATIONS.get((_from, "37"))
+    if _previous is not None:
+        DATA_MIGRATIONS[(_from, "38")] = _previous
+
+
 def apply_columns(conn: sqlite3.Connection, tables: dict[str, dict[str, str]]) -> list[str]:
     """给老表补列（已存在的列跳过）。返回实际新增的 `表.列` 列表。"""
     applied: list[str] = []
