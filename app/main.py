@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -58,6 +59,9 @@ async def lifespan(_: FastAPI):
 
     # 只注册每日任务，启动时不跑任何抓取 / 打分 / 采集（plan §19）
     active_scheduler = scheduler.start(cfg)
+
+    # 重启后补跑当日未完成的铜币段落（任务卡待确认 1-A）；跨日未完成一律标 abandoned
+    _resume_task = asyncio.create_task(scheduler.resume_incomplete(cfg))
 
     try:
         yield

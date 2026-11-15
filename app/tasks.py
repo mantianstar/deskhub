@@ -91,6 +91,16 @@ async def run_coins_match(config: Config) -> str:
     )
 
 
+async def run_coins_grade(config: Config) -> str:
+    """匹配今日外币拍品并评级（只手动运行）。
+
+    两步都跑：待评级行由 `match_today_lots` 写入，只调 `grade_candidates`
+    当天没采集时只会返回 0。
+    """
+    result = await coins_pipeline.run(config, grade_only=True)
+    return f"匹配 {result.lots_recommended} 条，评级 {result.lots_priced} 条"
+
+
 async def run_coins_price(config: Config) -> str:
     """只给已入库的推荐拍品查价。"""
     result = await coins_pipeline.run(config, price_only=True)
@@ -107,6 +117,7 @@ RUNNERS: dict[str, Callable[[Config], Awaitable[str]]] = {
     switches.COINS_FINALIZE: run_coins_finalize,
     switches.COINS_FILTER_SCAN: run_coins_filter_scan,
     switches.COINS_MATCH: run_coins_match,
+    switches.COINS_GRADE: run_coins_grade,
     switches.COINS_PRICE: run_coins_price,
 }
 

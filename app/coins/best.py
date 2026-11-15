@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 BEST_CATEGORY_PREFIXES = ("11010", "11030", "11070")
 BEST_EXCLUDED_TITLE_KEYWORDS = ("银币", "纪念币")
 BEST_GRADE_THRESHOLD = 40
-BEST_DAILY_GRADE_LIMIT = 50
+BEST_DAILY_GRADE_LIMIT = 20
 
 _YEAR_RE = re.compile(r"(?<!\d)(1[5-9]\d{2}|20\d{2})(?!\d)")
 

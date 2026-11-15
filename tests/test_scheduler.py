@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from app import db, scheduler, switches
+from app import db, repository, scheduler, switches
 from app.config import (
     AppConfig,
     Config,
@@ -208,3 +208,106 @@ async def test_daily_coins_skips_when_all_switches_off(tmp_path):
 
     enabled = replace(cfg, coins=replace(cfg.coins, enabled=True))
     assert await scheduler.daily_coins(enabled) is None
+
+
+def _only_run_id() -> int:
+    with db.connect() as conn:
+        return int(conn.execute("SELECT id FROM coin_daily_runs").fetchone()["id"])
+
+
+def _stages(run_id: int) -> dict[str, str]:
+    return {
+        str(row["stage"]): str(row["status"])
+        for row in repository.list_coin_daily_run_stages(run_id)
+    }
+
+
+@pytest.mark.asyncio
+async def test_daily_coins_continues_after_stage_failure(tmp_path, monkeypatch):
+    """采集抛异常只记 failed 一条，回采 / 热度回填 / 查价仍各跑 1 次。"""
+    cfg = _config(tmp_path)
+    db.init_db(cfg.app.db_path)
+    switches.toggle(switches.COINS_FILTER_SCAN)  # 默认关，先打开才能覆盖四段
+    calls: list[str] = []
+
+    async def fake_run(config, **kwargs) -> None:
+        if kwargs.get("collect_only"):
+            calls.append("collect")
+            raise RuntimeError("网关调用失败：502")
+        calls.append("finalize" if kwargs.get("finalize_only") else "price")
+        return None
+
+    async def fake_scan(config) -> str:
+        calls.append("scan")
+        return "扫描完成"
+
+    monkeypatch.setattr(scheduler.coins_pipeline, "run", fake_run)
+    monkeypatch.setattr(scheduler.tasks, "run_coins_filter_scan", fake_scan)
+
+    enabled = replace(cfg, coins=replace(cfg.coins, enabled=True))
+    assert await scheduler.daily_coins(enabled) is None
+    assert calls == ["collect", "finalize", "scan", "price"]
+    assert _stages(_only_run_id()) == {
+        "collect": "failed",
+        "finalize": "ok",
+        "scan": "ok",
+        "price": "ok",
+    }
+    assert repository.latest_incomplete_coin_daily_run() is None
+
+
+@pytest.mark.asyncio
+async def test_daily_coins_cancelled_stage_reraises_and_stops(tmp_path, monkeypatch):
+    """取消：当前段记 cancelled、继续向上抛，后续段不跑，run 保持未完成。"""
+    cfg = _config(tmp_path)
+    db.init_db(cfg.app.db_path)
+    calls: list[str] = []
+
+    async def fake_run(config, **kwargs) -> None:
+        calls.append("collect")
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(scheduler.coins_pipeline, "run", fake_run)
+
+    enabled = replace(cfg, coins=replace(cfg.coins, enabled=True))
+    with pytest.raises(asyncio.CancelledError):
+        await scheduler.daily_coins(enabled)
+    assert calls == ["collect"]
+    run_id = _only_run_id()
+    assert _stages(run_id)["collect"] == "cancelled"
+    assert repository.latest_incomplete_coin_daily_run()["id"] == run_id
+
+
+@pytest.mark.asyncio
+async def test_resume_incomplete_only_runs_unfinished_stages(tmp_path, monkeypatch):
+    """重启续跑：只补 pending / cancelled / failed 段，已 ok 的段不再调用。"""
+    cfg = _config(tmp_path)
+    db.init_db(cfg.app.db_path)
+    switches.toggle(switches.COINS_FILTER_SCAN)
+    run_id = repository.start_coin_daily_run()
+    repository.finish_coin_daily_run_stage(run_id, "collect", "ok")
+    repository.finish_coin_daily_run_stage(run_id, "finalize", "failed", message="502")
+
+    calls: list[str] = []
+
+    async def fake_run(config, **kwargs) -> None:
+        calls.append(
+            "collect"
+            if kwargs.get("collect_only")
+            else "finalize" if kwargs.get("finalize_only") else "price"
+        )
+        return None
+
+    async def fake_scan(config) -> str:
+        calls.append("scan")
+        return "扫描完成"
+
+    monkeypatch.setattr(scheduler.coins_pipeline, "run", fake_run)
+    monkeypatch.setattr(scheduler.tasks, "run_coins_filter_scan", fake_scan)
+    monkeypatch.setattr(scheduler, "_past_daily_start", lambda config: True)
+
+    enabled = replace(cfg, coins=replace(cfg.coins, enabled=True))
+    await scheduler.resume_incomplete(enabled)
+    assert calls == ["finalize", "scan", "price"]
+    assert _stages(run_id)["collect"] == "ok"
+    assert _stages(run_id)["finalize"] == "ok"

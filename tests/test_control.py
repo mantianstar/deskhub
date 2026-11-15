@@ -57,6 +57,7 @@ def test_all_features_enabled_by_default(tmp_path):
         switches.COINS_FINALIZE,
         switches.COINS_FILTER_SCAN,
         switches.COINS_MATCH,
+        switches.COINS_GRADE,
         switches.COINS_PRICE,
     ]
     for feature in switches.FEATURES:
@@ -133,3 +134,28 @@ def test_run_ignores_switch_and_finishes_in_background(web, monkeypatch, clean_t
     assert state.status == "ok"
     assert state.message == "假装跑完了"
     assert "假装跑完了" in web.get("/control").text
+
+
+def test_grade_is_manual_only(web):
+    """「评级」只给立即运行：标「仅手动」，不渲染启停按钮。"""
+    text = web.get("/control").text
+    assert "评级" in text
+    assert f"/control/{switches.COINS_GRADE}/toggle" not in text
+    assert f"/control/{switches.COINS_GRADE}/run" in text
+
+
+def test_grade_run_does_not_stack(web, monkeypatch, clean_task_state):
+    """已在跑时连点「立即运行」仍 302，但不会叠加第二个任务。"""
+    called: list[str] = []
+
+    async def fake(config) -> str:
+        called.append("grade")
+        return "匹配 1 条，评级 1 条"
+
+    monkeypatch.setitem(tasks.RUNNERS, switches.COINS_GRADE, fake)
+    monkeypatch.setattr(tasks, "is_running", lambda key: True)
+
+    url = f"/control/{switches.COINS_GRADE}/run"
+    assert web.post(url, follow_redirects=False).status_code == 302
+    assert web.post(url, follow_redirects=False).status_code == 302
+    assert called == []

@@ -46,7 +46,7 @@
     {% for lot in item.matched_lots[:5] %}
     <a class="coin-rec-lot" href="/coins/session/{{ lot.session_id }}">
       <span class="coin-rec-lot-shop">{{ lot.shop_name or '未知店铺' }}</span>
-      <span class="coin-rec-lot-title">{{ lot.title }}</span>
+      <span class="coin-rec-lot-title">{% if lot.lot_no %}{{ lot.lot_no }} {% endif %}{{ lot.title }}</span>
       <span class="coin-rec-lot-price">¥{{ lot.current_price | price }}</span>
       <span class="coin-rec-lot-time">{% if lot.auction_at %}{{ lot.auction_at | local_time }}{% endif %}</span>
     </a>
@@ -70,7 +70,7 @@
   <div class="coin-rec-head">
     <div class="coin-rec-title">
       <h3>{{ lot.issuer or '—' }} · {{ lot.ruler or '—' }} · {{ lot.denomination or '—' }}</h3>
-      <p class="coin-rec-meta">{{ lot.title }}</p>
+      <p class="coin-rec-meta">{% if lot.lot_no %}{{ lot.lot_no }} {% endif %}{{ lot.title }}</p>
     </div>
     <span class="coin-reason coin-reason-1">好品推荐</span>
   </div>
@@ -81,7 +81,7 @@
   <div class="coin-rec-lots">
     <a class="coin-rec-lot" href="/coins/session/{{ lot.session_id }}">
       <span class="coin-rec-lot-shop">{{ lot.shop_name or '未知店铺' }}</span>
-      <span class="coin-rec-lot-title">{{ lot.title }}</span>
+      <span class="coin-rec-lot-title">{% if lot.lot_no %}{{ lot.lot_no }} {% endif %}{{ lot.title }}</span>
       <span class="coin-rec-lot-price">¥{{ lot.current_price | price }}</span>
       <span class="coin-rec-lot-time">{% if lot.auction_at %}{{ lot.auction_at | local_time }}{% endif %}</span>
     </a>
@@ -224,11 +224,11 @@
           <span class="coin-rail-shop">{{ session.shop_name or '未知店铺' }}{% if session.shop_followed %}<span class="coin-follow-star" title="已关注店铺">★</span>{% endif %}</span>
           <span class="coin-rail-title-text">{{ session.session_title }}</span>
           <span class="coin-rail-meta">
-            {{ session.lot_count }} 件 · 精准 {{ session.hit_count }} · 相似 {{ session.similar_count }}
+            {{ session.lot_count }} 件 · 精准 {{ session.hit_count }} · 好品 {{ session.best_count }} · 相似 {{ session.similar_count }}
             {% if session.auction_at %} · {{ session.auction_at | local_time }}{% endif %}
           </span>
         </span>
-        <span class="coin-rail-circle{% if session.hit_count %} is-precise{% else %} is-similar{% endif %}">{{ session.hit_count + session.similar_count }} 件</span>
+        <span class="coin-rail-circle{% if session.hit_count %} is-precise{% else %} is-similar{% endif %}">{{ session.hit_count + session.best_count + session.similar_count }} 件</span>
       </a>
       {% endfor %}
       {% if other_session_total %}

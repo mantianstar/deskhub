@@ -109,6 +109,7 @@ async def run(
     collect_only: bool = False,
     price_only: bool = False,
     finalize_only: bool = False,
+    grade_only: bool = False,
 ) -> CoinsRunResult:
     """跑一轮铜币管道。
 
@@ -116,11 +117,28 @@ async def run(
     - `collect_only=True`：只采集 + 匹配（不回采、不查价）
     - `finalize_only=True`：只回采已结束专场的终态并同步成交库（不采集、不查价）
     - `price_only=True`：只对已入库的推荐拍品查价（不采集、不回采）
+    - `grade_only=True`：只匹配今日外币拍品并评级（两步都跑）；匹配数放
+      `lots_recommended`、评级数放 `lots_priced`，不访问站点
     - `gapi`：注入替身（测试用）；不传就自己开一个（整个模块唯一的站点客户端）
     """
     started = repository.now_local()
     errors = 0
     sessions_seen = sessions_stored = lots_stored = 0
+
+    if grade_only:
+        matched = await asyncio.to_thread(coins_best.match_today_lots, config)
+        graded = await asyncio.to_thread(coins_best.grade_candidates, config)
+        logger.info("好品评级：匹配 %d 条，评级 %d 条", matched, graded)
+        return CoinsRunResult(
+            status=CoinFetchStatus.OK,
+            sessions_seen=0,
+            sessions_stored=0,
+            lots_stored=0,
+            lots_recommended=matched,
+            lots_priced=graded,
+            lots_pricing_skipped=0,
+            errors=0,
+        )
 
     owned = gapi is None
     api = gapi or MxiqiGapi(config)

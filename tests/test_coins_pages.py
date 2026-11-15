@@ -549,6 +549,135 @@ def test_session_page_has_lot_search_and_hide_rec_toggle(web):
     assert "data-search=" in page.text
 
 
+def _seed_best_lot(session_id: int) -> int:
+    """造一条已评级的 11070 好品，返回 lot_id。"""
+    # coin_lots.category_code 有外键，先把 11070 分类种进去
+    repository.upsert_coin_categories([("11070", "铜币", 0, None, 1, None, None, None)])
+    lot_id = repository.upsert_coin_lot(
+        CoinLot(
+            id=None,
+            session_id=session_id,
+            mxiqi_id=f"{session_id}:best-1",
+            lot_no="Lot.88",
+            title="英国1861年一便士铜币",
+            start_price=5.0,
+            current_price=0.0,
+            image_urls=["https://img.example/b1.png"],
+            tags={},
+            match_score=0.0,
+            is_recommended=True,
+            fetched_at=repository.now_local(),
+            category_code="11070",
+        )
+    )
+    series_id = repository.upsert_coin_series_cn(
+        CoinSeries(
+            id=None,
+            numista_id=670,
+            title="英国 1 便士",
+            url=None,
+            object_type="标准流通币",
+            issuer="英国",
+            min_year=1860,
+            max_year=1864,
+            ruler="维多利亚",
+            denomination="1 便士",
+            size_mm=31.0,
+            weight_g=9.4,
+            thickness_mm=None,
+            shape="圆形",
+            composition="Bronze",
+            edge=None,
+            obverse_desc=None,
+            obverse_lettering=None,
+            obverse_picture=None,
+            reverse_desc=None,
+            reverse_lettering=None,
+            reverse_picture=None,
+            catalog_no=None,
+            comments=None,
+            mints=[],
+            fetched_at=repository.now_local(),
+        )
+    )
+    repository.insert_pending_coin_lot_grades([(lot_id, series_id)])
+    repository.save_coin_lot_grade(
+        lot_id,
+        {"grade_interval": "XF40-45", "grade_score": 40, "color_grade": "红铜"},
+        model_raw="",
+        model="test",
+    )
+    return lot_id
+
+
+def test_collection_rail_counts_best_lots(web):
+    """今日拍场 rail 显示好品数，圆圈计入好品推荐数。"""
+    session_id = _seed_session()
+    _seed_best_lot(session_id)
+    web.post(
+        "/coins/collections/add",
+        data={
+            "collection_key": "uk-penny",
+            "name": "英国 1 便士",
+            "country": "英国",
+            "ruler": "",
+            "denomination": "1 便士",
+            "size_mm": "",
+        },
+    )
+
+    page = web.get("/coins/collection")
+
+    assert page.status_code == 200
+    assert "好品 1" in page.text
+    # 好品卡片名称前带 lot_no
+    assert "Lot.88 英国1861年一便士铜币" in page.text
+    tail = page.text.split("coin-rail-circle", 1)[1]
+    assert "1 件</span>" in tail[:200]
+
+
+def test_session_page_shows_best_section(web):
+    """拍场详情页在精准推荐后展示好品推荐卡片。"""
+    session_id = _seed_session()
+    _seed_best_lot(session_id)
+
+    page = web.get(f"/coins/session/{session_id}")
+
+    assert page.status_code == 200
+    assert 'id="coin-best-section"' in page.text
+    assert "好品推荐" in page.text
+    assert "英国1861年一便士铜币" in page.text
+
+
+def test_session_page_search_covers_all_pages(web):
+    """搜索池承载当前页以外的其他拍品，搜索覆盖整个专场。"""
+    session_id = _seed_session()
+    for index in range(1, 22):
+        repository.upsert_coin_lot(
+            CoinLot(
+                id=None,
+                session_id=session_id,
+                mxiqi_id=f"{session_id}:other-{index}",
+                lot_no=f"Lot.{100 + index}",
+                title=f"其他拍品第{index}号",
+                start_price=1.0,
+                current_price=0.0,
+                image_urls=[],
+                tags={},
+                match_score=0.0,
+                is_recommended=False,
+                fetched_at=repository.now_local(),
+            )
+        )
+
+    page = web.get(f"/coins/session/{session_id}")
+
+    assert 'id="coin-search-pool"' in page.text
+    pool = page.text.split('id="coin-search-pool"', 1)[1].split("</template>", 1)[0]
+    # 其他拍品共 22 条（含 _seed_session 的未命中拍品），第 1 页 20 条，池里剩 2 条
+    assert pool.count('class="coin-lot"') == 2
+
+
 def test_session_page_404_for_unknown(web):
     page = web.get("/coins/session/999999")
     assert page.status_code == 404

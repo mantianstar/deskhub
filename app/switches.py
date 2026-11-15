@@ -21,6 +21,7 @@ COINS_COLLECT = "coins_collect"
 COINS_FINALIZE = "coins_finalize"
 COINS_FILTER_SCAN = "coins_filter_scan"
 COINS_MATCH = "coins_match"
+COINS_GRADE = "coins_grade"
 COINS_PRICE = "coins_price"
 
 
@@ -70,6 +71,13 @@ FEATURES: tuple[Feature, ...] = (
         "铜币拍卖",
         "匹配",
         "按收藏画像重算拍品推荐位；纯本地重算，不访问站点、不花 token（仅手动运行）",
+        scheduled=False,
+    ),
+    Feature(
+        COINS_GRADE,
+        "铜币拍卖",
+        "评级",
+        "匹配今日外币拍品并做大模型评级（每日限 50 条）；两步都跑，不访问站点但花 token（仅手动运行）",
         scheduled=False,
     ),
     Feature(COINS_PRICE, "铜币拍卖", "查价", "查站内历史成交；每条间隔 15 秒，四件里最耗时"),

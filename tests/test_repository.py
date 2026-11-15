@@ -259,3 +259,43 @@ def test_purge_preview_counts_without_deleting(temp_db):
 
     assert repository.count_items_before(cutoff) == 1
     assert _count("items") == 1
+
+
+# ---------------------------------------------------------------- 铜币每日任务分段进度（v39）
+
+
+def test_coin_daily_run_lifecycle(temp_db):
+    """一条 run 同日复用，段落状态可覆盖；收尾后不再算「未完成」。"""
+    run_id = repository.start_coin_daily_run("2026-11-15")
+    assert repository.start_coin_daily_run("2026-11-15") == run_id
+
+    repository.finish_coin_daily_run_stage(
+        run_id, "collect", "ok", started_at="2026-11-15T07:00:00"
+    )
+    repository.finish_coin_daily_run_stage(run_id, "finalize", "failed", message="502")
+    repository.finish_coin_daily_run_stage(run_id, "finalize", "ok")
+    stages = {
+        str(row["stage"]): str(row["status"])
+        for row in repository.list_coin_daily_run_stages(run_id)
+    }
+    assert stages == {"collect": "ok", "finalize": "ok"}
+
+    incomplete = repository.latest_incomplete_coin_daily_run()
+    assert incomplete is not None and incomplete["id"] == run_id
+
+    repository.finish_coin_daily_run(run_id)
+    assert repository.latest_incomplete_coin_daily_run() is None
+
+
+def test_abandon_coin_daily_run(temp_db):
+    """跨日未完成的 run 标 abandoned 并写 finished_at，不再被续跑。"""
+    run_id = repository.start_coin_daily_run("2026-11-14")
+    repository.abandon_coin_daily_run(run_id)
+    assert repository.latest_incomplete_coin_daily_run() is None
+    with db.connect() as conn:
+        row = conn.execute(
+            "SELECT status, finished_at FROM coin_daily_runs WHERE id = ?", (run_id,)
+        ).fetchone()
+    assert row["status"] == "abandoned"
+    assert row["finished_at"] is not None
+

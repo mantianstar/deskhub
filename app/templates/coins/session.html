@@ -117,12 +117,39 @@
 </section>
 {% endmacro %}
 
+{% macro best_lot_card(lot) %}
+<section class="coin-lot" id="coin-best-{{ lot.id }}" data-search="{{ lot.lot_no or '' }} {{ lot.title or '' }}">
+  <h3 class="coin-lot-title">{% if lot.lot_no %}{{ lot.lot_no }} {% endif %}{{ lot.title }}</h3>
+  <p class="coin-lot-reason">好品推荐 · 评级 {{ lot.grade_interval or '—' }}{% if lot.color_grade %} · 铜色 {{ lot.color_grade }}{% endif %}</p>
+  <div class="coin-lot-prices">
+    <span>起价：<b>{{ lot.start_price | price }}</b> 元</span>
+    <span>当前价：<b>{{ lot.current_price | price }}</b> 元</span>
+  </div>
+  {% if lot.image_urls %}
+  <div class="coin-lot-imgs">
+    {% for url in lot.image_urls[:3] %}
+    <img class="coin-lot-img coin-zoom" src="{{ url }}" alt="" loading="lazy">
+    {% endfor %}
+  </div>
+  {% endif %}
+</section>
+{% endmacro %}
+
 <section id="coin-precise-section">
 <h2 class="coin-section-title">精准推荐 <span class="coin-section-count">{{ precise_lots | length }} 件</span></h2>
 {% for lot, reason in precise_lots %}
 {{ lot_card(lot, reason, loop.index) }}
 {% else %}
 <div class="empty">这个专场没有精准命中你画像的拍品。</div>
+{% endfor %}
+</section>
+
+<section id="coin-best-section">
+<h2 class="coin-section-title">好品推荐 <span class="coin-section-count">{{ best_lots | length }} 件</span></h2>
+{% for lot in best_lots %}
+{{ best_lot_card(lot) }}
+{% else %}
+<div class="empty">这个专场暂无好品推荐。</div>
 {% endfor %}
 </section>
 
@@ -165,12 +192,18 @@
 </section>
 {% endif %}
 
+<template id="coin-search-pool">
+{% for lot, index in search_lots %}
+{{ lot_card(lot, None, index) }}
+{% endfor %}
+</template>
+
 <script>
 (function () {
   const input = document.getElementById('coin-lot-search');
   const hideToggle = document.getElementById('coin-hide-rec');
   if (!input || !hideToggle) return;
-  const recSections = ['coin-precise-section', 'coin-similar-section']
+  const recSections = ['coin-precise-section', 'coin-best-section', 'coin-similar-section']
     .map(function (id) { return document.getElementById(id); })
     .filter(Boolean);
   const recFacts = ['coin-precise-fact', 'coin-similar-fact']
@@ -182,6 +215,10 @@
   const count = document.getElementById('coin-search-count');
   const empty = document.getElementById('coin-search-empty');
   const cards = Array.from(document.querySelectorAll('.coin-lot[data-search]'));
+  const pool = document.getElementById('coin-search-pool');
+  if (pool) {
+    cards.push.apply(cards, Array.from(pool.content.querySelectorAll('.coin-lot[data-search]')));
+  }
 
   function render() {
     const keyword = input.value.trim().toLowerCase();

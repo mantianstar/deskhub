@@ -321,6 +321,19 @@ def session_page(request: Request, session_id: int, page: str = "", lot: str = "
     paged_other, other_page, other_pages = _paginate(
         other_lots, page, COIN_OTHER_LOT_PAGE_SIZE
     )
+    best_lots = [
+        lot
+        for lot in coins_best.load_best_lots(config.get())
+        if lot.session_id == session_id
+    ]
+    page_start = (other_page - 1) * COIN_OTHER_LOT_PAGE_SIZE
+    page_end = page_start + len(paged_other)
+    # 当前页以外的其他拍品挂进模板池，前端搜索可覆盖整场
+    search_lots = [
+        (lot, index + 1)
+        for index, lot in enumerate(other_lots)
+        if not (page_start <= index < page_end)
+    ]
     other_pager = {
         "page": other_page,
         "total_pages": other_pages,
@@ -347,6 +360,8 @@ def session_page(request: Request, session_id: int, page: str = "", lot: str = "
             "other_lots": paged_other,
             "other_total": other_total,
             "other_pager": other_pager,
+            "best_lots": best_lots,
+            "search_lots": search_lots,
         },
     )
 
@@ -2227,6 +2242,7 @@ def collection_page(
                 "lot_count": 0,
                 "hit_count": 0,
                 "similar_count": 0,
+                "best_count": 0,
                 "shop_followed": lot.shop_followed,
             },
         )
@@ -2263,7 +2279,19 @@ def collection_page(
             similar_lot_ids.add(lot.id)
             session["similar_count"] += 1
 
-    # 右侧拍场：精准匹配 > 相似推荐 > 已关注店铺 > 普通拍场，同层按截拍时间。
+    # 好品与精准 / 相似口径独立，按拍品去重后直接计入场次
+    best_seen: dict[int, set[int]] = {}
+    for lot in best_items:
+        session = today_sessions.get(lot.session_id)
+        if session is None:
+            continue
+        seen = best_seen.setdefault(lot.session_id, set())
+        if lot.id in seen:
+            continue
+        seen.add(lot.id)
+        session["best_count"] += 1
+
+    # 右侧拍场：精准匹配 > 相似推荐 > 好品推荐 > 已关注店铺 > 普通拍场，同层按截拍时间。
     today_session_list = sorted(
         today_sessions.values(),
         key=lambda session: (
@@ -2272,10 +2300,13 @@ def collection_page(
             else 1
             if session["similar_count"]
             else 2
+            if session["best_count"]
+            else 3
             if session["shop_followed"]
-            else 3,
+            else 4,
             -session["hit_count"],
             -session["similar_count"],
+            -session["best_count"],
             session["auction_at"] or "",
             session["session_id"],
         ),
@@ -2284,7 +2315,7 @@ def collection_page(
     rail_sessions = [
         session
         for session in today_session_list
-        if session["hit_count"] or session["similar_count"] or session["shop_followed"]
+        if session["hit_count"] or session["similar_count"] or session["best_count"] or session["shop_followed"]
     ][:COIN_RAIL_SESSION_LIMIT]
     rail_ids = {session["session_id"] for session in rail_sessions}
     other_sessions = [

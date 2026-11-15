@@ -10,6 +10,20 @@
 
 ---
 
+## v1.160 — 2026-11-15 铜币每日任务分段容错 / 断点续跑 / 评级独立触发
+
+- 起因：07:00 `daily_coins` 四段共用一个 try，任一段失败或取消即停链，重启后也不补；好品评级埋在采集链路里，无法单独重跑。
+- 改了什么：新增 `coin_daily_runs` / `coin_daily_run_stages`（schema 39）及 `app/repository.py` 的建 run / 落段状态 / 查未完成 / 标 abandoned 函数；`app/scheduler.py` 改为四段列表 + 单段执行，失败只记 warning 继续、取消记 `cancelled` 后继续抛，同日已 `ok` 的段跳过，新增 `resume_incomplete` 供 lifespan 续跑（跨日未完成标 abandoned）；`app/coins/pipeline.py#run` 增加 `grade_only`；新增「评级」开关 `coins_grade`（仅手动）与 `tasks.run_coins_grade`（匹配 + 评级两步）。
+- 验证结论：`pytest -q` 全量 625 passed / 1 skipped；唯一失败 `tests/test_coins_collection.py::test_collection_page_filters_series_reason_and_hit` 是工作区里 v1.159 未提交改动的既有问题（HEAD 基线通过），与本次无关。
+- 影响：`app/models.py`、`app/db.py`、`app/migrations/__init__.py`、`app/repository.py`、`app/coins/pipeline.py`、`app/scheduler.py`、`app/main.py`、`app/switches.py`、`app/tasks.py`、`tests/test_repository.py`、`tests/test_scheduler.py`、`tests/test_control.py`、`tests/test_coins_fetch.py`、`tests/test_coins_analysis.py`、`tests/test_coins_categories.py`。
+
+## v1.159 — 2026-11-14 今日拍场好品计数 / 推荐卡 lot_no / 拍场好品区 / 整场搜索
+
+- 起因：今日拍场 rail 只统计精准与相似，好品推荐数没体现；三处推荐卡看不到拍号；拍场详情页缺好品推荐区；拍品搜索只覆盖当前分页。
+- 改了什么：`app/routers/coins.py#collection_page` 按专场聚合 `best_items` 为 `best_count`（与精准 / 相似独立相加），rail 过滤、排序、圆圈均计入好品；`CoinTodayLot` / `CoinBestLot` 增加 `lot_no` 并由 `app/repository.py` 两条查询带出，`collection.html` 三类推荐卡名称前显示拍号；`session_page` 增加本场 `best_lots` 与「好品推荐」区块（`session.html` 的 `best_lot_card`，置于精准推荐后）；其余分页拍品挂进 `<template id="coin-search-pool">`，前端搜索集合纳入整场拍品。
+- 验证结论：`pytest -q` 全量 627 passed / 1 skipped（新增 3 条用例覆盖好品计数、拍场好品区、整场搜索池）；rail meta 加了「好品 N」，同步更新 `tests/test_coins_collection.py` 里唯一一处旧口径断言。
+- 影响：`app/models.py`、`app/repository.py`、`app/routers/coins.py`、`app/templates/coins/collection.html`、`app/templates/coins/session.html`、`tests/test_coins_pages.py`、`tests/test_coins_collection.py`。
+
 ## v1.158 — 2026-11-13 `coin_grade_features.series_id` 统一存 Numista type id
 
 - 起因：CLI 入参与读取侧都按 Numista type id 查，写入却存 `coin_series(.cn).id`，导致 `coins-grade 578` 查不到刚落的特征（记录里是 14）。

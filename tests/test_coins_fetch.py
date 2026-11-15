@@ -19,6 +19,7 @@ import pytest
 
 from app import config as config_module
 from app import db, repository
+from app.coins import best as coins_best
 from app.coins import gapi
 from app.coins.gapi import LotInfo, SessionCard, SessionDetail, ShopInfo
 from app.coins.pipeline import run as coins_run
@@ -550,6 +551,30 @@ def _cfg(**price_overrides):
     return replace(
         cfg, coins=replace(cfg.coins, request_interval_seconds=0, price=price)
     )
+
+
+@pytest.mark.asyncio
+async def test_grade_only_matches_and_grades_without_collecting(temp_db, monkeypatch):
+    """只评级：匹配 + 评级两步都跑，不采集、不回采、不查价。"""
+    cfg = _cfg()
+    calls: list[str] = []
+
+    def fake_match(config) -> int:
+        calls.append("match")
+        return 7
+
+    def fake_grade(config) -> int:
+        calls.append("grade")
+        return 3
+
+    monkeypatch.setattr(coins_best, "match_today_lots", fake_match)
+    monkeypatch.setattr(coins_best, "grade_candidates", fake_grade)
+
+    result = await coins_run(cfg, grade_only=True)
+
+    assert calls == ["match", "grade"]
+    assert (result.lots_recommended, result.lots_priced) == (7, 3)
+    assert (result.sessions_seen, result.sessions_stored, result.lots_stored) == (0, 0, 0)
 
 
 def _sold():

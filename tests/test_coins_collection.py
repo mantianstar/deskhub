@@ -1543,7 +1543,7 @@ def test_collection_page_filters_series_reason_and_hit(web):
     assert 'coin-rail-circle is-precise">1 件<' in page.text
     # 圆圈在右侧居中，统计顺序为总件数 → 精准 → 相似
     assert page.text.index("coin-rail-body") < page.text.index("coin-rail-circle")
-    assert "1 件 · 精准 1 · 相似 0" in page.text
+    assert "1 件 · 精准 1 · 好品 0 · 相似 0" in page.text
     # 未匹配场次折叠为「其他专场」，查看按钮跳当日全部拍场
     assert "其他专场" in page.text
     assert "1 场 · 0 件命中" in page.text

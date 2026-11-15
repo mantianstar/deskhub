@@ -1445,7 +1445,7 @@ def _list_coin_lots_between(
     exclude_title_keywords: Sequence[str] | None = None,
 ) -> list[CoinTodayLot]:
     sql = """
-        SELECT l.id, l.session_id, l.title, l.start_price, l.current_price,
+        SELECT l.id, l.session_id, l.title, l.lot_no, l.start_price, l.current_price,
                l.image_urls, s.title AS session_title, s.auction_at,
                sh.name AS shop_name, COALESCE(sh.followed, 0) AS shop_followed
         FROM coin_lots l
@@ -1477,6 +1477,7 @@ def _list_coin_lots_between(
             session_title=row["session_title"],
             auction_at=row["auction_at"],
             shop_followed=bool(row["shop_followed"]),
+            lot_no=row["lot_no"],
         )
         for row in rows
     ]
@@ -1651,7 +1652,7 @@ def list_best_grade_lots(
     """今日 11070 类别、已评级且下界 >= `min_score` 的拍品，按分数降序。"""
     start, end = local_day_bounds(tz, now=now)
     sql = """
-        SELECT l.id, l.session_id, l.title, l.start_price, l.current_price,
+        SELECT l.id, l.session_id, l.title, l.lot_no, l.start_price, l.current_price,
                l.image_urls, s.title AS session_title, s.auction_at,
                sh.name AS shop_name, COALESCE(sh.followed, 0) AS shop_followed,
                g.grade_interval, g.grade_score, g.color_grade,
@@ -1696,6 +1697,7 @@ def list_best_grade_lots(
             grade_score=row["grade_score"],
             color_grade=row["color_grade"],
             shop_followed=bool(row["shop_followed"]),
+            lot_no=row["lot_no"],
         )
         for row in rows
     ]
@@ -3604,4 +3606,85 @@ def coin_filter_scan_progress() -> dict[str, tuple[int, str]]:
     return {
         row["category_code"]: (int(row["next_page"]), str(row["updated_at"])) for row in rows
     }
+
+
+# ---------------------------------------------------------------- 铜币每日任务的分段进度（v39）
+
+
+def start_coin_daily_run(run_date: str | None = None) -> int:
+    """取当日未完成的 run（没有就新建），返回 `run_id`：同一天只保留一条。"""
+    today = run_date or now_local()[:10]
+    with db.connect() as conn, conn:
+        row = conn.execute(
+            "SELECT id FROM coin_daily_runs WHERE run_date = ? AND status = 'running'"
+            " ORDER BY id DESC LIMIT 1",
+            (today,),
+        ).fetchone()
+        if row is not None:
+            return int(row["id"])
+        cursor = conn.execute(
+            "INSERT INTO coin_daily_runs (run_date, started_at, finished_at, status)"
+            " VALUES (?, ?, NULL, 'running')",
+            (today, now_local()),
+        )
+        return int(cursor.lastrowid)
+
+
+def finish_coin_daily_run(run_id: int, status: str = "ok") -> None:
+    """收尾一条 run（`ok` / `abandoned`）；`running` 保持不动。"""
+    with db.connect() as conn, conn:
+        conn.execute(
+            "UPDATE coin_daily_runs SET status = ?, finished_at = ? WHERE id = ?",
+            (status, now_local(), run_id),
+        )
+
+
+def finish_coin_daily_run_stage(
+    run_id: int,
+    stage: str,
+    status: str,
+    *,
+    message: str | None = None,
+    started_at: str | None = None,
+) -> None:
+    """写入一段的结局（`ok` / `failed` / `cancelled`）；同一段重跑就覆盖。"""
+    finished = now_local()
+    with db.connect() as conn, conn:
+        conn.execute(
+            """
+            INSERT INTO coin_daily_run_stages (run_id, stage, status, started_at, finished_at, message)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(run_id, stage) DO UPDATE SET status = excluded.status,
+                                                     started_at = excluded.started_at,
+                                                     finished_at = excluded.finished_at,
+                                                     message = excluded.message
+            """,
+            (run_id, stage, status, started_at or finished, finished, message),
+        )
+
+
+def list_coin_daily_run_stages(run_id: int) -> list[dict[str, object]]:
+    """一条 run 已落库的段状态（没有记录的段视为 pending）。"""
+    with db.connect() as conn:
+        rows = conn.execute(
+            "SELECT stage, status, started_at, finished_at, message"
+            " FROM coin_daily_run_stages WHERE run_id = ?",
+            (run_id,),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def latest_incomplete_coin_daily_run() -> dict[str, object] | None:
+    """最近一条未收尾的 run（`abandoned` 除外）；没有则 `None`。"""
+    with db.connect() as conn:
+        row = conn.execute(
+            "SELECT id, run_date FROM coin_daily_runs WHERE status = 'running'"
+            " ORDER BY run_date DESC, id DESC LIMIT 1"
+        ).fetchone()
+    return dict(row) if row is not None else None
+
+
+def abandon_coin_daily_run(run_id: int) -> None:
+    """跨日未完成的 run 标 `abandoned`：不再续跑。"""
+    finish_coin_daily_run(run_id, "abandoned")
 

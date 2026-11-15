@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-SCHEMA_VERSION = "38"
+SCHEMA_VERSION = "39"
 
 # 所有时间列存北京时间 ISO8601 字符串（`YYYY-MM-DDTHH:MM:SS`，无时区后缀；SQLite 无原生时间类型）
 DDL = """
@@ -284,6 +284,26 @@ CREATE TABLE IF NOT EXISTS coin_fetch_runs (
   error       TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_coin_runs ON coin_fetch_runs(kind, started_at DESC);
+
+-- 铜币每日任务的分段进度（v39）：一条 run = 一天一轮，四行 stage 记各段状态
+CREATE TABLE IF NOT EXISTS coin_daily_runs (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_date    TEXT    NOT NULL,   -- 业务日 YYYY-MM-DD
+  started_at  TEXT    NOT NULL,
+  finished_at TEXT,
+  status      TEXT    NOT NULL    -- running | ok | abandoned
+);
+CREATE INDEX IF NOT EXISTS idx_coin_daily_runs ON coin_daily_runs(run_date, id DESC);
+
+CREATE TABLE IF NOT EXISTS coin_daily_run_stages (
+  run_id      INTEGER NOT NULL,
+  stage       TEXT    NOT NULL,   -- collect | finalize | scan | price
+  status      TEXT    NOT NULL,   -- pending | ok | failed | cancelled
+  started_at  TEXT,
+  finished_at TEXT,
+  message     TEXT,
+  PRIMARY KEY (run_id, stage)
+);
 
 -- `home.filter` 全量扫描的断点：每个二级分类下一轮从第几页开始（v25）
 CREATE TABLE IF NOT EXISTS coin_filter_scan_progress (
@@ -1302,6 +1322,7 @@ class CoinTodayLot:
     session_title: str
     auction_at: str | None
     shop_followed: bool = False
+    lot_no: str | None = None
 
 
 @dataclass(frozen=True)
@@ -1324,6 +1345,7 @@ class CoinBestLot:
     grade_score: int | None
     color_grade: str | None
     shop_followed: bool = False
+    lot_no: str | None = None
 
 
 @dataclass

@@ -18,11 +18,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
+from datetime import datetime
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-from app import switches, tasks
+from app import repository, switches, tasks
 from app.coins import pipeline as coins_pipeline
 from app.coins.pipeline import CoinsRunResult
 from app.config import Config
@@ -34,6 +36,14 @@ DAILY_COINS_JOB_ID = "daily_coins"
 DAILY_HOUR = 7
 # 本机早上醒得晚，这一轮仍要执行而不是被丢弃（plan §11.2）
 MISFIRE_GRACE_SECONDS = 3600
+
+# 铜币每日四段：段名（落库）/ 开关 / 日志用中文名；顺序固定，仍串行
+_DAILY_COINS_STAGES: tuple[tuple[str, str, str], ...] = (
+    ("collect", switches.COINS_COLLECT, "采集"),
+    ("finalize", switches.COINS_FINALIZE, "回采"),
+    ("scan", switches.COINS_FILTER_SCAN, "热度回填"),
+    ("price", switches.COINS_PRICE, "查价"),
+)
 
 
 async def daily_pipeline(config: Config) -> None:
@@ -57,46 +67,93 @@ async def daily_pipeline(config: Config) -> None:
 async def daily_coins(config: Config) -> CoinsRunResult | None:
     """每天 07:00 的铜币任务；**与 `daily_pipeline` 互不传播失败**（spec §14.9）。
 
-    「采集 / 回采 / 热度回填 / 查价」四个开关各自决定跑不跑，顺序固定：
-    先采新场（否则回采没有新数据），再回采终态，再扫 home.filter 回填热度，最后查价。
-    逐段调用是为了让开关真正生效（合成一整轮会绕过回采开关）。
-
-    就地兜住异常：网关一时不可用 / 限速被挡是**正常情况**，
-    不该把一坨堆栈丢给 APScheduler —— 只记一条能看懂的错误，明天再试。
+    「采集 / 回采 / 热度回填 / 查价」四段串行、各自独立：某段失败只记一条 warning
+    并继续下一段；取消只把当前段记 `cancelled` 后继续向上传播。
+    进度落 `coin_daily_runs` / `coin_daily_run_stages`，同日第二轮触发时跳过已 `ok` 的段，
+    重启后由 `resume_incomplete` 只补未完成的段。
     """
     if not config.coins.enabled:
         return None
 
-    collect = switches.is_enabled(switches.COINS_COLLECT)
-    finalize = switches.is_enabled(switches.COINS_FINALIZE)
-    scan = switches.is_enabled(switches.COINS_FILTER_SCAN)
-    price = switches.is_enabled(switches.COINS_PRICE)
-    if not (collect or finalize or scan or price):
+    if not any(switches.is_enabled(key) for _, key, _ in _DAILY_COINS_STAGES):
         logger.info("铜币采集 / 回采 / 热度回填 / 查价都已停用，跳过 %s", DAILY_COINS_JOB_ID)
         return None
 
-    logger.info(
-        "定时任务触发：%s（采集=%s 回采=%s 热度回填=%s 查价=%s）",
-        DAILY_COINS_JOB_ID,
-        collect,
-        finalize,
-        scan,
-        price,
-    )
+    logger.info("定时任务触发：%s", DAILY_COINS_JOB_ID)
+    run_id = repository.start_coin_daily_run()
+    return await _run_daily_coins(config, run_id)
+
+
+async def _run_daily_coins(config: Config, run_id: int) -> CoinsRunResult | None:
+    """跑一条 run 里所有未完成且开关打开的段（四段串行）。"""
+    done = {str(row["stage"]): str(row["status"]) for row in repository.list_coin_daily_run_stages(run_id)}
+    result: CoinsRunResult | None = None
+    for stage, key, label in _DAILY_COINS_STAGES:
+        if not switches.is_enabled(key):
+            continue
+        if done.get(stage) == "ok":
+            logger.info("铜币定时任务·%s 已完成，跳过（run %d）", label, run_id)
+            continue
+        stage_result = await _run_stage(config, run_id, stage, label)
+        if stage_result is not None:
+            result = stage_result
+    repository.finish_coin_daily_run(run_id)
+    return result
+
+
+async def _run_stage(
+    config: Config, run_id: int, stage: str, label: str
+) -> CoinsRunResult | None:
+    """跑一段并落状态；失败只记日志，取消记 `cancelled` 后继续抛。"""
+    started = repository.now_local()
     try:
         result: CoinsRunResult | None = None
-        if collect:
+        if stage == "collect":
             result = await coins_pipeline.run(config, collect_only=True)
-        if finalize:
+        elif stage == "finalize":
             result = await coins_pipeline.run(config, finalize_only=True)
-        if scan:
-            logger.info("铜币·热度回填：%s", await tasks.run_coins_filter_scan(config))
-        if price:
+        elif stage == "scan":
+            logger.info("铜币·%s：%s", label, await tasks.run_coins_filter_scan(config))
+        else:
             result = await coins_pipeline.run(config, price_only=True)
-        return result
-    except Exception as exc:  # noqa: BLE001 - 任何失败都只记日志，不影响知识日报
-        logger.warning("铜币定时任务失败，等下一次触发重试：%s", exc)
+    except asyncio.CancelledError:
+        repository.finish_coin_daily_run_stage(
+            run_id, stage, "cancelled", message="任务被取消", started_at=started
+        )
+        logger.warning("铜币定时任务·%s 被取消（run %d）", label, run_id)
+        raise
+    except Exception as exc:  # noqa: BLE001 - 一段失败不影响其余段
+        repository.finish_coin_daily_run_stage(
+            run_id, stage, "failed", message=str(exc), started_at=started
+        )
+        logger.warning("铜币定时任务·%s 失败，继续下一段：%s", label, exc)
         return None
+    repository.finish_coin_daily_run_stage(run_id, stage, "ok", started_at=started)
+    return result
+
+
+def _past_daily_start(config: Config) -> bool:
+    """是否已过 07:00（本地时区）：没到点不续跑。"""
+    return datetime.now(config.app.tz).hour >= DAILY_HOUR
+
+
+async def resume_incomplete(config: Config) -> None:
+    """进程重启后补跑当日未完成的段（任务卡待确认 1-A）；跨日未完成一律 abandoned。"""
+    if not config.coins.enabled:
+        return
+    run = repository.latest_incomplete_coin_daily_run()
+    if run is None:
+        return
+    run_id = int(run["id"])  # type: ignore[arg-type]
+    today = repository.now_local()[:10]
+    if str(run["run_date"]) != today:
+        repository.abandon_coin_daily_run(run_id)
+        logger.info("铜币定时任务：%s 的 run %d 跨日未完成，标 abandoned", run["run_date"], run_id)
+        return
+    if not _past_daily_start(config):
+        return
+    logger.info("铜币定时任务：续跑当日 run %d 的未完成段落", run_id)
+    await _run_daily_coins(config, run_id)
 
 
 def _cron_job(
