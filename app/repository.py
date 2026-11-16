@@ -3674,6 +3674,18 @@ def list_coin_daily_run_stages(run_id: int) -> list[dict[str, object]]:
     return [dict(row) for row in rows]
 
 
+def coin_daily_done_stages(run_date: str) -> set[str]:
+    """当日任意一条 run 里已 `ok` 的段（跨 run 聚合：同日新一轮 / 重启都不重复调接口）。"""
+    with db.connect() as conn:
+        rows = conn.execute(
+            "SELECT DISTINCT s.stage FROM coin_daily_run_stages AS s"
+            " JOIN coin_daily_runs AS r ON r.id = s.run_id"
+            " WHERE r.run_date = ? AND s.status = 'ok'",
+            (run_date,),
+        ).fetchall()
+    return {str(row["stage"]) for row in rows}
+
+
 def latest_incomplete_coin_daily_run() -> dict[str, object] | None:
     """最近一条未收尾的 run（`abandoned` 除外）；没有则 `None`。"""
     with db.connect() as conn:

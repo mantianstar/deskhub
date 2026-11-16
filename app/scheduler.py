@@ -80,19 +80,23 @@ async def daily_coins(config: Config) -> CoinsRunResult | None:
         return None
 
     logger.info("定时任务触发：%s", DAILY_COINS_JOB_ID)
-    run_id = repository.start_coin_daily_run()
-    return await _run_daily_coins(config, run_id)
+    today = repository.now_local()[:10]
+    run_id = repository.start_coin_daily_run(today)
+    return await _run_daily_coins(config, run_id, today)
 
 
-async def _run_daily_coins(config: Config, run_id: int) -> CoinsRunResult | None:
-    """跑一条 run 里所有未完成且开关打开的段（四段串行）。"""
-    done = {str(row["stage"]): str(row["status"]) for row in repository.list_coin_daily_run_stages(run_id)}
+async def _run_daily_coins(config: Config, run_id: int, run_date: str) -> CoinsRunResult | None:
+    """跑一条 run 里所有未完成且开关打开的段（四段串行）。
+
+    `ok` 判定按 `run_date` 跨 run 聚合：同日已成功过的段即使换了 run 也不再调接口。
+    """
+    done = repository.coin_daily_done_stages(run_date)
     result: CoinsRunResult | None = None
     for stage, key, label in _DAILY_COINS_STAGES:
         if not switches.is_enabled(key):
             continue
-        if done.get(stage) == "ok":
-            logger.info("铜币定时任务·%s 已完成，跳过（run %d）", label, run_id)
+        if stage in done:
+            logger.info("铜币定时任务·%s 今日已完成，跳过（run %d）", label, run_id)
             continue
         stage_result = await _run_stage(config, run_id, stage, label)
         if stage_result is not None:
@@ -109,7 +113,7 @@ async def _run_stage(
     try:
         result: CoinsRunResult | None = None
         if stage == "collect":
-            result = await coins_pipeline.run(config, collect_only=True)
+            result = await coins_pipeline.run(config, collect_only=True, skip_grade=True)
         elif stage == "finalize":
             result = await coins_pipeline.run(config, finalize_only=True)
         elif stage == "scan":
@@ -153,7 +157,7 @@ async def resume_incomplete(config: Config) -> None:
     if not _past_daily_start(config):
         return
     logger.info("铜币定时任务：续跑当日 run %d 的未完成段落", run_id)
-    await _run_daily_coins(config, run_id)
+    await _run_daily_coins(config, run_id, today)
 
 
 def _cron_job(

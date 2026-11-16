@@ -64,6 +64,9 @@ RATE_LIMIT_STATUS = 429
 RETRY_ATTEMPTS = 2
 RETRY_BACKOFF_SECONDS = 2.0
 
+# 整机睡眠唤醒后网络栈往往还没就绪，首个请求会直接抛传输层异常：留一次退避重试，别整场丢掉
+TRANSPORT_RETRY_DELAY_SECONDS = 5.0
+
 _WEEKDAYS = "一二三四五六日"
 
 
@@ -559,6 +562,12 @@ def sold_from_payload(data: dict, tz) -> list[SoldSample]:
 # ---------------------------------------------------------------- HTTP 客户端
 
 
+def _error_detail(exc: BaseException) -> str:
+    """异常文本可能为空（httpx 超时就是这样），补上类型名，日志才看得出是超时还是连接失败。"""
+    text = str(exc)
+    return f"{type(exc).__name__}: {text}" if text else type(exc).__name__
+
+
 class MxiqiGapi:
     """gapi 的薄封装；用法：`async with MxiqiGapi(cfg) as api:`。"""
 
@@ -584,6 +593,7 @@ class MxiqiGapi:
         if self._client is None:  # pragma: no cover - 只有误用才走到
             raise GapiError("客户端尚未通过 async with 打开")
         body: dict = {}
+        transport_retried = False
         for attempt in range(RETRY_ATTEMPTS + 1):
             try:
                 response = await self._client.post(f"/{action}", json=payload)
@@ -594,8 +604,21 @@ class MxiqiGapi:
                     continue
                 response.raise_for_status()
                 body = response.json()
+            except httpx.TransportError as exc:
+                # 睡眠唤醒后网络未就绪、连接被重置都走这里：退避一次再试，仍失败才记失败
+                if transport_retried or attempt >= RETRY_ATTEMPTS:
+                    raise GapiError(f"{action} 调用失败：{_error_detail(exc)}") from exc
+                transport_retried = True
+                logger.warning(
+                    "网络异常（%s），%.0f 秒后重试一次：%s",
+                    type(exc).__name__,
+                    TRANSPORT_RETRY_DELAY_SECONDS,
+                    action,
+                )
+                await asyncio.sleep(TRANSPORT_RETRY_DELAY_SECONDS)
+                continue
             except (httpx.HTTPError, ValueError) as exc:
-                raise GapiError(f"{action} 调用失败：{exc}") from exc
+                raise GapiError(f"{action} 调用失败：{_error_detail(exc)}") from exc
             break
 
         error = body.get("error") or {}

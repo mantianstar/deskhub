@@ -311,3 +311,58 @@ async def test_resume_incomplete_only_runs_unfinished_stages(tmp_path, monkeypat
     assert calls == ["finalize", "scan", "price"]
     assert _stages(run_id)["collect"] == "ok"
     assert _stages(run_id)["finalize"] == "ok"
+
+
+@pytest.mark.asyncio
+async def test_daily_coins_skips_collect_when_today_already_ok(tmp_path, monkeypatch):
+    """同日 collect 已在上一轮 ok：换了一条新 run 也要真实跳过，不再调接口。"""
+    cfg = _config(tmp_path)
+    db.init_db(cfg.app.db_path)
+    switches.toggle(switches.COINS_FILTER_SCAN)
+    previous = repository.start_coin_daily_run()
+    repository.finish_coin_daily_run_stage(previous, "collect", "ok")
+    repository.finish_coin_daily_run(previous)
+
+    calls: list[str] = []
+
+    async def fake_run(config, **kwargs) -> None:
+        calls.append(
+            "collect"
+            if kwargs.get("collect_only")
+            else "finalize" if kwargs.get("finalize_only") else "price"
+        )
+        return None
+
+    async def fake_scan(config) -> str:
+        calls.append("scan")
+        return "扫描完成"
+
+    monkeypatch.setattr(scheduler.coins_pipeline, "run", fake_run)
+    monkeypatch.setattr(scheduler.tasks, "run_coins_filter_scan", fake_scan)
+
+    enabled = replace(cfg, coins=replace(cfg.coins, enabled=True))
+    await scheduler.daily_coins(enabled)
+    assert calls == ["finalize", "scan", "price"]
+
+
+@pytest.mark.asyncio
+async def test_daily_coins_collect_stage_skips_grade(tmp_path, monkeypatch):
+    """定时采集段不跑好品评级（评级改由 `coins_grade` 独立触发）。"""
+    cfg = _config(tmp_path)
+    db.init_db(cfg.app.db_path)
+    seen: list[dict[str, object]] = []
+
+    async def fake_run(config, **kwargs) -> None:
+        if kwargs.get("collect_only"):
+            seen.append(dict(kwargs))
+        return None
+
+    async def fake_scan(config) -> str:
+        return "扫描完成"
+
+    monkeypatch.setattr(scheduler.coins_pipeline, "run", fake_run)
+    monkeypatch.setattr(scheduler.tasks, "run_coins_filter_scan", fake_scan)
+
+    enabled = replace(cfg, coins=replace(cfg.coins, enabled=True))
+    await scheduler.daily_coins(enabled)
+    assert seen and seen[0].get("skip_grade") is True

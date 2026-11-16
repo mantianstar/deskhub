@@ -453,6 +453,43 @@ async def test_call_gives_up_after_retries(monkeypatch):
     assert len(calls) == gapi.RETRY_ATTEMPTS + 1
 
 
+@pytest.mark.asyncio
+async def test_call_retries_once_after_transport_error(monkeypatch):
+    """传输层异常（睡眠唤醒后网络未就绪）退避后重试一次，第二次成功即返回。"""
+    monkeypatch.setattr(gapi, "TRANSPORT_RETRY_DELAY_SECONDS", 0)
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
+        if len(calls) == 1:
+            raise httpx.ConnectError("network is unreachable", request=request)
+        return httpx.Response(200, json={"data": {"ok": 1}})
+
+    async with gapi.MxiqiGapi(config_module.load(), client=_mock_client(handler)) as api:
+        data = await api._call("miniprogram.test", {})
+
+    assert data == {"ok": 1}
+    assert len(calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_call_gives_up_after_transport_retry(monkeypatch):
+    """传输层异常只重试一次；仍失败抛 GapiError，且文本带异常类型名（超时字符串本身是空的）。"""
+    monkeypatch.setattr(gapi, "TRANSPORT_RETRY_DELAY_SECONDS", 0)
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
+        raise httpx.ReadTimeout("", request=request)
+
+    async with gapi.MxiqiGapi(config_module.load(), client=_mock_client(handler)) as api:
+        with pytest.raises(gapi.GapiError) as info:
+            await api._call("miniprogram.test", {})
+
+    assert len(calls) == 2
+    assert "ReadTimeout" in str(info.value)
+
+
 # ---------------------------------------------------------------- 管道（对象替身）
 # 这一段验的是「编排 + 落库」：一个替身同时扮采集与查价，都不碰网络。
 

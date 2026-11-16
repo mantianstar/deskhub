@@ -110,6 +110,7 @@ async def run(
     price_only: bool = False,
     finalize_only: bool = False,
     grade_only: bool = False,
+    skip_grade: bool = False,
 ) -> CoinsRunResult:
     """跑一轮铜币管道。
 
@@ -119,6 +120,7 @@ async def run(
     - `price_only=True`：只对已入库的推荐拍品查价（不采集、不回采）
     - `grade_only=True`：只匹配今日外币拍品并评级（两步都跑）；匹配数放
       `lots_recommended`、评级数放 `lots_priced`，不访问站点
+    - `skip_grade=True`：不跑好品评级（定时采集段用，评级改由 `coins_grade` 独立触发）
     - `gapi`：注入替身（测试用）；不传就自己开一个（整个模块唯一的站点客户端）
     """
     started = repository.now_local()
@@ -216,12 +218,13 @@ async def run(
         )
 
         # 好品推荐：匹配今日外币拍品 + 大模型评级（每日限 50 条），失败不影响主流程
-        try:
-            best_matched = await asyncio.to_thread(coins_best.match_today_lots, config)
-            best_graded = await asyncio.to_thread(coins_best.grade_candidates, config)
-            logger.info("好品推荐：匹配 %d 条，评级 %d 条", best_matched, best_graded)
-        except Exception:
-            logger.warning("好品推荐：本轮跳过", exc_info=True)
+        if not skip_grade:
+            try:
+                best_matched = await asyncio.to_thread(coins_best.match_today_lots, config)
+                best_graded = await asyncio.to_thread(coins_best.grade_candidates, config)
+                logger.info("好品推荐：匹配 %d 条，评级 %d 条", best_matched, best_graded)
+            except Exception:
+                logger.warning("好品推荐：本轮跳过", exc_info=True)
 
         if collect_only:
             sales = repository.count_coin_sales_by_source()
