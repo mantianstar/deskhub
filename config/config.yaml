@@ -31,6 +31,16 @@ llm:
 
 # 铜币品相评级（两阶段）。vision 段提特征，reason 段给评级；与上面的 llm 段互不影响。
 coin_grade:
+  prescreen:                                   # 初筛：GLM 视觉模型（多模态），判断是否进入特征提取
+    # base_url: https://open.bigmodel.cn/api/paas/v4
+    # # model: glm-4.6v-flash
+    # model: glm-4.1v-thinking-flashx
+    # api_key_env: DESKHUB_GLM_API_KEY          # 只写环境变量名，不写密钥本身
+    base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+    model: qwen3-vl-plus
+    api_key_env: DESKHUB_QW_VL_API_KEY        # 只写环境变量名，不写密钥本身
+    timeout_seconds: 180
+    temperature: 0.1
   vision:                                     # 第一阶段：视觉特征提取（多模态）
     base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
     model: qwen3-vl-plus

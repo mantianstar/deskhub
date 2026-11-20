@@ -1146,11 +1146,10 @@ def test_ingest_task_list_filters(temp_db):
 async def test_ingest_run_queue_all_nodes_done(temp_db, monkeypatch):
     calls: list[str] = []
 
-    async def fake_series(config, *, series_id):
-        calls.append(f"series:{series_id}")
-
     async def fake_issues(config, *, series_id):
-        calls.append(f"years:{series_id}")
+        calls.append(f"detail:{series_id}")
+        db_id = repository.upsert_coin_series(_series(series_id))
+        repository.upsert_coin_issue(_issue(9001, db_id, year=1860))
 
     async def fake_values(config, *, series_id):
         calls.append(f"values:{series_id}")
@@ -1159,7 +1158,6 @@ async def test_ingest_run_queue_all_nodes_done(temp_db, monkeypatch):
         calls.append(f"images:{numista_id}")
         return {}  # 采完仍无图 → 节点仍记 done（与用户确认的口径）
 
-    monkeypatch.setattr(ingest.coins_numista, "collect_series_by_id", fake_series)
     monkeypatch.setattr(ingest.coins_numista, "collect_issues", fake_issues)
     monkeypatch.setattr(ingest.coins_numista_web, "collect_issue_values", fake_values)
     monkeypatch.setattr(ingest.coins_numista_web, "download_series_images", fake_images)
@@ -1172,12 +1170,13 @@ async def test_ingest_run_queue_all_nodes_done(temp_db, monkeypatch):
     assert task.status == "done"
     assert (task.node_series, task.node_years, task.node_values, task.node_images) == (
         "done",
-        "done",
+        "skip",
         "done",
         "done",
     )
     assert task.started_at is not None and task.finished_at is not None
-    assert calls == ["series:670", "years:670", "values:670", "images:670"]
+    # 详情只取一次（系列节点），年份节点看到已有单版就跳过
+    assert calls == ["detail:670", "values:670", "images:670"]
 
 
 @pytest.mark.asyncio
@@ -1192,7 +1191,6 @@ async def test_ingest_run_task_skips_existing_data(temp_db, monkeypatch):
         raise AssertionError("已有数据不应再采")
 
     for module, name in (
-        (ingest.coins_numista, "collect_series_by_id"),
         (ingest.coins_numista, "collect_issues"),
         (ingest.coins_numista_web, "collect_issue_values"),
         (ingest.coins_numista_web, "download_series_images"),
@@ -1216,13 +1214,9 @@ async def test_ingest_run_task_skips_existing_data(temp_db, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_ingest_run_task_marks_node_failed(temp_db, monkeypatch):
-    async def fake_series(config, *, series_id):
-        return None
-
     async def fail(config, *, series_id):
         raise RuntimeError("类型页打不开")
 
-    monkeypatch.setattr(ingest.coins_numista, "collect_series_by_id", fake_series)
     monkeypatch.setattr(ingest.coins_numista, "collect_issues", fail)
 
     repository.enqueue_coin_ingest_task(670)
@@ -1230,7 +1224,7 @@ async def test_ingest_run_task_marks_node_failed(temp_db, monkeypatch):
     assert await ingest.run_task(object(), task) == "failed"
 
     task = repository.list_coin_ingest_tasks()[0]
-    assert (task.node_series, task.node_years) == ("done", "failed")
+    assert (task.node_series, task.node_years) == ("failed", "wait")
     assert (task.node_values, task.node_images) == ("wait", "wait")  # 后续节点不再跑
     assert task.status == "failed"
     assert task.error == "类型页打不开"

@@ -1,10 +1,10 @@
-"""铜币「好品推荐」：匹配今日外币拍品 → 大模型评级 → 供给页面。
+"""铜币「好品推荐」：匹配今日外币拍品 → 视觉模型提特征定级 → 供给页面。
 
 流程（每日调度随 `pipeline.run` 一起跑）：
 1. `match_today_lots`：币库（中文）生成「国家 + 年份 + 面值」条件，匹配今日 11010 / 11030 / 11070
    类、非评级盒且标题不含银币 / 纪念币的拍品，命中结果写入 `coin_lot_grades`（pending，幂等）。
-2. `grade_candidates`：两阶段（视觉模型提特征并落库 → 推理模型评级）并落库；每天最多评 50 条（失败不占额度）。
-3. `load_best_lots`：页面取今日已评级、分数下界 >= 40 的拍品。
+2. `grade_candidates`：视觉模型提特征，原文写 `model_raw`，第 4 步倾向写 `net_grade`；每天最多评 20 条（失败不占额度）。
+3. `load_best_lots`：页面取今日等级为 AU / MS 的拍品。
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ import re
 from app import repository
 from app.coin_grade import prompt as grade_prompt
 from app.coin_grade.mimo_client import MimoClient, MimoError
-from app.coin_grade.parse import parse_grade
+from app.coin_grade.parse import parse_tendency
 from app.coins.recommend import denomination_variants
 from app.config import Config
 from app.models import CoinBestLot
@@ -24,7 +24,6 @@ logger = logging.getLogger(__name__)
 
 BEST_CATEGORY_PREFIXES = ("11010", "11030", "11070")
 BEST_EXCLUDED_TITLE_KEYWORDS = ("银币", "纪念币")
-BEST_GRADE_THRESHOLD = 40
 BEST_DAILY_GRADE_LIMIT = 20
 
 _YEAR_RE = re.compile(r"(?<!\d)(1[5-9]\d{2}|20\d{2})(?!\d)")
@@ -106,21 +105,68 @@ def match_today_lots(config: Config) -> int:
     return repository.insert_pending_coin_lot_grades(rows)
 
 
+def _grade_one(vision: MimoClient, model: str, row: dict[str, object]) -> bool:
+    """单条拍品：第一阶段特征提取（有缓存就复用）+ 写回评级结果。失败就地标记并返回 False。"""
+    lot_id = int(row["lot_id"])
+    images = list(row["image_urls"] or [])
+    if not images:
+        repository.mark_coin_lot_grade_failed(lot_id, "拍品没有图片")
+        return False
+    series_id = row["series_id"]
+    series = (
+        repository.get_coin_series_by_id(int(series_id))
+        if series_id is not None
+        else None
+    )
+    if series is None:
+        repository.mark_coin_lot_grade_failed(lot_id, "系列不存在")
+        return False
+
+    features = str(row.get("features_text") or "").strip()
+    if not features:
+        try:
+            features = vision.grade(
+                system=grade_prompt.VISION_SYSTEM_PROMPT,
+                user=grade_prompt.build_vision_user_prompt(series),
+                images=images[:2],
+            )
+        except MimoError as exc:
+            repository.mark_coin_lot_grade_failed(lot_id, str(exc))
+            logger.warning("好品推荐：拍品 %s 特征提取失败：%s", lot_id, exc)
+            return False
+        except Exception as exc:  # 单条失败不影响后续
+            repository.mark_coin_lot_grade_failed(
+                lot_id, f"{type(exc).__name__}: {exc}"
+            )
+            logger.warning("好品推荐：拍品 %s 特征提取异常：%s", lot_id, exc)
+            return False
+        repository.save_coin_grade_features(
+            lot_id=lot_id,
+            series_id=series.numista_id,
+            features_text=features,
+            model=model,
+            obverse=images[0],
+            reverse=images[1] if len(images) > 1 else "",
+        )
+
+    repository.save_coin_lot_grade(
+        lot_id,
+        {"net_grade": parse_tendency(features)},
+        model_raw=features,
+        model=model,
+    )
+    return True
+
+
 def grade_candidates(
     config: Config,
     *,
     vision_client: MimoClient | None = None,
-    reason_client: MimoClient | None = None,
 ) -> int:
-    """两阶段：视觉模型提特征（落库）→ 推理模型给评级；返回本轮成功评级条数。"""
-    section = config.coin_grade
-    vision_cfg = section.vision
-    reason_cfg = section.reason
+    """视觉模型提特征：原文写 `model_raw`，第 4 步倾向（CR/AU/MS）写 `net_grade`。"""
+    vision_cfg = config.coin_grade.vision
     if not vision_cfg.base_url or not vision_cfg.model or not vision_cfg.api_key:
         logger.info("好品推荐：coin_grade.vision 未配置，跳过评级")
-        return 0
-    if not reason_cfg.base_url or not reason_cfg.model or not reason_cfg.api_key:
-        logger.info("好品推荐：coin_grade.reason 未配置，跳过评级")
         return 0
 
     remaining = BEST_DAILY_GRADE_LIMIT - repository.count_coin_graded_on_day()
@@ -138,88 +184,62 @@ def grade_candidates(
         temperature=vision_cfg.temperature,
         timeout_seconds=vision_cfg.timeout_seconds,
     )
-    owned_reason = reason_client is None
-    reason = reason_client or MimoClient(
-        base_url=reason_cfg.base_url,
-        api_key=reason_cfg.api_key,
-        model=reason_cfg.model,
-        temperature=reason_cfg.temperature,
-        timeout_seconds=reason_cfg.timeout_seconds,
-    )
     graded = 0
     try:
         for row in pending:
-            lot_id = int(row["lot_id"])
-            images = list(row["image_urls"] or [])
-            if not images:
-                repository.mark_coin_lot_grade_failed(lot_id, "拍品没有图片")
-                continue
-            series_id = row["series_id"]
-            series = (
-                repository.get_coin_series_by_id(int(series_id))
-                if series_id is not None
-                else None
-            )
-            if series is None:
-                repository.mark_coin_lot_grade_failed(lot_id, "系列不存在")
-                continue
-
-            features = str(row.get("features_text") or "").strip()
-            if not features:
-                try:
-                    features = vision.grade(
-                        system=grade_prompt.VISION_SYSTEM_PROMPT,
-                        user=grade_prompt.build_vision_user_prompt(series),
-                        images=images[:2],
-                    )
-                except MimoError as exc:
-                    repository.mark_coin_lot_grade_failed(lot_id, str(exc))
-                    logger.warning("好品推荐：拍品 %s 特征提取失败：%s", lot_id, exc)
-                    continue
-                except Exception as exc:  # 单条失败不影响后续
-                    repository.mark_coin_lot_grade_failed(
-                        lot_id, f"{type(exc).__name__}: {exc}"
-                    )
-                    logger.warning("好品推荐：拍品 %s 特征提取异常：%s", lot_id, exc)
-                    continue
-                repository.save_coin_grade_features(
-                    lot_id=lot_id,
-                    series_id=series.numista_id,
-                    features_text=features,
-                    model=vision_cfg.model,
-                    obverse=images[0],
-                    reverse=images[1] if len(images) > 1 else "",
-                )
-
-            try:
-                raw = reason.complete(
-                    system=grade_prompt.GRADER_SYSTEM_PROMPT,
-                    user=grade_prompt.build_grader_user_prompt(series, features),
-                )
-            except MimoError as exc:
-                repository.mark_coin_lot_grade_failed(lot_id, str(exc))
-                logger.warning("好品推荐：拍品 %s 评级失败：%s", lot_id, exc)
-                continue
-            except Exception as exc:  # 单条失败不影响后续
-                repository.mark_coin_lot_grade_failed(lot_id, f"{type(exc).__name__}: {exc}")
-                logger.warning("好品推荐：拍品 %s 评级异常：%s", lot_id, exc)
-                continue
-            repository.save_coin_lot_grade(
-                lot_id, parse_grade(raw), model_raw=raw, model=reason_cfg.model
-            )
-            graded += 1
+            if _grade_one(vision, vision_cfg.model, row):
+                graded += 1
     finally:
         if owned_vision:
             vision.close()
-        if owned_reason:
-            reason.close()
     return graded
 
 
 def load_best_lots(config: Config, *, series: str = "") -> list[CoinBestLot]:
-    """今日分数 >= XF40 的好品；`series` 为收藏系列 key 时只取该系列成员。"""
+    """今日等级为 AU / MS 的好品；`series` 为收藏系列 key 时只取该系列成员。"""
     return repository.list_best_grade_lots(
         config.app.tz,
-        min_score=BEST_GRADE_THRESHOLD,
         collection_key=series or None,
     )
+
+
+# 页面单条评级的在跑集合：返回前拦掉同一拍品的重复提交（单进程内有效）
+_grading_lots: set[int] = set()
+
+
+def is_grading_lot(lot_id: int) -> bool:
+    return lot_id in _grading_lots
+
+
+def start_grading_lot(lot_id: int) -> bool:
+    """占位成功返回 True；已在评级中返回 False。"""
+    if lot_id in _grading_lots:
+        return False
+    _grading_lots.add(lot_id)
+    return True
+
+
+def finish_grading_lot(lot_id: int) -> None:
+    _grading_lots.discard(lot_id)
+
+
+def grade_lot(config: Config, lot_id: int) -> bool:
+    """页面单条评级：只跑第一阶段特征提取（视觉模型），不受每日批量额度限制。"""
+    vision_cfg = config.coin_grade.vision
+    if not vision_cfg.base_url or not vision_cfg.model or not vision_cfg.api_key:
+        logger.info("好品推荐：coin_grade.vision 未配置，跳过评级")
+        return False
+    row = repository.get_grade_lot(lot_id)
+    if row is None:
+        return False
+    vision = MimoClient(
+        base_url=vision_cfg.base_url,
+        api_key=vision_cfg.api_key,
+        model=vision_cfg.model,
+        temperature=vision_cfg.temperature,
+        timeout_seconds=vision_cfg.timeout_seconds,
+    )
+    try:
+        return _grade_one(vision, vision_cfg.model, row)
+    finally:
+        vision.close()

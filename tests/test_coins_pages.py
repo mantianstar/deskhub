@@ -603,7 +603,7 @@ def _seed_best_lot(session_id: int) -> int:
     repository.insert_pending_coin_lot_grades([(lot_id, series_id)])
     repository.save_coin_lot_grade(
         lot_id,
-        {"grade_interval": "XF40-45", "grade_score": 40, "color_grade": "红铜"},
+        {"net_grade": "AU", "grade_interval": "XF40-45", "grade_score": 40, "color_grade": "红铜"},
         model_raw="",
         model="test",
     )
@@ -998,6 +998,21 @@ def test_watchlist_page_lists_filters_and_removes(web):
     assert "还没有观察的系列" in web.get("/coins/watchlist").text
 
 
+def test_lot_grades_page_tab_after_watchlist_and_empty_state(web):
+    """铜币品相管理：我的资产子导航挂在观察系列之后；无记录时给空态；系列号只收数字。"""
+    grades_page = web.get("/coins/grades").text
+    assert 'href="/coins/lot-grades"' in grades_page
+    assert grades_page.index('href="/coins/watchlist"') < grades_page.index(
+        'href="/coins/lot-grades"'
+    )
+    page = web.get("/coins/lot-grades")
+    assert page.status_code == 200
+    assert "铜币品相管理" in page.text
+    assert "当前筛选条件下没有评级记录" in page.text
+    bad = web.get("/coins/lot-grades", params={"series_no": "abc"})
+    assert "系列号只填数字" in bad.text
+
+
 def test_watchlist_upgrade_joins_existing_collection(web):
     """观察系列升级：选「加入已有收藏系列」→ 成为该系列成员，并从观察系列移除。"""
     _seed_series()
@@ -1095,6 +1110,43 @@ def test_series_page_shows_gregorian_year_when_different(web):
 
     assert "6(1873)" in page.text
     assert "1895(1895)" not in page.text
+
+
+def test_series_page_shows_nd_with_gregorian_year_when_year_missing(web):
+    """年份为空时显 `ND(gregorian_year)`；公历也为空时回落系列 min_year。"""
+    series = _make_series(2318, "2 分", "青铜")
+    series_id = repository.upsert_coin_series_cn(series)
+    now = repository.now_local()
+    for numista_id, (year, gregorian_year) in enumerate(((None, 1622), (None, None)), start=1):
+        repository.upsert_coin_issue_cn(
+            CoinIssue(
+                id=None,
+                numista_id=numista_id,
+                series_id=series_id,
+                year=year,
+                gregorian_year=gregorian_year,
+                mint=None,
+                mint_mark=None,
+                variety=None,
+                comment=None,
+                mintage=None,
+                size_mm=None,
+                weight_g=None,
+                thickness_mm=None,
+                edge=None,
+                is_proof=None,
+                is_essai=None,
+                picture=None,
+                catalog_no=None,
+                fetched_at=now,
+            )
+        )
+
+    page = web.get("/coins/series/2318")
+
+    assert "ND(1622)" in page.text
+    assert "ND(1902)" in page.text
+    assert "ND(None)" not in page.text
 
 
 def test_series_page_image_click_zoom_markup(web, tmp_path, monkeypatch):
@@ -1427,6 +1479,29 @@ def test_page_explore_preview_returns_backend_url(web):
     url = resp.json()["url"]
     assert "e=royaume-uni" in url and "st=1" in url
     assert "a=1900-2026" in url and "m=5" in url and "t=30" in url
+
+
+def test_page_explore_gregorian_year_field_and_url(web, monkeypatch):
+    """公历年份：页面有独立输入框，提交后拼进 Numista 列表页的 `dg` 参数。"""
+    monkeypatch.setattr(coins_explore_page, "issuer_options", lambda: ["英国"])
+
+    page = web.get("/coins/ingest").text
+    assert 'id="page-gregorian-year"' in page and "公历年份" in page
+
+    resp = web.post(
+        "/coins/ingest/page-explore",
+        data={
+            "issuer": "英国",
+            "st": "1",
+            "year": "10",
+            "gregorian_year": "1870",
+            "start": "0",
+        },
+    )
+
+    assert resp.status_code == 200
+    url = resp.json()["url"]
+    assert "a=10" in url and "dg=1870" in url
 
 
 def test_page_explore_start_conflict_when_running(web, monkeypatch):

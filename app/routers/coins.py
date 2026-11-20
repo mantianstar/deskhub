@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import statistics
@@ -27,6 +28,7 @@ from app.coins import grades as coins_grades
 from app.coins import ingest as coins_ingest
 from app.coins import numista as coins_numista
 from app.coins import numista_web as coins_numista_web
+from app.coins import prescreen as coins_prescreen
 from app.coins import recommend as coins_recommend
 from app.coins import search as coins_search
 from app.coins import shops as coins_shops
@@ -721,6 +723,122 @@ def watchlist_page(
     )
 
 
+@router.get("/coins/lot-grades")
+def lot_grades_page(
+    request: Request,
+    auction_date: str = "",
+    country: str = "",
+    denomination: str = "",
+    series_no: str = "",
+    title: str = "",
+    prescreen: str = "",
+    page: str = "",
+) -> Response:
+    """铜币品相管理：好品推荐评级结果（全部状态）+ 六条件查询。"""
+    series_value = series_no.strip()
+    series_id = int(series_value) if series_value.isdigit() else None
+    series_error = "系列号只填数字" if series_value and series_id is None else ""
+    rows = (
+        []
+        if series_error
+        else repository.list_coin_lot_grades(
+            auction_date=auction_date,
+            country=country,
+            denomination=denomination,
+            series_no=series_id,
+            title=title.strip(),
+            prescreen=prescreen,
+        )
+    )
+    paged_rows, page_no, total_pages = _paginate(rows, page, COIN_LOT_GRADES_PAGE_SIZE)
+    filter_params = {
+        "auction_date": auction_date,
+        "country": country,
+        "denomination": denomination,
+        "series_no": series_value,
+        "title": title,
+        "prescreen": prescreen,
+    }
+    return templates.TemplateResponse(
+        request,
+        "coins/lot_grades.html",
+        {
+            "request": request,
+            "page_title": "铜币品相管理",
+            "auction_date": auction_date,
+            "country": country,
+            "denomination": denomination,
+            "series_no": series_value,
+            "title": title,
+            "prescreen": prescreen,
+            "series_error": series_error,
+            "countries": repository.list_coin_series_countries(cn=True),
+            "denominations": repository.list_coin_series_denominations(cn=True),
+            "grade_lots": paged_rows,
+            "grade_total": len(rows),
+            "grading_ids": {
+                row.lot_id for row in rows if coins_best.is_grading_lot(row.lot_id)
+            },
+            "page": page_no,
+            "total_pages": total_pages,
+            "prev_url": (
+                _query_url("/coins/lot-grades", {**filter_params, "page": page_no - 1})
+                if page_no > 1
+                else ""
+            ),
+            "next_url": (
+                _query_url("/coins/lot-grades", {**filter_params, "page": page_no + 1})
+                if page_no < total_pages
+                else ""
+            ),
+            "current_url": (
+                f"/coins/lot-grades?{request.url.query}"
+                if request.url.query
+                else "/coins/lot-grades"
+            ),
+        },
+    )
+
+
+_LOT_GRADE_TASKS: set[asyncio.Task[None]] = set()
+
+
+@router.post("/coins/lot-grades/{lot_id}/grade")
+async def grade_lot_page(lot_id: int, next: str = Form("")) -> Response:
+    """单条评级：异步跑第一阶段特征提取；返回前拦掉同一拍品的重复提交。"""
+    target = _return_target(next, "/coins/lot-grades")
+    if not coins_best.start_grading_lot(lot_id):
+        return _redirect(target)
+    cfg = config.get()
+
+    async def _grade() -> None:
+        try:
+            await asyncio.to_thread(coins_best.grade_lot, cfg, lot_id)
+        finally:
+            coins_best.finish_grading_lot(lot_id)
+
+    task = asyncio.create_task(_grade())
+    _LOT_GRADE_TASKS.add(task)
+    task.add_done_callback(_LOT_GRADE_TASKS.discard)
+    return _redirect(target)
+
+
+@router.post("/coins/lot-grades/prescreen")
+async def prescreen_lots(
+    grade_ids: list[int] = Form(...), next: str = Form("")
+) -> Response:
+    """多选初筛：对选中的 coin_lot_grades.id 逐条异步跑初筛。"""
+    target = _return_target(next, "/coins/lot-grades")
+    cfg = config.get()
+    for grade_id in grade_ids:
+        task = asyncio.create_task(
+            asyncio.to_thread(coins_prescreen.prescreen_one, cfg, grade_id)
+        )
+        _LOT_GRADE_TASKS.add(task)
+        task.add_done_callback(_LOT_GRADE_TASKS.discard)
+    return _redirect(target)
+
+
 @router.post("/coins/watchlist/remove")
 def remove_watch_item(
     numista_id: int = Form(...), next: str = Form("")
@@ -1339,6 +1457,7 @@ async def page_explore_start(
     issuer: str = Form(""),
     st: str = Form("1"),
     year: str = Form(""),
+    gregorian_year: str = Form(""),
     material: str = Form(""),
     size: str = Form(""),
     start: str = Form("1"),
@@ -1346,7 +1465,12 @@ async def page_explore_start(
     """批量方式(页面)：校验条件、后端重算链接；`start=1` 时起后台抓取任务。"""
     try:
         filters = coins_explore_page.normalize_filters(
-            issuer=issuer, st=st, year=year, material=material, size=size
+            issuer=issuer,
+            st=st,
+            year=year,
+            gregorian_year=gregorian_year,
+            material=material,
+            size=size,
         )
     except ValueError as exc:
         return JSONResponse({"error": str(exc)}, status_code=400)
@@ -1668,6 +1792,7 @@ COIN_SESSION_PAGE_SIZE = 12
 COIN_SEARCH_PAGE_SIZE = 20
 COIN_OTHER_LOT_PAGE_SIZE = 20
 COIN_WATCHLIST_PAGE_SIZE = 20
+COIN_LOT_GRADES_PAGE_SIZE = 20
 
 
 def _page_number(raw: str, total_pages: int) -> int:

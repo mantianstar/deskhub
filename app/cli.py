@@ -23,6 +23,7 @@ from app.coins import coinmap as coins_coinmap
 from app.coins import explore as coins_explore
 from app.coins import filter_scan as coins_filter_scan
 from app.coins import pipeline as coins_pipeline
+from app.coins import prescreen as coins_prescreen
 from app.coins import profile as coins_profile
 from app.coins import translate_llm as coins_translate_llm
 from app.coins.gapi import GapiError
@@ -511,8 +512,30 @@ def cmd_coins_best_grade(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_coins_prescreen(args: argparse.Namespace) -> int:
+    """初筛：按 coin_lot_grades.id 调 GLM 判断是否进入特征提取。"""
+    cfg = _bootstrap()
+    stage = cfg.coin_grade.prescreen
+    if not stage.base_url or not stage.model:
+        raise config.ConfigError(
+            "config.yaml 的 coin_grade.prescreen 段未配置 base_url / model，填好后重试"
+        )
+    if not stage.api_key:
+        raise config.ConfigError(
+            f"未设置环境变量 {stage.api_key_env}，无法调用 coin_grade.prescreen；写进 .env 后重试"
+        )
+    if not coins_prescreen.prescreen_one(cfg, args.grade_id):
+        print(
+            f"初筛记录 {args.grade_id} 未完成（见日志 / coin_lot_grades.error）",
+            file=sys.stderr,
+        )
+        return 1
+    print(f"初筛完成：coin_lot_grades.id={args.grade_id}")
+    return 0
+
+
 def cmd_coins_best_list(args: argparse.Namespace) -> int:
-    """打印今日已评级好品（按分数降序），`--series` 只取该收藏系列成员。"""
+    """打印今日好品（AU / MS，按等级降序），`--series` 只取该收藏系列成员。"""
     cfg = _bootstrap()
     lots = coins_best.load_best_lots(cfg, series=args.series)
     if not lots:
@@ -523,15 +546,11 @@ def cmd_coins_best_list(args: argparse.Namespace) -> int:
             str(lot.id),
             " ".join(part for part in (lot.issuer, lot.ruler) if part) or "-",
             lot.denomination or "-",
-            (
-                f"{lot.grade_score}（{lot.grade_interval}）"
-                if lot.grade_interval
-                else str(lot.grade_score)
-            ),
+            lot.net_grade or "-",
         )
         for lot in lots
     ]
-    _print_table(("lot_id", "系列", "面值", "分数"), rows)
+    _print_table(("lot_id", "系列", "面值", "等级"), rows)
     return 0
 
 
@@ -861,6 +880,14 @@ def _build_parser() -> argparse.ArgumentParser:
         "feature_id", type=int, help="特征记录 id（coin_grade_features.id）"
     )
     coins_grade.set_defaults(func=cmd_coins_grade)
+
+    coins_prescreen_parser = subparsers.add_parser(
+        "coins-prescreen", help="铜币初筛：按 coin_lot_grades.id 调 GLM 判定是否进入特征提取"
+    )
+    coins_prescreen_parser.add_argument(
+        "grade_id", type=int, help="评级记录 id（coin_lot_grades.id）"
+    )
+    coins_prescreen_parser.set_defaults(func=cmd_coins_prescreen)
 
     coins_best_match = subparsers.add_parser(
         "coins-best-match", help="匹配今日外币拍品并入队待评级（好品推荐第一步）"

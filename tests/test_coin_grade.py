@@ -141,3 +141,21 @@ def test_is_best_requires_xf_prefix_and_lower_bound() -> None:
     assert parse.is_best(39, "XF39") is False
     assert parse.is_best(40, "VF40") is False
     assert parse.is_best(None, "XF40-45") is False
+
+
+def test_parse_prescreen_reads_pass_to_next() -> None:
+    from app.coins import prescreen
+
+    assert prescreen.parse_prescreen('{"pass_to_next": true}') is True
+    assert prescreen.parse_prescreen('```json\n{"pass_to_next": false}\n```') is False
+    assert prescreen.parse_prescreen('{"pass_to_next": "true"}') is None
+    assert prescreen.parse_prescreen("不是 JSON") is None
+    assert prescreen.parse_prescreen(None) is None
+
+
+def test_cli_parses_prescreen_args() -> None:
+    parser = cli._build_parser()
+    args = parser.parse_args(["coins-prescreen", "42"])
+
+    assert args.grade_id == 42
+    assert args.func is cli.cmd_coins_prescreen

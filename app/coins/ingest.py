@@ -64,18 +64,22 @@ def series_task_name(series: CoinSeries | dict[str, object] | None) -> str:
 
 
 async def _node_series(config: Config, task: CoinIngestTask) -> str:
-    """系列详情：本地已有就跳过；探索时暂存在候选池的直接用，不再调接口。"""
+    """系列详情：本地已有就跳过；探索时暂存在候选池的直接用，不再调接口。
+
+    都没有时走 `collect_issues`（一次 `GET /types/{id}` 同时写系列 + 全部单版），
+    后续「年份」节点因此直接跳过 —— 避免两个节点各取一次详情。
+    """
     if repository.get_coin_series(task.series_numista_id) is not None:
         return "skip"
     if repository.get_coin_explore_candidate(task.series_numista_id) is not None:
         coins_explore.adopt_candidate(task.series_numista_id, mark_adopted=False)
         return "done"
-    await coins_numista.collect_series_by_id(config, series_id=task.series_numista_id)
+    await coins_numista.collect_issues(config, series_id=task.series_numista_id)
     return "done"
 
 
 async def _node_years(config: Config, task: CoinIngestTask) -> str:
-    """年份（单版）：该系列已有单版就跳过。"""
+    """年份（单版）：该系列已有单版就跳过（ID 直采时由「系列」节点一并写入）。"""
     series = repository.get_coin_series(task.series_numista_id)
     if series is not None and repository.list_coin_issues(series.id):
         return "skip"

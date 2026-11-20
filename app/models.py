@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-SCHEMA_VERSION = "39"
+SCHEMA_VERSION = "41"
 
 # 所有时间列存北京时间 ISO8601 字符串（`YYYY-MM-DDTHH:MM:SS`，无时区后缀；SQLite 无原生时间类型）
 DDL = """
@@ -197,7 +197,7 @@ CREATE TABLE IF NOT EXISTS coin_lot_grades (
   id             INTEGER PRIMARY KEY AUTOINCREMENT,
   lot_id         INTEGER NOT NULL UNIQUE REFERENCES coin_lots(id) ON DELETE CASCADE,
   series_id      INTEGER,
-  status         TEXT    NOT NULL DEFAULT 'pending',  -- pending / graded / failed
+  status         TEXT    NOT NULL DEFAULT 'pending',  -- pending / prescreen / graded / failed
   grade_interval TEXT,     -- 模型原文区间，如 XF40-45
   grade_score    INTEGER,  -- 区间下界（40）
   grade_cn       TEXT,     -- 中文品相（极美）
@@ -212,7 +212,10 @@ CREATE TABLE IF NOT EXISTS coin_lot_grades (
   model          TEXT,
   created_at     TEXT    NOT NULL,
   graded_at      TEXT,
-  error          TEXT
+  error          TEXT,
+  prescreen_raw  TEXT,     -- 初筛模型返回原文（JSON）
+  prescreen_pass INTEGER,  -- 1 通过 / 0 未通过（取返回里的 pass_to_next）
+  prescreen_at   TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_coin_lot_grades_status ON coin_lot_grades(status, created_at);
 CREATE INDEX IF NOT EXISTS idx_coin_lot_grades_score ON coin_lot_grades(grade_score);
@@ -1343,9 +1346,35 @@ class CoinBestLot:
     denomination: str | None
     grade_interval: str | None
     grade_score: int | None
+    net_grade: str | None
     color_grade: str | None
     shop_followed: bool = False
     lot_no: str | None = None
+
+
+@dataclass
+class CoinGradeLot:
+    """铜币品相管理页的一条评级记录：拍品 + 拍场 + 系列（中）字段。"""
+
+    grade_id: int
+    lot_id: int
+    session_id: int
+    title: str
+    lot_no: str | None
+    image_urls: list[str]
+    session_title: str
+    auction_at: str | None
+    year: str | None
+    series_no: int | None
+    issuer: str | None
+    denomination: str | None
+    grade_interval: str | None
+    grade_cn: str | None
+    net_grade: str | None
+    color_grade: str | None
+    status: str
+    prescreen_pass: int | None
+    model_raw: str | None
 
 
 @dataclass

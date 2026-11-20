@@ -54,6 +54,7 @@ def test_all_features_enabled_by_default(tmp_path):
         switches.KNOWLEDGE_FETCH,
         switches.KNOWLEDGE_SCORE,
         switches.COINS_COLLECT,
+        switches.COINS_BEST_MATCH,
         switches.COINS_FINALIZE,
         switches.COINS_FILTER_SCAN,
         switches.COINS_MATCH,

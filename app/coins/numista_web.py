@@ -219,7 +219,7 @@ def _plain_text(fragment: str) -> str:
 def catalogue_url(filters: ExploreCatalogueConfig, *, page: int = 1) -> str:
     """按筛选配置拼目录列表页 URL。
 
-    参数名就是站点筛选表单里的 `name`：`e` 发行方、`st` 类别、`a` 年份、`m` 材质、
+    参数名就是站点筛选表单里的 `name`：`e` 发行方、`st` 类别、`a` 年份、`dg` 公历年份、`m` 材质、
     `t` 直径、`p` 页码、`q` 每页条数；其余保持空串，与站点生成的 URL 一致。
     """
     params = {
@@ -235,7 +235,7 @@ def catalogue_url(filters: ExploreCatalogueConfig, *, page: int = 1) -> str:
         "v": "",
         "cu": "",
         "a": filters.year,
-        "dg": "",
+        "dg": filters.gregorian_year,
         "i": "",
         "b": "",
         "m": filters.composition_id if filters.composition_id is not None else "",

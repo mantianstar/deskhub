@@ -9,6 +9,8 @@ import re
 
 # 评级前缀，长的在前，避免 VF 被 F 抢先匹配
 _GRADE_RE = re.compile(r"(VG|XF|VF|AU|MS|G|F)\s*(\d{1,2})")
+# 第一阶段第 4 步倾向，只认「偏向 X」，避免把清单标题里的 CR/AU/MS 误当结论
+_TENDENCY_RE = re.compile(r"偏向\s*[:：]?\s*\**\s*(CR|AU|MS|混杂)")
 _BEST_PREFIXES = {"XF", "AU", "MS"}
 
 _LABELS = {
@@ -19,6 +21,26 @@ _LABELS = {
     "盲区": "blind_spots",
     "置信度": "confidence",
 }
+
+
+def parse_tendency(text: str | None) -> str | None:
+    """第一阶段第 4 步「CR/AU/MS 辅助清单结果：偏向 X」→ CR / AU / MS；混杂或缺失返回 None。"""
+    if not text:
+        return None
+    for raw_line in text.splitlines():
+        if "辅助清单结果" not in raw_line:
+            continue
+        line = raw_line.strip().lstrip("-*#").strip()
+        _, sep, value = line.partition("：")
+        if not sep:
+            _, sep, value = line.partition(":")
+        if not sep:
+            continue
+        match = _TENDENCY_RE.search(value)
+        if match is None:
+            return None
+        return None if match.group(1) == "混杂" else match.group(1)
+    return None
 
 
 def _grade_prefix(interval: str | None) -> str | None:

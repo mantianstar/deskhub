@@ -197,12 +197,13 @@ async def test_daily_coins_swallows_errors(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_daily_coins_skips_when_all_switches_off(tmp_path):
-    """采集、回采、查价都关掉时，铜币那一轮直接跳过，不碰网关（plan §19）。"""
+    """采集、好品配对、回采、查价都关掉时，铜币那一轮直接跳过，不碰网关（plan §19）。"""
     from dataclasses import replace
 
     cfg = _config(tmp_path)
     db.init_db(cfg.app.db_path)
     switches.toggle(switches.COINS_COLLECT)
+    switches.toggle(switches.COINS_BEST_MATCH)
     switches.toggle(switches.COINS_FINALIZE)
     switches.toggle(switches.COINS_PRICE)
 
@@ -241,14 +242,20 @@ async def test_daily_coins_continues_after_stage_failure(tmp_path, monkeypatch):
         calls.append("scan")
         return "扫描完成"
 
+    async def fake_best(config) -> str:
+        calls.append("best_match")
+        return "新入队 0 条"
+
     monkeypatch.setattr(scheduler.coins_pipeline, "run", fake_run)
     monkeypatch.setattr(scheduler.tasks, "run_coins_filter_scan", fake_scan)
+    monkeypatch.setattr(scheduler.tasks, "run_coins_best_match", fake_best)
 
     enabled = replace(cfg, coins=replace(cfg.coins, enabled=True))
     assert await scheduler.daily_coins(enabled) is None
-    assert calls == ["collect", "finalize", "scan", "price"]
+    assert calls == ["collect", "best_match", "finalize", "scan", "price"]
     assert _stages(_only_run_id()) == {
         "collect": "failed",
+        "best_match": "ok",
         "finalize": "ok",
         "scan": "ok",
         "price": "ok",
@@ -302,13 +309,18 @@ async def test_resume_incomplete_only_runs_unfinished_stages(tmp_path, monkeypat
         calls.append("scan")
         return "扫描完成"
 
+    async def fake_best(config) -> str:
+        calls.append("best_match")
+        return "新入队 0 条"
+
     monkeypatch.setattr(scheduler.coins_pipeline, "run", fake_run)
     monkeypatch.setattr(scheduler.tasks, "run_coins_filter_scan", fake_scan)
+    monkeypatch.setattr(scheduler.tasks, "run_coins_best_match", fake_best)
     monkeypatch.setattr(scheduler, "_past_daily_start", lambda config: True)
 
     enabled = replace(cfg, coins=replace(cfg.coins, enabled=True))
     await scheduler.resume_incomplete(enabled)
-    assert calls == ["finalize", "scan", "price"]
+    assert calls == ["best_match", "finalize", "scan", "price"]
     assert _stages(run_id)["collect"] == "ok"
     assert _stages(run_id)["finalize"] == "ok"
 
@@ -337,12 +349,17 @@ async def test_daily_coins_skips_collect_when_today_already_ok(tmp_path, monkeyp
         calls.append("scan")
         return "扫描完成"
 
+    async def fake_best(config) -> str:
+        calls.append("best_match")
+        return "新入队 0 条"
+
     monkeypatch.setattr(scheduler.coins_pipeline, "run", fake_run)
     monkeypatch.setattr(scheduler.tasks, "run_coins_filter_scan", fake_scan)
+    monkeypatch.setattr(scheduler.tasks, "run_coins_best_match", fake_best)
 
     enabled = replace(cfg, coins=replace(cfg.coins, enabled=True))
     await scheduler.daily_coins(enabled)
-    assert calls == ["finalize", "scan", "price"]
+    assert calls == ["best_match", "finalize", "scan", "price"]
 
 
 @pytest.mark.asyncio

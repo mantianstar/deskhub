@@ -1,0 +1,180 @@
+{% extends "base.html" %}
+{% block title %}{{ page_title }} · deskhub{% endblock %}
+{% block content_class %} content-wide{% endblock %}
+{% from "coins/_macros.html" import coin_nav, coin_head, coin_collection_tabs with context %}
+
+{% block content %}
+{{ coin_nav("lot_grades") }}
+{{ coin_head("铜币品相管理", "共 " ~ grade_total ~ " 条评级记录 · 全部状态 · 数据来自好品推荐匹配结果") }}
+{{ coin_collection_tabs("lot_grades") }}
+
+<form class="search-form" method="get" action="/coins/lot-grades">
+  <div class="search-row search-row-labeled">
+    <label class="field">拍卖日期
+      <input class="search-input" type="date" name="auction_date" value="{{ auction_date }}">
+    </label>
+    <label class="field">国家
+      <input class="search-input" type="text" name="country" value="{{ country }}"
+             list="lot-grade-country-options" placeholder="可输入，如 英国" autocomplete="off">
+      <datalist id="lot-grade-country-options">
+        {% for name in countries %}<option value="{{ name }}"></option>{% endfor %}
+      </datalist>
+    </label>
+    <label class="field">面值
+      <input class="search-input" type="text" name="denomination" value="{{ denomination }}"
+             list="lot-grade-denomination-options" placeholder="可输入，如 1便士" autocomplete="off">
+      <datalist id="lot-grade-denomination-options">
+        {% for name in denominations %}<option value="{{ name }}"></option>{% endfor %}
+      </datalist>
+    </label>
+    <label class="field">系列号
+      <input class="search-input" type="text" name="series_no" value="{{ series_no }}" placeholder="如 670（可空）">
+    </label>
+    <label class="field">标题
+      <input class="search-input" type="text" name="title" value="{{ title }}" placeholder="模糊匹配（可空）">
+    </label>
+    <label class="field">是否通过初筛
+      <select class="search-input" name="prescreen">
+        <option value="" {{ 'selected' if not prescreen }}>全部</option>
+        <option value="pending" {{ 'selected' if prescreen == 'pending' }}>待初筛</option>
+        <option value="1" {{ 'selected' if prescreen == '1' }}>通过</option>
+        <option value="0" {{ 'selected' if prescreen == '0' }}>不通过</option>
+      </select>
+    </label>
+    <button class="btn btn-primary" type="submit">查询</button>
+  </div>
+  {% if series_error %}<p class="form-error">{{ series_error }}</p>{% endif %}
+</form>
+
+{% if grade_lots %}
+<form class="coin-select-bar" id="prescreen-bar" method="post" action="/coins/lot-grades/prescreen">
+  <input type="hidden" name="next" value="{{ current_url }}">
+  <label class="coin-check"><input type="checkbox" id="prescreen-all"> 全选</label>
+  <span class="coin-select-count" id="prescreen-count">已选 0 / {{ grade_lots|length }}</span>
+  <button class="btn btn-primary" type="submit" id="prescreen-picked" disabled>初筛选中 (0)</button>
+</form>
+{% endif %}
+
+{% if grade_lots %}
+<div class="coin-list-single">
+  {% for lot in grade_lots %}
+  <article class="coin-series-card coin-grade-card">
+    <label class="coin-check"><input class="prescreen-pick" type="checkbox"
+      name="grade_ids" value="{{ lot.grade_id }}" form="prescreen-bar"></label>
+    <div class="coin-series-main">
+      <div class="coin-series-imgs">
+        {% for url in lot.image_urls[:2] %}
+        <img class="coin-series-img coin-zoom" src="{{ url }}" alt="拍品图" loading="lazy">
+        {% endfor %}
+        {% if not lot.image_urls %}
+        <span class="coin-series-img coin-series-img-empty">无图</span>
+        {% endif %}
+      </div>
+      <div class="coin-series-meta">
+        <h3 class="coin-series-title">
+          <a href="/coins/session/{{ lot.session_id }}#coin-lot-{{ lot.lot_id }}">{{ lot.title }}</a>
+        </h3>
+        <p class="coin-series-line">{{ lot.session_title or '-' }} · {{ (lot.auction_at or '-')[:10] }}</p>
+        <p class="coin-series-line">
+          {{ lot.series_no or '-' }} · {{ lot.issuer or '-' }} · {{ lot.year or '-' }} · {{ lot.denomination or '-' }} ·
+          {{ '通过' if lot.prescreen_pass == 1 else ('未通过' if lot.prescreen_pass == 0 else '待初筛') }} ·
+          {% if lot.model_raw %}<button class="coin-more-btn" type="button" data-raw="{{ lot.model_raw|e }}">{{ lot.grade_interval or lot.grade_cn or '-' }}</button>{% else %}{{ lot.grade_interval or lot.grade_cn or '-' }}{% endif %}
+        </p>
+      </div>
+    </div>
+    <details class="coin-more">
+      <summary class="coin-more-btn">⋯ 更多</summary>
+      <div class="coin-more-menu">
+        {% if lot.lot_id in grading_ids %}
+        <button type="button" disabled>评级中…</button>
+        {% else %}
+        <form method="post" action="/coins/lot-grades/{{ lot.lot_id }}/grade">
+          <input type="hidden" name="next" value="{{ current_url }}">
+          <button type="submit">{{ '重新评级' if lot.status == 'graded' else '评级' }}</button>
+        </form>
+        {% endif %}
+      </div>
+    </details>
+  </article>
+  {% endfor %}
+</div>
+
+{% if total_pages > 1 %}
+<nav class="pager">
+  {% if prev_url %}
+  <a class="btn" href="{{ prev_url }}">上一页</a>
+  {% else %}
+  <span class="btn btn-disabled">上一页</span>
+  {% endif %}
+  <span class="pager-meta">第 {{ page }} / {{ total_pages }} 页 · 共 {{ grade_total }} 条</span>
+  {% if next_url %}
+  <a class="btn" href="{{ next_url }}">下一页</a>
+  {% else %}
+  <span class="btn btn-disabled">下一页</span>
+  {% endif %}
+</nav>
+{% endif %}
+{% else %}
+<div class="empty">
+  当前筛选条件下没有评级记录。<a href="/coins/lot-grades">清空条件</a>
+</div>
+{% endif %}
+
+<div class="coin-modal-scrim coin-hidden" id="raw-scrim"></div>
+<div class="coin-modal coin-hidden" id="raw-modal" role="dialog" aria-label="品相原文">
+  <div class="coin-modal-head">
+    <h2>品相原文</h2>
+    <button class="coin-close" type="button" id="raw-close" aria-label="关闭">×</button>
+  </div>
+  <div class="coin-modal-body">
+    <pre class="coin-hint" id="raw-body" style="white-space: pre-wrap; word-break: break-word;"></pre>
+  </div>
+</div>
+
+<script>
+(function () {
+  var all = document.getElementById('prescreen-all');
+  var picks = document.querySelectorAll('.prescreen-pick');
+  var count = document.getElementById('prescreen-count');
+  var button = document.getElementById('prescreen-picked');
+  if (!all || !button) return;
+  function sync() {
+    var picked = 0;
+    picks.forEach(function (box) { if (box.checked) picked += 1; });
+    count.textContent = '已选 ' + picked + ' / ' + picks.length;
+    button.disabled = picked === 0;
+    button.textContent = '初筛选中 (' + picked + ')';
+  }
+  all.addEventListener('change', function () {
+    picks.forEach(function (box) { box.checked = all.checked; });
+    sync();
+  });
+  picks.forEach(function (box) { box.addEventListener('change', sync); });
+  sync();
+})();
+</script>
+
+<script>
+(function () {
+  var modal = document.getElementById('raw-modal');
+  var scrim = document.getElementById('raw-scrim');
+  var body = document.getElementById('raw-body');
+  function close() {
+    modal.classList.add('coin-hidden');
+    scrim.classList.add('coin-hidden');
+  }
+  document.querySelectorAll('[data-raw]').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      body.textContent = btn.dataset.raw || '';
+      modal.classList.remove('coin-hidden');
+      scrim.classList.remove('coin-hidden');
+    });
+  });
+  document.getElementById('raw-close').addEventListener('click', close);
+  scrim.addEventListener('click', close);
+  document.addEventListener('keydown', function (event) {
+    if (event.key === 'Escape') close();
+  });
+})();
+</script>
+{% endblock %}

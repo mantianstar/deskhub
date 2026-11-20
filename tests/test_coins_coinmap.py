@@ -99,15 +99,13 @@ def test_several_varieties_without_mintage_pick_higher_frequency():
     assert mapping.issue_numista_id == 9002
 
 
-def test_multiple_series_is_not_mapped():
-    catalogue = _catalogue(_penny(578, 1911, 1926), _penny(669, 1911, 1926))
+def test_multiple_overlapping_series_picks_the_later_one():
+    # 两段系列年份重叠（1911-1926 / 1920-1930）：取起始年更晚的第二段
+    catalogue = _catalogue(_penny(578, 1911, 1926), _penny(669, 1920, 1930))
 
-    mapping = coinmap.match_lot("英国1919年1便士", {}, catalogue)
+    mapping = coinmap.match_lot("英国1923年1便士", {}, catalogue)
 
-    assert mapping.match_method == "none"
-    assert mapping.series_numista_id is None
-    assert mapping.issue_numista_id is None
-    assert mapping.candidates == ()
+    assert mapping.series_numista_id == 669
 
 
 def test_multi_coin_title_is_not_mapped():
@@ -296,6 +294,78 @@ def test_remap_all_writes_mapping_and_keeps_multi_issue_empty(temp_db):
     assert result.lots_series_mapped == 1
     assert result.lots_issue_mapped == 0
     assert result.by_method == {"title": 1}
+
+
+def test_cn_fraction_denomination_is_mapped():
+    catalogue = _catalogue(
+        coinmap.SeriesFacts(
+            numista_id=1619, country="印度", min_year=1912, max_year=1936, denomination="1⁄4安娜"
+        ),
+        issuers=(("印度", "印度"),),
+    )
+
+    mapping = coinmap.match_lot(
+        "英属印度1928年四分之一安娜", {"国家地区": "印度", "发行年份": "1928"}, catalogue
+    )
+
+    assert mapping.series_numista_id == 1619
+
+
+def test_denomination_unit_alias_yuan_is_mapped():
+    catalogue = _catalogue(
+        coinmap.SeriesFacts(
+            numista_id=19429, country="台湾", min_year=2011, max_year=2024, denomination="10元"
+        ),
+        issuers=(("台湾", "台湾"),),
+    )
+
+    mapping = coinmap.match_lot("台湾-10圆 民国100年", {}, catalogue)
+
+    assert mapping.series_numista_id == 19429
+
+
+def test_hong_kong_cent_written_as_xian_is_mapped():
+    catalogue = _catalogue(
+        coinmap.SeriesFacts(
+            numista_id=3798, country="香港", min_year=1919, max_year=1926, denomination="1分"
+        ),
+        issuers=(("香港", "香港"),),
+    )
+
+    mapping = coinmap.match_lot("香港早期大一仙铜币1923", {}, catalogue)
+
+    assert mapping.series_numista_id == 3798
+
+
+def test_taiwan_tagged_as_china_with_short_roc_year_is_mapped():
+    catalogue = _catalogue(
+        coinmap.SeriesFacts(
+            numista_id=3505, country="台湾", min_year=1981, max_year=2024, denomination="5元"
+        ),
+        issuers=(("台湾", "台湾"), ("中国", "中国")),
+    )
+
+    mapping = coinmap.match_lot("原光好品中国台湾省 99 年五元", {"国家地区": "中国"}, catalogue)
+
+    assert mapping.series_numista_id == 3505
+
+
+def test_series_issuer_alias_needle_is_mapped():
+    # 币库发行方是「圣赫勒拿和阿森松」，标题只写「圣赫勒拿」：原始写法也要能咬到别名
+    catalogue = _catalogue(
+        coinmap.SeriesFacts(
+            numista_id=12527,
+            country="圣赫勒拿和阿森松",
+            min_year=1984,
+            max_year=1984,
+            denomination="2便士",
+        ),
+        issuers=(("圣赫勒拿", "圣赫勒拿和阿森松"),),
+    )
+
+    mapping = coinmap.match_lot("圣赫勒拿1984年2便士", {"发行年份": "1984"}, catalogue)
+
+    assert mapping.series_numista_id == 12527
 
 
 def _insert_grade(country: str, era: str, denomination: str, grade: str) -> None:

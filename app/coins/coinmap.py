@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from app import repository
 from app.coins.grades import (
     era_year_from_text,
+    is_china_country,
     normalize_country,
     normalize_denomination,
     normalize_year,
@@ -38,6 +39,14 @@ _WHITESPACE_RE = re.compile(r"\s+")
 _JP_ERA_RE = re.compile(r"明治|大正|昭和|平成|令和")
 # 面值写法归一：标题用中文数字（`二钱` / `五十钱`）或分数（`1/2便士`）时，与币库的阿拉伯写法对齐
 _CN_NUMERAL_RUN_RE = re.compile(r"[零〇一二两三四五六七八九十百千壹贰貳叁肆伍陆陸柒捌玖拾佰仟]+")
+# 中文分数（`四分之一安娜`）：换成分数写法，`四分之一` → `1⁄4`
+_CN_FRACTION_RE = re.compile(r"([一二三四五六七八九十])\s*分之\s*([一二三四五六七八九十])")
+# 标题与币库的单位写法差异：`10圆` ↔ `10 元`、`1仙` ↔ `1 分`
+_DENOM_ALIASES = {"圆": "元", "圓": "元", "仙": "分"}
+# 台湾拍品常被标成「中国」，标题出现台湾时按台湾系列匹配
+_TAIWAN_IN_TITLE_RE = re.compile(r"台湾|台灣")
+# 台湾拍品只写「99 年」（缺「民国」前缀）时的民国年
+_ROC_SHORT_YEAR_RE = re.compile(r"(?<!\d)(\d{1,3})\s*年(?!\d)")
 _HALF_IN_TITLE_RE = re.compile(r"(?<!\d)(?:½|1\s*[/⁄]\s*2)(?!\d)")
 
 # 置信度：属性路径比标题路径可靠；单版唯一再 +0.05
@@ -108,9 +117,16 @@ def _compact(text: str | None) -> str:
 
 
 def _denomination_text(title: str | None) -> str:
-    """标题里参与面值比较的文本：`二钱` → `2钱`、`1/2便士` → `半便士`，再去空白。"""
-    text = _HALF_IN_TITLE_RE.sub("半", title or "")
+    """标题里参与面值比较的文本：`二钱` → `2钱`、`1/2便士` → `半便士`、
+    `四分之一安娜` → `1⁄4安娜`、`10圆` → `10元`、`一仙` → `1分`，再去空白。"""
+    text = _CN_FRACTION_RE.sub(
+        lambda match: f"{normalize_denomination(match.group(2))}⁄"
+        f"{normalize_denomination(match.group(1))}",
+        title or "",
+    )
+    text = _HALF_IN_TITLE_RE.sub("半", text)
     text = _CN_NUMERAL_RUN_RE.sub(lambda match: normalize_denomination(match.group()), text)
+    text = "".join(_DENOM_ALIASES.get(char, char) for char in text)
     return _compact(text)
 
 
@@ -155,6 +171,8 @@ def lot_facts(title: str, tags: dict[str, str], issuers: tuple[tuple[str, str], 
     attr_years = years_from_text(normalize_year(_attr(tags, YEAR_KEYS)))
     text = _compact(title)
     country = attr_country or _country_in_title(text, issuers)
+    if _TAIWAN_IN_TITLE_RE.search(title or "") and is_china_country(country):
+        country = "台湾"  # 中国台湾省拍品常被标成「中国」，按台湾系列匹配
     if not country and _JP_ERA_RE.search(title or ""):  # 只写日本年号：按日本推断
         country = "日本"
     years = attr_years or years_from_text(title)
@@ -162,6 +180,10 @@ def lot_facts(title: str, tags: dict[str, str], issuers: tuple[tuple[str, str], 
         era_year = era_year_from_text(title)  # 只写年号（昭和十五年）时补公历年
         if era_year is not None:
             years = (era_year,)
+        elif country == "台湾":  # 台湾拍品只写「99 年」：按民国年换算
+            short_year = _ROC_SHORT_YEAR_RE.search(title or "")
+            if short_year:
+                years = (1911 + int(short_year.group(1)),)
     return LotFacts(country=country, years=years, from_attrs=bool(attr_country or attr_years))
 
 
@@ -227,8 +249,9 @@ def match_lot(title: str, tags: dict[str, str], catalogue: Catalogue) -> LotMapp
     if not candidates:
         return _NONE
 
-    if len(candidates) > 1:  # 多候选不落库、也不再记 `_multi`
-        return _NONE
+    if len(candidates) > 1:  # 两段系列年份重叠（1938-1940 / 1940-1942）：取起始年更晚的一段
+        candidates.sort(key=lambda item: (item.min_year or 0, item.numista_id))
+        candidates = candidates[-1:]
 
     series = candidates[0]
     issue_ids: tuple[int, ...] = ()
@@ -277,8 +300,18 @@ def load_catalogue() -> Catalogue:
         for row in series_rows
         if row.issuer
     )
-    countries = {normalize_country(row.issuer) for row in series_rows if row.issuer}
-    issuers = tuple(sorted(((_compact(name), name) for name in countries), key=lambda p: -len(p[0])))
+    # 标题里的国家词：原始写法（`圣赫勒拿`）与归一后写法（`圣赫勒拿和阿森松`）都收，
+    # 否则简称永远咬不到别名归一后的国家名
+    pairs = set()
+    for row in series_rows:
+        if not row.issuer:
+            continue
+        canonical = normalize_country(row.issuer)
+        if not canonical:
+            continue
+        pairs.add((_compact(row.issuer), canonical))
+        pairs.add((_compact(canonical), canonical))
+    issuers = tuple(sorted(pairs, key=lambda pair: -len(pair[0])))
 
     issue_years: dict[int, dict[int, list[int]]] = {}
     issue_stats: dict[int, IssueFacts] = {}

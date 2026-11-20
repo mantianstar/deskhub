@@ -123,9 +123,11 @@ class CoinGradeStageConfig:
 class CoinGradeConfig:
     """铜币品相评级两阶段（与 `llm` 段独立，换模型 / 换厂商只改这里）。
 
+    prescreen：初筛（GLM 多模态，判断是否进入特征提取）；
     vision：第一阶段视觉特征提取（多模态）；reason：第二阶段逻辑评级（纯文本推理）。
     """
 
+    prescreen: CoinGradeStageConfig = field(default_factory=CoinGradeStageConfig)
     vision: CoinGradeStageConfig = field(default_factory=CoinGradeStageConfig)
     reason: CoinGradeStageConfig = field(default_factory=CoinGradeStageConfig)
 
@@ -147,7 +149,7 @@ class CoinNumistaConfig:
     max_series: int = 10
     timeout_seconds: int = 20
     # 每月请求上限（免费额度 2000，留 25% 余量）
-    monthly_limit: int = 1500
+    monthly_limit: int = 1700
     # 单轮请求上限（一次 CLI 调用最多打几次接口）
     max_requests_per_run: int = 40
     # 取类型页（估值 + Frequency）时挂载的 CDP 浏览器地址：Numista 上有 Cloudflare 校验，
@@ -161,14 +163,16 @@ class ExploreCatalogueConfig:
 
     这些值就是实际拼进 URL 的参数，后续换筛选条件只改 `config.yaml` 里的对应项：
     `issuer` → `e`（发行方，如 chine = China）、`collectible_type` → `st`
-    （2 = Circulating commemorative coins）、`year` → `a`、`composition_id` → `m`
-    （5 = Bronze）、`diameter_mm` → `t`、`per_page` → `q`；
+    （2 = Circulating commemorative coins）、`year` → `a`、`gregorian_year` → `dg`
+    （公历年份）、`composition_id` → `m`（5 = Bronze）、`diameter_mm` → `t`、
+    `per_page` → `q`；
     空串 / None 表示该条件不参与筛选。
     """
 
     issuer: str = ""
     collectible_type: int = 2
     year: str = ""
+    gregorian_year: str = ""
     composition_id: int | None = None
     diameter_mm: str = ""
     per_page: int = 200
@@ -455,6 +459,7 @@ def _parse_coin_grade(raw: dict[str, Any]) -> CoinGradeConfig:
     if not isinstance(section, dict):
         raise ConfigError("config.yaml：`coin_grade` 必须是配置段")
     return CoinGradeConfig(
+        prescreen=_parse_coin_grade_stage(section, "prescreen", "DESKHUB_GLM_API_KEY"),
         vision=_parse_coin_grade_stage(section, "vision", "DESKHUB_QW_VL_API_KEY"),
         reason=_parse_coin_grade_stage(section, "reason", "DESKHUB_LLM_API_KEY"),
     )

@@ -614,6 +614,20 @@ async def test_grade_only_matches_and_grades_without_collecting(temp_db, monkeyp
     assert (result.sessions_seen, result.sessions_stored, result.lots_stored) == (0, 0, 0)
 
 
+@pytest.mark.asyncio
+async def test_pipeline_price_only_skips_grade(temp_db, monkeypatch):
+    """只查价：不连带跑好品评级（定时查价段曾因此每天自动评级）。"""
+    cfg = _cfg()
+    calls: list[str] = []
+
+    monkeypatch.setattr(coins_best, "match_today_lots", lambda config: calls.append("match") or 0)
+    monkeypatch.setattr(coins_best, "grade_candidates", lambda config: calls.append("grade") or 0)
+
+    await coins_run(cfg, price_only=True)
+
+    assert calls == []
+
+
 def _sold():
     from app.coins.pricing import SoldSample
 

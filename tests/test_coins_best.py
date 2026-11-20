@@ -28,7 +28,10 @@ GRADE_TEXT = """评级：XF40-45 / 极美 / 深褐 / 净分40
 磨损：观察区1鼻尖为C级
 瑕疵与盲区：边缘轻磕"""
 
-FEATURE_TEXT = "1. 核心高点状态：鼻尖轻微磨圆"
+FEATURE_TEXT = (
+    "1. 核心高点状态：鼻尖轻微磨圆\n"
+    "- **CR/AU/MS 辅助清单结果**：偏向 AU（CR / AU / MS / 混杂）。"
+)
 
 
 @pytest.fixture()
@@ -229,15 +232,12 @@ def test_grade_candidates_skips_missing_image_and_caps_daily_quota(
     assert best.match_today_lots(cfg) == 2
 
     client = FakeClient()
-    assert best.grade_candidates(cfg, vision_client=client, reason_client=client) == 1
+    assert best.grade_candidates(cfg, vision_client=client) == 1
     assert len(client.calls) == 1
-    assert len(client.completed) == 1
-    assert FEATURE_TEXT in client.completed[0]
     assert repository.count_coin_graded_on_day() == 1
 
     items = best.load_best_lots(cfg)
-    assert [item.grade_interval for item in items] == ["XF40-45"]
-    assert [item.grade_score for item in items] == [40]
+    assert [item.net_grade for item in items] == ["AU"]
 
     monkeypatch.setattr(
         repository,
@@ -246,5 +246,5 @@ def test_grade_candidates_skips_missing_image_and_caps_daily_quota(
     )
     _lot(session_id, "best-1:quota-full", "英国 1863年 1 便士 铜币")
     assert best.match_today_lots(cfg) == 1
-    assert best.grade_candidates(cfg, vision_client=client, reason_client=client) == 0
+    assert best.grade_candidates(cfg, vision_client=client) == 0
     assert len(client.calls) == 1

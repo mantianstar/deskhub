@@ -98,7 +98,12 @@ _COLONIAL_PREFIXES = (
 )
 
 # 去完殖民前缀后仍与 Numista 发行方命名不一致的别名（泽西岛 → 泽西）
-_COUNTRY_ALIASES = {"泽西岛": "泽西", "根西岛": "根西", "印度 - British": "印度"}
+_COUNTRY_ALIASES = {
+    "泽西岛": "泽西",
+    "根西岛": "根西",
+    "印度 - British": "印度",
+    "圣赫勒拿": "圣赫勒拿和阿森松",
+}
 
 
 _COUNTRY_PAREN = re.compile(r"[（(][^）)]*[）)]")

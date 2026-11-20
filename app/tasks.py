@@ -15,6 +15,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 from app import fetcher, pipeline, repository, scorer, switches
+from app.coins import best as coins_best
 from app.coins import filter_scan as coins_filter_scan
 from app.coins import matcher as coins_matcher
 from app.coins import pipeline as coins_pipeline
@@ -91,6 +92,12 @@ async def run_coins_match(config: Config) -> str:
     )
 
 
+async def run_coins_best_match(config: Config) -> str:
+    """好品推荐第一步：匹配今日外币拍品并入队待评级（不花 token）。"""
+    matched = await asyncio.to_thread(coins_best.match_today_lots, config)
+    return f"新入队 {matched} 条"
+
+
 async def run_coins_grade(config: Config) -> str:
     """匹配今日外币拍品并评级（只手动运行）。
 
@@ -114,6 +121,7 @@ RUNNERS: dict[str, Callable[[Config], Awaitable[str]]] = {
     switches.KNOWLEDGE_FETCH: run_knowledge_fetch,
     switches.KNOWLEDGE_SCORE: run_knowledge_score,
     switches.COINS_COLLECT: run_coins_collect,
+    switches.COINS_BEST_MATCH: run_coins_best_match,
     switches.COINS_FINALIZE: run_coins_finalize,
     switches.COINS_FILTER_SCAN: run_coins_filter_scan,
     switches.COINS_MATCH: run_coins_match,

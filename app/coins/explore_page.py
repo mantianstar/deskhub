@@ -82,7 +82,7 @@ def resolve_issuer(raw: str) -> str:
 
 
 def normalize_filters(
-    *, issuer: str, st: str, year: str, material: str, size: str
+    *, issuer: str, st: str, year: str, material: str, size: str, gregorian_year: str = ""
 ) -> dict[str, str]:
     """校验并归一化表单条件；不合法抛 `ValueError`（端点转 400）。"""
     st_value = (st or "1").strip() or "1"
@@ -95,12 +95,15 @@ def normalize_filters(
         "issuer": resolve_issuer(issuer),
         "st": st_value,
         "year": (year or "").strip(),
+        "gregorian_year": (gregorian_year or "").strip(),
         "material": material_value,
         "size": (size or "").strip(),
     }
 
 
-def catalogue_page_url(*, issuer: str, st: str, year: str, material: str, size: str) -> str:
+def catalogue_page_url(
+    *, issuer: str, st: str, year: str, material: str, size: str, gregorian_year: str = ""
+) -> str:
     """后端按条件重算链接（不信任前端传链接）。"""
     composition: int | str | None = None
     if material:
@@ -109,6 +112,7 @@ def catalogue_page_url(*, issuer: str, st: str, year: str, material: str, size: 
         issuer=issuer,
         collectible_type=int(st),
         year=year,
+        gregorian_year=gregorian_year,
         composition_id=composition,
         diameter_mm=size,
     )
@@ -154,14 +158,26 @@ def status() -> dict[str, object]:
 
 
 def start(
-    config: Config, *, issuer: str, st: str, year: str, material: str, size: str
+    config: Config,
+    *,
+    issuer: str,
+    st: str,
+    year: str,
+    material: str,
+    size: str,
+    gregorian_year: str = "",
 ) -> dict[str, str] | None:
     """起一个后台抓取任务；已有任务在跑返回 `None`（端点转 409）。"""
     global _running
     if is_running():
         return None
     url = catalogue_page_url(
-        issuer=issuer, st=st, year=year, material=material, size=size
+        issuer=issuer,
+        st=st,
+        year=year,
+        material=material,
+        size=size,
+        gregorian_year=gregorian_year,
     )
     job_id = uuid4().hex
     batch_id = datetime.now().strftime("%Y%m%d%H%M%S%f")

@@ -10,6 +10,69 @@
 
 ---
 
+## v1.168 — 2026-11-19 币种映射补齐面值/地名/台湾年份写法
+
+- 起因：成交拍品里「四分之一安娜」「10圆」「一仙」「圣赫勒拿」「中国台湾省 99 年」等写法匹配不到系列；两段系列年份重叠（如印度 1940 年）时整条放弃。
+- 改了什么：`coinmap._denomination_text` 增加中文分数（`四分之一` → `1⁄4`）与单位别名（`圆/圓` → `元`、`仙` → `分`）；`lot_facts` 在标题出现台湾时把标签「中国」改判为台湾，并对台湾拍品把 `99 年` 按民国年换算；`grades._COUNTRY_ALIASES` 增「圣赫勒拿 → 圣赫勒拿和阿森松」，`load_catalogue` 的国家词同时收原始写法与归一后写法；`match_lot` 遇多系列年份重叠时取起始年更晚的一段。
+- 验证：`pytest tests/test_coins_coinmap.py -q` 24 passed；全量 4 条失败均在 `test_coin_grade.py` / `test_coins_best.py`，与本次改动无关。重跑 `coins-map`：已映射系列 1821/163660，多单版候选 0；用户所列 9 条全部映射成功。
+- 影响：spec/coins.md、plan/coins.md 待同步。
+
+## v1.167 — 2026-11-18 好品推荐增加初筛环节
+
+- 起因：好品推荐在匹配与特征提取之间没有淘汰环节，明显破损或成像不合格的拍品仍会消耗视觉模型额度。
+- 改了什么：`coin_lot_grades` 增 `prescreen_raw` / `prescreen_pass` / `prescreen_at` 三列，状态新增「初筛」（schema v40 + `app/migrations/v40.py`）；
+  新增 `app/coins/prescreen.py`，按给定提示词调 GLM 判定 `pass_to_next` 并写回；特征提取取数改为「状态初筛 且 初筛通过」；
+  新增 CLI `coins-prescreen <coin_lot_grades.id>`（暂不进每日调度）；铜币品相管理页查询区下方加多选初筛条，卡片显示「初筛：通过 / 未通过 / 待初筛」。
+- 验证：`pytest tests/test_coin_grade.py -q`（新增 2 条用例通过）；全量结果见 data/handoffs/2026-11-18-coin-grade-prescreen.md。
+- 影响：spec/coins.md、plan/coins.md 待同步。
+
+## v1.166 — 2026-11-18 好品配对纳入每日调度
+
+- 起因：好品推荐第一步「配对」（`best.match_today_lots`）此前只随手动触发的评级或整轮管道执行，每天采集完成后不会自动把今日外币拍品入队。
+- 改了什么：新增功能开关 `coins_best_match`（铜币拍卖 · 好品配对，默认启用）；`tasks.run_coins_best_match` 复用 CLI 同一入口；
+  `scheduler._DAILY_COINS_STAGES` 在「采集」后新增「好品配对」段，失败只记 warning 不影响其余段。
+  CLI 沿用已有 `python -m app.cli coins-best-match`。
+- 验证：`pytest tests/test_scheduler.py tests/test_control.py -q`。
+- 影响：spec/coins.md、plan/coins.md 未同步。
+
+## v1.165 — 2026-11-17 新增「铜币品相管理」页面
+
+起因：需要在「我的资产」下按条件查看好品推荐评级结果，并能对单条拍品补跑评级。
+改了什么：新增 `/coins/lot-grades` 页（`coins/lot_grades.html`）与五条件查询（拍卖日期 / 国家 / 面值 / 系列号 / 标题模糊）；
+`repository.list_coin_lot_grades` 取 `coin_lot_grades` 全部状态并补齐拍场、系列（中）字段；`POST /coins/lot-grades/{lot_id}/grade`
+异步跑第一阶段特征提取（`best.grade_lot`，与批量评级共用 `_grade_one`），在跑集合拦同一拍品重复提交；
+「我的资产」子导航在观察系列后新增页签；点品相弹窗展示 `model_raw`，点拍品名跳 `/coins/session/{id}#coin-lot-{lot_id}`。
+验证：`pytest tests/test_coins_pages.py -k "lot_grades or watchlist"` 3 passed；未跑全量测试。
+影响：spec/coins.md、plan/coins.md 未同步（见交接）。
+
+## v1.164 — 2026-11-17 每日查价段不再顺带跑品相评级
+
+- 起因：每日 07:00 定时任务的「查价」段调用 `pipeline.run(price_only=True)` 时没有跳过评级；`price_only` 只跳过采集 / 回采，流程继续走到评级块，导致每天查价时自动执行 `match_today_lots` + `grade_candidates` 并消耗 token。
+- 改了什么：`app/coins/pipeline.py` 的评级块条件由 `if not skip_grade` 改为 `if not skip_grade and not price_only`；`price_only` 的 docstring 补上「不评级」。定时采集段原本就传 `skip_grade=True`，不变。
+- 验证结论：新增 `tests/test_coins_fetch.py::test_pipeline_price_only_skips_grade`；`pytest -q tests/test_coins_fetch.py tests/test_scheduler.py` 54 passed。
+- 影响：`app/coins/pipeline.py`、`tests/test_coins_fetch.py`。
+
+## v1.163 — 2026-11-16 采集队列 ID 直采只取一次系列详情
+
+- 起因：按 ID 直采的日志里 `GET /types/{id}` 被调两次、中文翻译也跑两次（系列节点与年份节点各取一次详情），白耗 Numista 当月配额。
+- 改了什么：`app/coins/ingest.py` 的 `_node_series` 在「本地无系列 + 候选池也没有」时改调 `collect_issues`（一次 `GET /types/{id}` 同时写系列与全部单版），`_node_years` 看到已有单版即跳过；页面「按 ID 获取系列」按钮仍在用 `collect_series_by_id`，行为不变。
+- 验证结论：`pytest -q tests/test_coins_collection.py -k ingest` 5 passed；节点口径变为 series=done / years=skip。
+- 影响：`app/coins/ingest.py`、`tests/test_coins_collection.py`。
+
+## v1.162 — 2026-11-16 采集中心·批量方式(页面) 增加「公历年份」
+
+- 起因：部分币的「年份」是纪年 / 年号（如日本年号、回历年），按公历年筛选需要独立条件。
+- 改了什么：`app/templates/coins/ingest.html` 在原「年份」字段后新增「公历年份」输入（`page-gregorian-year`）并随 payload 提交；`app/coins/explore_page.py` 的 `normalize_filters` / `catalogue_page_url` / `start` 接参透传；`app/config.py` 的 `ExploreCatalogueConfig` 新增 `gregorian_year`，由 `app/coins/numista_web.py` 的 `catalogue_url` 映射到 Numista 列表页的 `dg` 参数。原「年份」字段（`a`）的文案与校验不变。
+- 验证结论：新增 `tests/test_coins_pages.py::test_page_explore_gregorian_year_field_and_url`。
+- 影响：`app/templates/coins/ingest.html`、`app/coins/explore_page.py`、`app/coins/numista_web.py`、`app/config.py`、`tests/test_coins_pages.py`。
+
+## v1.161 — 2026-11-16 系列详情页无年份显示 ND(公历)
+
+- 起因：部分单版年份为空，页面上只显示 `—`，丢失了已有的公历年份信息。
+- 改了什么：`app/templates/coins/series.html` 年份信息表里，`issue.year` 为空时依次回落 `gregorian_year`、系列 `min_year`，显示 `ND(值)`；两者都没有才显示 `—`。
+- 验证结论：新增 `tests/test_coins_pages.py::test_series_page_shows_nd_with_gregorian_year_when_year_missing`。
+- 影响：`app/templates/coins/series.html`、`tests/test_coins_pages.py`。
+
 ## v1.160 — 2026-11-15 铜币每日任务分段容错 / 断点续跑 / 评级独立触发
 
 - 起因：07:00 `daily_coins` 四段共用一个 try，任一段失败或取消即停链，重启后也不补；好品评级埋在采集链路里，无法单独重跑。

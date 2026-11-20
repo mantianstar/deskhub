@@ -117,7 +117,7 @@ async def run(
     - 默认：采集 → 回采终态 → 匹配 → 定价
     - `collect_only=True`：只采集 + 匹配（不回采、不查价）
     - `finalize_only=True`：只回采已结束专场的终态并同步成交库（不采集、不查价）
-    - `price_only=True`：只对已入库的推荐拍品查价（不采集、不回采）
+    - `price_only=True`：只对已入库的推荐拍品查价（不采集、不回采、不评级）
     - `grade_only=True`：只匹配今日外币拍品并评级（两步都跑）；匹配数放
       `lots_recommended`、评级数放 `lots_priced`，不访问站点
     - `skip_grade=True`：不跑好品评级（定时采集段用，评级改由 `coins_grade` 独立触发）
@@ -218,7 +218,7 @@ async def run(
         )
 
         # 好品推荐：匹配今日外币拍品 + 大模型评级（每日限 50 条），失败不影响主流程
-        if not skip_grade:
+        if not skip_grade and not price_only:
             try:
                 best_matched = await asyncio.to_thread(coins_best.match_today_lots, config)
                 best_graded = await asyncio.to_thread(coins_best.grade_candidates, config)

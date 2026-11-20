@@ -21,6 +21,7 @@ from app.models import (
     CoinCollectionSeries,
     CoinExploreCandidate,
     CoinFetchRun,
+    CoinGradeLot,
     CoinIngestTask,
     CoinIssue,
     CoinIssueValues,
@@ -1515,7 +1516,7 @@ def list_pending_grade_lots(limit: int) -> list[dict[str, object]]:
                      ORDER BY f.id DESC LIMIT 1) AS features_text
             FROM coin_lot_grades g
             JOIN coin_lots l ON l.id = g.lot_id
-            WHERE g.status = 'pending'
+            WHERE g.status = 'prescreen' AND g.prescreen_pass = 1
             ORDER BY g.created_at, g.id
             LIMIT ?
             """,
@@ -1598,6 +1599,59 @@ def mark_coin_lot_grade_failed(lot_id: int, error: str) -> None:
         )
 
 
+def get_prescreen_target(grade_id: int) -> dict[str, object] | None:
+    """初筛取数：按 `coin_lot_grades.id` 取拍品图片与系列（不存在返回 None）。"""
+    with db.connect() as conn:
+        row = conn.execute(
+            """
+            SELECT g.id AS grade_id, g.lot_id, g.series_id, g.status, l.title, l.image_urls
+            FROM coin_lot_grades g
+            JOIN coin_lots l ON l.id = g.lot_id
+            WHERE g.id = ?
+            """,
+            (grade_id,),
+        ).fetchone()
+    if row is None:
+        return None
+    return {
+        "grade_id": row["grade_id"],
+        "lot_id": row["lot_id"],
+        "series_id": row["series_id"],
+        "status": row["status"],
+        "title": row["title"],
+        "image_urls": _json_list(row["image_urls"]),
+    }
+
+
+def save_coin_lot_prescreen(
+    grade_id: int,
+    *,
+    raw: str,
+    passed: bool,
+    model: str,
+) -> None:
+    """初筛结果写回：状态置 prescreen，原文 / 是否通过 / 时间一并落库。"""
+    with db.connect() as conn, conn:
+        conn.execute(
+            """
+            UPDATE coin_lot_grades SET
+                status = 'prescreen', prescreen_raw = ?, prescreen_pass = ?,
+                prescreen_at = ?, model = ?, error = NULL
+            WHERE id = ?
+            """,
+            (raw, 1 if passed else 0, now_local(), model, grade_id),
+        )
+
+
+def mark_coin_lot_prescreen_error(grade_id: int, error: str) -> None:
+    """初筛失败：只记错误，状态留在 pending 以便重试。"""
+    with db.connect() as conn, conn:
+        conn.execute(
+            "UPDATE coin_lot_grades SET error = ? WHERE id = ?",
+            ((error or "")[:500], grade_id),
+        )
+
+
 def save_coin_lot_grade(
     lot_id: int,
     parsed: dict[str, object],
@@ -1645,28 +1699,27 @@ def get_coin_series_by_id(series_id: int, *, cn: bool = True) -> CoinSeries | No
 def list_best_grade_lots(
     tz: ZoneInfo,
     *,
-    min_score: int = 40,
     collection_key: str | None = None,
     now: datetime | None = None,
 ) -> list[CoinBestLot]:
-    """今日 11070 类别、已评级且下界 >= `min_score` 的拍品，按分数降序。"""
+    """今日 11070 类别、等级为 AU / MS 的拍品，按等级降序。"""
     start, end = local_day_bounds(tz, now=now)
     sql = """
         SELECT l.id, l.session_id, l.title, l.lot_no, l.start_price, l.current_price,
                l.image_urls, s.title AS session_title, s.auction_at,
                sh.name AS shop_name, COALESCE(sh.followed, 0) AS shop_followed,
-               g.grade_interval, g.grade_score, g.color_grade,
+               g.grade_interval, g.grade_score, g.net_grade, g.color_grade,
                cs.issuer, cs.ruler, cs.denomination
         FROM coin_lot_grades g
         JOIN coin_lots l ON l.id = g.lot_id
         JOIN coin_sessions s ON s.id = l.session_id
         LEFT JOIN coin_shops sh ON sh.id = s.shop_id
         LEFT JOIN coin_series_cn cs ON cs.id = g.series_id
-        WHERE g.status = 'graded' AND g.grade_score >= ?
+        WHERE g.status = 'graded' AND g.net_grade IN ('AU', 'MS')
           AND s.auction_at >= ? AND s.auction_at < ?
           AND l.category_code LIKE '11070%'
     """
-    params: list[object] = [min_score, start, end]
+    params: list[object] = [start, end]
     if collection_key:
         sql += """
           AND EXISTS (
@@ -1676,7 +1729,7 @@ def list_best_grade_lots(
           )
         """
         params.append(collection_key)
-    sql += " ORDER BY g.grade_score DESC, l.id"
+    sql += " ORDER BY g.net_grade DESC, l.id"
     with db.connect() as conn:
         rows = conn.execute(sql, params).fetchall()
     return [
@@ -1695,12 +1748,112 @@ def list_best_grade_lots(
             denomination=row["denomination"],
             grade_interval=row["grade_interval"],
             grade_score=row["grade_score"],
+            net_grade=row["net_grade"],
             color_grade=row["color_grade"],
             shop_followed=bool(row["shop_followed"]),
             lot_no=row["lot_no"],
         )
         for row in rows
     ]
+
+
+def list_coin_lot_grades(
+    *,
+    auction_date: str = "",
+    country: str = "",
+    denomination: str = "",
+    series_no: int | None = None,
+    title: str = "",
+    prescreen: str = "",
+) -> list[CoinGradeLot]:
+    """铜币品相管理：`coin_lot_grades`（全部状态）+ 拍品 / 拍场 / 系列（中）字段。"""
+    sql = """
+        SELECT g.id AS grade_id, l.id AS lot_id, l.session_id, l.title, l.lot_no, l.image_urls, l.tags,
+               s.title AS session_title, s.auction_at,
+               COALESCE(cs.numista_id, l.series_numista_id) AS series_no,
+               cs.issuer, cs.denomination,
+               g.status, g.grade_interval, g.grade_cn, g.net_grade, g.color_grade,
+               g.prescreen_pass, g.model_raw
+        FROM coin_lot_grades g
+        JOIN coin_lots l ON l.id = g.lot_id
+        JOIN coin_sessions s ON s.id = l.session_id
+        LEFT JOIN coin_series_cn cs ON cs.id = g.series_id
+        WHERE 1 = 1
+    """
+    params: list[object] = []
+    if auction_date:
+        sql += " AND substr(s.auction_at, 1, 10) = ?"
+        params.append(auction_date)
+    if country:
+        sql += " AND cs.issuer = ?"
+        params.append(country)
+    if denomination:
+        sql += " AND cs.denomination = ?"
+        params.append(denomination)
+    if series_no is not None:
+        sql += " AND COALESCE(cs.numista_id, l.series_numista_id) = ?"
+        params.append(series_no)
+    if title:
+        sql += " AND l.title LIKE ?"
+        params.append(f"%{title}%")
+    if prescreen == "pending":
+        sql += " AND g.prescreen_pass IS NULL"
+    elif prescreen in ("1", "0"):
+        sql += " AND g.prescreen_pass = ?"
+        params.append(int(prescreen))
+    sql += " ORDER BY s.auction_at DESC, l.id DESC"
+    with db.connect() as conn:
+        rows = conn.execute(sql, params).fetchall()
+    return [
+        CoinGradeLot(
+            grade_id=row["grade_id"],
+            lot_id=row["lot_id"],
+            session_id=row["session_id"],
+            title=row["title"],
+            lot_no=row["lot_no"],
+            image_urls=_json_list(row["image_urls"]),
+            session_title=row["session_title"],
+            auction_at=row["auction_at"],
+            year=(json.loads(row["tags"]).get("发行年份") if row["tags"] else None),
+            series_no=row["series_no"],
+            issuer=row["issuer"],
+            denomination=row["denomination"],
+            grade_interval=row["grade_interval"],
+            grade_cn=row["grade_cn"],
+            net_grade=row["net_grade"],
+            color_grade=row["color_grade"],
+            status=row["status"],
+            prescreen_pass=row["prescreen_pass"],
+            model_raw=row["model_raw"],
+        )
+        for row in rows
+    ]
+
+
+def get_grade_lot(lot_id: int) -> dict[str, object] | None:
+    """单条评级用：拍品图片 / 系列 + 已缓存的特征文本；没有评级记录返回 None。"""
+    with db.connect() as conn:
+        row = conn.execute(
+            """
+            SELECT g.lot_id, g.series_id, l.title, l.image_urls,
+                   (SELECT f.features_text FROM coin_grade_features f
+                     WHERE f.lot_id = g.lot_id
+                     ORDER BY f.id DESC LIMIT 1) AS features_text
+            FROM coin_lot_grades g
+            JOIN coin_lots l ON l.id = g.lot_id
+            WHERE g.lot_id = ?
+            """,
+            (lot_id,),
+        ).fetchone()
+    if row is None:
+        return None
+    return {
+        "lot_id": row["lot_id"],
+        "series_id": row["series_id"],
+        "title": row["title"],
+        "image_urls": _json_list(row["image_urls"]),
+        "features_text": row["features_text"],
+    }
 
 
 def search_coin_lots(

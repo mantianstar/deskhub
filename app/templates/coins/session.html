@@ -120,7 +120,7 @@
 {% macro best_lot_card(lot) %}
 <section class="coin-lot" id="coin-best-{{ lot.id }}" data-search="{{ lot.lot_no or '' }} {{ lot.title or '' }}">
   <h3 class="coin-lot-title">{% if lot.lot_no %}{{ lot.lot_no }} {% endif %}{{ lot.title }}</h3>
-  <p class="coin-lot-reason">好品推荐 · 评级 {{ lot.grade_interval or '—' }}{% if lot.color_grade %} · 铜色 {{ lot.color_grade }}{% endif %}</p>
+  <p class="coin-lot-reason">好品推荐 · 等级 {{ lot.net_grade or '—' }}{% if lot.color_grade %} · 铜色 {{ lot.color_grade }}{% endif %}</p>
   <div class="coin-lot-prices">
     <span>起价：<b>{{ lot.start_price | price }}</b> 元</span>
     <span>当前价：<b>{{ lot.current_price | price }}</b> 元</span>

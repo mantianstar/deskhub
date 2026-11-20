@@ -16,6 +16,7 @@
 {% set tab = {
   "today": "today",
   "collection": "assets",
+  "lot_grades": "assets",
   "library": "library",
   "explore": "library",
   "analysis": "data",
@@ -52,6 +53,7 @@
   <a href="/coins/grades"{% if active == "grades" %} class="is-active" aria-current="page"{% endif %}>个人收藏清单</a>
   <a href="/coins/collections"{% if active == "collections" %} class="is-active" aria-current="page"{% endif %}>收藏系列</a>
   <a href="/coins/watchlist"{% if active == "watchlist" %} class="is-active" aria-current="page"{% endif %}>观察系列</a>
+  <a href="/coins/lot-grades"{% if active == "lot_grades" %} class="is-active" aria-current="page"{% endif %}>铜币品相管理</a>
 </nav>
 {% endmacro %}
 

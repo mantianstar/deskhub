@@ -35,6 +35,8 @@ from app.migrations import (
     v30,
     v31,
     v32,
+    v40,
+    v41,
 )
 
 # (from_version, to_version) -> {表名: {列名: 列定义}}
@@ -432,6 +434,80 @@ for _from in (
     _previous = DATA_MIGRATIONS.get((_from, "38"))
     if _previous is not None:
         DATA_MIGRATIONS[(_from, "39")] = _previous
+
+
+# 跨版本直升级到 v40：给 coin_lot_grades 加初筛三列；其余沿用 v39 的加列与回填
+COLUMN_MIGRATIONS[("39", "40")] = v40.COLUMNS
+for _from in (
+    "20",
+    "21",
+    "22",
+    "23",
+    "24",
+    "25",
+    "26",
+    "27",
+    "28",
+    "29",
+    "30",
+    "31",
+    "32",
+    "33",
+    "34",
+    "35",
+    "36",
+    "37",
+    "38",
+):
+    _base = COLUMN_MIGRATIONS[(_from, "39")]
+    COLUMN_MIGRATIONS[(_from, "40")] = {
+        **{table: dict(columns) for table, columns in _base.items()},
+        "coin_lot_grades": {
+            **_base.get("coin_lot_grades", {}),
+            **v40.COLUMNS["coin_lot_grades"],
+        },
+    }
+    _previous = DATA_MIGRATIONS.get((_from, "39"))
+    if _previous is not None:
+        DATA_MIGRATIONS[(_from, "40")] = _previous
+
+
+# 跨版本直升级到 v41：status 的「初筛」改名 prescreen（只回填数据，不加列）；
+# 其余沿用 v40 的加列与回填
+COLUMN_MIGRATIONS[("40", "41")] = {}
+DATA_MIGRATIONS[("40", "41")] = v41.rename_prescreen_status
+for _from in (
+    "20",
+    "21",
+    "22",
+    "23",
+    "24",
+    "25",
+    "26",
+    "27",
+    "28",
+    "29",
+    "30",
+    "31",
+    "32",
+    "33",
+    "34",
+    "35",
+    "36",
+    "37",
+    "38",
+    "39",
+):
+    COLUMN_MIGRATIONS[(_from, "41")] = {
+        table: dict(columns)
+        for table, columns in COLUMN_MIGRATIONS[(_from, "40")].items()
+    }
+    _previous = DATA_MIGRATIONS.get((_from, "40"))
+    DATA_MIGRATIONS[(_from, "41")] = (
+        _then_steps(_previous, v41.rename_prescreen_status)
+        if _previous is not None
+        else v41.rename_prescreen_status
+    )
 
 
 def apply_columns(conn: sqlite3.Connection, tables: dict[str, dict[str, str]]) -> list[str]:

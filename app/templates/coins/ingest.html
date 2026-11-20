@@ -68,6 +68,7 @@
       </select>
     </label>
     <label class="field">年份<input class="search-input" type="text" id="page-year" placeholder="如 1900-2026（可空）" autocomplete="off"></label>
+    <label class="field">公历年份<input class="search-input" type="text" id="page-gregorian-year" placeholder="如 1870（可空）" autocomplete="off"></label>
     <label class="field">材质
       <select id="page-material">
         <option value="">不限</option>
@@ -110,6 +111,7 @@
         issuer: document.getElementById('page-issuer').value,
         st: document.getElementById('page-st').value,
         year: document.getElementById('page-year').value,
+        gregorian_year: document.getElementById('page-gregorian-year').value,
         material: document.getElementById('page-material').value,
         size: document.getElementById('page-size').value,
         start: start

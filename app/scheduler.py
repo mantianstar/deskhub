@@ -37,9 +37,10 @@ DAILY_HOUR = 7
 # 本机早上醒得晚，这一轮仍要执行而不是被丢弃（plan §11.2）
 MISFIRE_GRACE_SECONDS = 3600
 
-# 铜币每日四段：段名（落库）/ 开关 / 日志用中文名；顺序固定，仍串行
+# 铜币每日五段：段名（落库）/ 开关 / 日志用中文名；顺序固定，仍串行
 _DAILY_COINS_STAGES: tuple[tuple[str, str, str], ...] = (
     ("collect", switches.COINS_COLLECT, "采集"),
+    ("best_match", switches.COINS_BEST_MATCH, "好品配对"),
     ("finalize", switches.COINS_FINALIZE, "回采"),
     ("scan", switches.COINS_FILTER_SCAN, "热度回填"),
     ("price", switches.COINS_PRICE, "查价"),
@@ -67,7 +68,7 @@ async def daily_pipeline(config: Config) -> None:
 async def daily_coins(config: Config) -> CoinsRunResult | None:
     """每天 07:00 的铜币任务；**与 `daily_pipeline` 互不传播失败**（spec §14.9）。
 
-    「采集 / 回采 / 热度回填 / 查价」四段串行、各自独立：某段失败只记一条 warning
+    「采集 / 好品配对 / 回采 / 热度回填 / 查价」五段串行、各自独立：某段失败只记一条 warning
     并继续下一段；取消只把当前段记 `cancelled` 后继续向上传播。
     进度落 `coin_daily_runs` / `coin_daily_run_stages`，同日第二轮触发时跳过已 `ok` 的段，
     重启后由 `resume_incomplete` 只补未完成的段。
@@ -76,7 +77,7 @@ async def daily_coins(config: Config) -> CoinsRunResult | None:
         return None
 
     if not any(switches.is_enabled(key) for _, key, _ in _DAILY_COINS_STAGES):
-        logger.info("铜币采集 / 回采 / 热度回填 / 查价都已停用，跳过 %s", DAILY_COINS_JOB_ID)
+        logger.info("铜币采集 / 好品配对 / 回采 / 热度回填 / 查价都已停用，跳过 %s", DAILY_COINS_JOB_ID)
         return None
 
     logger.info("定时任务触发：%s", DAILY_COINS_JOB_ID)
@@ -114,6 +115,8 @@ async def _run_stage(
         result: CoinsRunResult | None = None
         if stage == "collect":
             result = await coins_pipeline.run(config, collect_only=True, skip_grade=True)
+        elif stage == "best_match":
+            logger.info("铜币·%s：%s", label, await tasks.run_coins_best_match(config))
         elif stage == "finalize":
             result = await coins_pipeline.run(config, finalize_only=True)
         elif stage == "scan":
